@@ -1,5 +1,6 @@
+import type { PlanSnapshot } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
-import type { Study } from "../study/contracts.ts";
+import type { Study, StudyFailure } from "../study/contracts.ts";
 import type {
   CorrectionCommand,
   Preparation,
@@ -50,6 +51,7 @@ const status = (failure: PreparationFailure): number => {
     case "incompleteEvidence":
     case "invalidCorrection":
     case "analysisNotComplete":
+    case "planDraftEmpty":
       return 422;
     case "analysisUnavailable":
       return 503;
@@ -72,6 +74,20 @@ const resultResponse = <Value>(
         status: successStatus,
       })
     : Response.json({ error: result.error }, { status: status(result.error) });
+
+const planResultResponse = (result: Result<PlanSnapshot, StudyFailure>): Response => {
+  if (result.ok) return Response.json(result.value, { status: 201 });
+  const code =
+    result.error.kind === "planNotFound"
+      ? 404
+      : result.error.kind === "planOperationConflict" ||
+          result.error.kind === "identityConflict"
+        ? 409
+        : result.error.kind === "invalidPlanDraft"
+          ? 422
+          : 500;
+  return Response.json({ error: result.error }, { status: code });
+};
 
 const json = async (request: Request): Promise<unknown | Response> => {
   try {
@@ -254,7 +270,7 @@ export const handlePreparationApi = async (
       : Response.json({ error: snapshot.error }, { status: 500 });
   }
   const match = url.pathname.match(
-    /^\/api\/preparation\/sets\/([^/]+)(?:\/(preflight|analyze|recompare|evidence))?$/u,
+    /^\/api\/preparation\/sets\/([^/]+)(?:\/(preflight|analyze|recompare|evidence|plan-draft|start-plan))?$/u,
   );
   if (match !== null) {
     const rawId = match[1];
@@ -305,6 +321,28 @@ export const handlePreparationApi = async (
           offset: Number(url.searchParams.get("offset") ?? "0"),
           limit: Number(url.searchParams.get("limit") ?? "20"),
         }),
+      );
+    }
+    if (request.method === "GET" && operation === "plan-draft") {
+      return resultResponse(preparation.planDraft(id));
+    }
+    if (request.method === "POST" && operation === "start-plan") {
+      const body = await json(request);
+      if (body instanceof Response) return body;
+      if (
+        !isRecord(body) ||
+        typeof body["operationKey"] !== "string" ||
+        typeof body["draftDigest"] !== "string"
+      ) {
+        return invalid("Plan start requires operationKey and draftDigest.");
+      }
+      const draft = preparation.planDraft(id);
+      if (!draft.ok) return resultResponse(draft);
+      if (draft.value.digest !== body["draftDigest"]) {
+        return Response.json({ error: { kind: "stalePlanDraft" } }, { status: 409 });
+      }
+      return planResultResponse(
+        study.startPlan({ operationKey: body["operationKey"], draft: draft.value }),
       );
     }
     if (request.method === "DELETE" && operation === undefined) {

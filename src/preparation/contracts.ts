@@ -1,5 +1,6 @@
 import type { JapaneseAnalyzer } from "../analysis/contracts.ts";
 import type { GrammarDetector } from "../learning-material/contracts.ts";
+import type { PlanDraft } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
 import type { StudyPreparationSnapshot } from "../study/contracts.ts";
 import type {
@@ -146,6 +147,7 @@ export type PreparationFailure =
   | { readonly kind: "findingNotFound"; readonly findingKey: string }
   | { readonly kind: "invalidCorrection"; readonly detail: string }
   | { readonly kind: "analysisNotComplete" }
+  | { readonly kind: "planDraftEmpty" }
   | { readonly kind: "batchFailure"; readonly failure: BatchFailure };
 
 export type Preparation = Readonly<{
@@ -174,6 +176,7 @@ export type Preparation = Readonly<{
     command: CorrectionCommand,
   ) => Result<PreparationSnapshot, PreparationFailure>;
   evidence: (query: EvidenceQuery) => Result<EvidencePage, PreparationFailure>;
+  planDraft: (id: SubtitleSetId) => Result<PlanDraft, PreparationFailure>;
   deleteSubtitleSet: (
     id: SubtitleSetId,
     confirmation: "delete",

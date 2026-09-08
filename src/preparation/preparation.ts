@@ -27,6 +27,7 @@ import type {
   SubtitleSetSnapshot,
 } from "./import-contracts.ts";
 import { asSubtitleSetId } from "./import-contracts.ts";
+import { projectPlanDraft } from "./plan.ts";
 import {
   findingCounts,
   projectFindings,
@@ -936,6 +937,32 @@ export const openPreparation = (
             offset: query.offset,
             items: finding.evidence.slice(query.offset, query.offset + query.limit),
           });
+    },
+    planDraft: (id) => {
+      const complete = getComplete(id);
+      if (!complete.ok) return complete;
+      if (
+        complete.value.run.findings_json === null ||
+        complete.value.run.study_digest === null
+      ) {
+        return err({ kind: "analysisNotComplete" });
+      }
+      try {
+        const findings = JSON.parse(
+          complete.value.run.findings_json,
+        ) as readonly StoredFinding[];
+        const draft = projectPlanDraft({
+          set: complete.value.snapshot.subtitleSet,
+          runId: complete.value.run.run_id,
+          studyDigest: complete.value.run.study_digest,
+          findings,
+        });
+        return draft.items.length === 0 && draft.blockers.length === 0
+          ? err({ kind: "planDraftEmpty" })
+          : ok(draft);
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
     },
     deleteSubtitleSet: (id, confirmation) => {
       if (confirmation !== "delete") {

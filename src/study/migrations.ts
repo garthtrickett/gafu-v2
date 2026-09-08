@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 2;
+export const STUDY_SCHEMA_VERSION = 3;
 
 const migrations: readonly Migration[] = [
   {
@@ -115,6 +115,75 @@ const migrations: readonly Migration[] = [
     sql: `
       ALTER TABLE known_word ADD COLUMN part_of_speech TEXT;
       DELETE FROM seed_ledger;
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE staging_source (
+        card_id TEXT NOT NULL REFERENCES card(id) ON DELETE RESTRICT,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('manual', 'plan', 'capture')),
+        source_key TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (card_id, source_kind, source_key)
+      );
+
+      INSERT INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
+      SELECT c.id, 'manual', c.id, c.staging_priority, 1, c.staged_at
+      FROM card c JOIN card_progress p ON p.card_id = c.id
+      WHERE p.state = 'staged';
+
+      CREATE TABLE preparation_plan (
+        id TEXT PRIMARY KEY,
+        source_key TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('active', 'paused')),
+        draft_digest TEXT NOT NULL,
+        source_revision TEXT NOT NULL,
+        analysis_run_id TEXT NOT NULL,
+        study_digest TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        episodes_json TEXT NOT NULL,
+        created_cards INTEGER NOT NULL,
+        reused_cards INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE plan_start_operation (
+        operation_key TEXT PRIMARY KEY,
+        draft_digest TEXT NOT NULL,
+        plan_id TEXT NOT NULL REFERENCES preparation_plan(id) ON DELETE CASCADE,
+        committed_at TEXT NOT NULL
+      );
+
+      CREATE TABLE preparation_plan_member (
+        plan_id TEXT NOT NULL REFERENCES preparation_plan(id) ON DELETE CASCADE,
+        finding_key TEXT NOT NULL,
+        card_id TEXT NOT NULL REFERENCES card(id) ON DELETE RESTRICT,
+        classification TEXT NOT NULL CHECK (classification IN ('required', 'helpful')),
+        preparation_priority INTEGER NOT NULL,
+        staging_priority INTEGER NOT NULL,
+        first_needed_episode_key TEXT NOT NULL,
+        first_needed_episode_order INTEGER NOT NULL,
+        first_needed_episode_title TEXT NOT NULL,
+        rank_reasons_json TEXT NOT NULL,
+        proposed_relation TEXT NOT NULL CHECK (proposed_relation IN ('missing', 'existing')),
+        PRIMARY KEY (plan_id, finding_key),
+        UNIQUE (plan_id, card_id)
+      );
+
+      CREATE TABLE preparation_plan_evidence (
+        plan_id TEXT NOT NULL,
+        finding_key TEXT NOT NULL,
+        episode_key TEXT NOT NULL,
+        cue_key TEXT NOT NULL,
+        PRIMARY KEY (plan_id, finding_key, episode_key, cue_key),
+        FOREIGN KEY (plan_id, finding_key)
+          REFERENCES preparation_plan_member(plan_id, finding_key) ON DELETE CASCADE
+      );
     `,
   },
 ];

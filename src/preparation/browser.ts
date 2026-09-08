@@ -1,5 +1,10 @@
 import { html, render, type TemplateResult } from "lit-html";
 import type {
+  PlanDraft,
+  PlanSnapshot,
+  PlanSummary,
+} from "../preparation-plan-contracts.ts";
+import type {
   AnalysisPreflight,
   EvidencePage,
   FindingClassification,
@@ -27,6 +32,8 @@ type Model = {
   currentSet: SubtitleSetSnapshot | null;
   preflight: AnalysisPreflight | null;
   result: PreparationSnapshot | null;
+  draft: PlanDraft | null;
+  plan: PlanSnapshot | null;
   evidence: EvidencePage | null;
   evidenceFor: string | null;
   relation: "all" | FindingRelation;
@@ -100,6 +107,8 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     currentSet: null,
     preflight: null,
     result: null,
+    draft: null,
+    plan: null,
     evidence: null,
     evidenceFor: null,
     relation: "missing",
@@ -147,6 +156,8 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       model.currentSet = null;
       model.preflight = null;
       model.result = null;
+      model.draft = null;
+      model.plan = null;
       return `${model.report.acceptedCount} accepted, ${model.report.rejectedCount} rejected, ${model.report.duplicateCount} duplicate.`;
     });
   };
@@ -208,6 +219,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       model.report = null;
       model.preflight = null;
       model.evidence = null;
+      model.draft = null;
       model.result =
         set.analysis?.state === "complete"
           ? await requestJson<PreparationSnapshot>(
@@ -215,6 +227,14 @@ export const mountPreparationApp = (root: HTMLElement): void => {
               jsonRequest("POST"),
             )
           : null;
+      const plans = await requestJson<readonly PlanSummary[]>("/api/study/plans");
+      const matchingPlan = plans.find((plan) => plan.sourceKey === set.id);
+      model.plan =
+        matchingPlan === undefined
+          ? null
+          : await requestJson<PlanSnapshot>(
+              `/api/study/plans/${encodeURIComponent(matchingPlan.id)}`,
+            );
       return model.result === null
         ? "Subtitle Set opened. Review the scope before analysis."
         : "Saved analysis opened and re-compared locally with current Study state.";
@@ -245,6 +265,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           retryUncertain,
         }),
       );
+      model.draft = null;
       await refreshSets();
       return model.result.state === "complete"
         ? `Preparation Gap complete: ${model.result.counts.gap} missing, ${model.result.counts.existing} already in Study, ${model.result.counts.known} known.`
@@ -264,6 +285,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           ...change,
         }),
       );
+      model.draft = null;
       return "Correction saved as a non-destructive overlay.";
     });
   };
@@ -306,9 +328,71 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       model.currentSet = null;
       model.preflight = null;
       model.result = null;
+      model.draft = null;
+      model.plan = null;
       model.evidence = null;
       await refreshSets();
       return "Subtitle Set and Preparation analysis deleted. Study data was kept.";
+    });
+  };
+
+  const reviewPlan = (): void => {
+    const set = model.currentSet;
+    if (set === null) return;
+    void run(async () => {
+      model.draft = await requestJson<PlanDraft>(
+        `/api/preparation/sets/${encodeURIComponent(set.id)}/plan-draft`,
+      );
+      return model.draft.blockers.length === 0
+        ? `${model.draft.items.length} Cards are ready to stage.`
+        : `${model.draft.blockers.length} selected target(s) need correction before starting.`;
+    });
+  };
+
+  const startPlan = (): void => {
+    const set = model.currentSet;
+    const draft = model.draft;
+    if (set === null || draft === null || draft.blockers.length > 0) return;
+    void run(async () => {
+      model.plan = await requestJson<PlanSnapshot>(
+        `/api/preparation/sets/${encodeURIComponent(set.id)}/start-plan`,
+        jsonRequest("POST", {
+          operationKey: crypto.randomUUID(),
+          draftDigest: draft.digest,
+        }),
+      );
+      return `Plan started atomically: ${model.plan.createdCards} Card(s) created and ${model.plan.reusedCards} reused.`;
+    });
+  };
+
+  const changePlanState = (action: "pause" | "resume"): void => {
+    const plan = model.plan;
+    if (plan === null) return;
+    void run(async () => {
+      model.plan = await requestJson<PlanSnapshot>(
+        `/api/study/plans/${encodeURIComponent(plan.id)}`,
+        jsonRequest("POST", { action }),
+      );
+      return action === "pause"
+        ? "Plan staging paused; existing Card progress was kept."
+        : "Plan staging resumed under the shared daily allowance.";
+    });
+  };
+
+  const deletePlan = (): void => {
+    const plan = model.plan;
+    if (
+      plan === null ||
+      !confirm(`Delete preparation plan “${plan.title}”? Cards and progress are kept.`)
+    )
+      return;
+    void run(async () => {
+      await requestJson(
+        `/api/study/plans/${encodeURIComponent(plan.id)}`,
+        jsonRequest("DELETE", { confirmation: "delete" }),
+      );
+      model.plan = null;
+      return "Plan deleted. Its Cards and learning progress were kept.";
     });
   };
 
@@ -535,7 +619,53 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         </label>
       </div>
       <p>Showing ${visible.length} complete finding(s); this filter does not truncate the stored analysis.</p>
+      <button type="button" @click=${reviewPlan} ?disabled=${model.busy}>Review preparation plan</button>
       <div class="finding-list">${visible.map(findingView)}</div>
+    </section>`;
+  };
+
+  const planView = (): TemplateResult | string => {
+    const draft = model.draft;
+    const plan = model.plan;
+    if (plan !== null) {
+      return html`<section class="panel" data-testid="plan-readiness">
+        <div class="finding-heading">
+          <div><p class="eyebrow">Preparation Plan</p><h2>${plan.title}</h2></div>
+          <span class="pill">${plan.state}</span>
+        </div>
+        <p>${plan.members.length} Cards · ${plan.newCardsPerDay} new Cards per local day · revision ${plan.revision}</p>
+        <div class="episode-readiness">
+          ${plan.episodes.map(
+            (episode) => html`<article class="episode-readiness-card">
+              <strong>${episode.ready ? "Ready" : "Preparing"} · Episode ${episode.order}</strong>
+              <span>${episode.title}</span>
+              <small>Required ${episode.requiredReady}/${episode.requiredTotal} · Helpful ${episode.helpfulReady}/${episode.helpfulTotal}</small>
+              ${episode.estimatedIntroductionDay === null ? "" : html`<small>Estimated required introductions by ${episode.estimatedIntroductionDay}</small>`}
+              ${episode.inStudyUnknownReadiness === 0 ? "" : html`<small>${episode.inStudyUnknownReadiness} blocker(s) are in study; readiness depends on recall.</small>`}
+              ${episode.inactiveStagedBlockers === 0 ? "" : html`<small>${episode.inactiveStagedBlockers} blocker(s) have no active staging source.</small>`}
+            </article>`,
+          )}
+        </div>
+        <div class="button-row">
+          <button type="button" class="secondary" @click=${() =>
+            changePlanState(
+              plan.state === "active" ? "pause" : "resume",
+            )}>${plan.state === "active" ? "Pause staging" : "Resume staging"}</button>
+          <button type="button" class="danger" @click=${deletePlan}>Delete plan</button>
+        </div>
+      </section>`;
+    }
+    if (draft === null) return "";
+    return html`<section class="panel" data-testid="plan-draft">
+      <p class="eyebrow">Review before Study writes</p>
+      <h2>Preparation Plan Draft</h2>
+      <p>${draft.selection.required} required · ${draft.selection.helpful} helpful · ${draft.selection.grammar} grammar · ${draft.selection.vocabulary} vocabulary</p>
+      ${
+        draft.blockers.length === 0
+          ? html`<p>All ${draft.items.length} selected targets have Card identity and source evidence.</p>`
+          : html`<div class="notice notice--error"><strong>Correct these in the gap first</strong><ul>${draft.blockers.map((blocker) => html`<li>${blocker.label}: ${blocker.reason}</li>`)}</ul></div>`
+      }
+      <button type="button" @click=${startPlan} ?disabled=${model.busy || draft.blockers.length > 0 || draft.items.length === 0}>Start plan</button>
     </section>`;
   };
 
@@ -569,6 +699,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
             }
             ${preflightView()}
             ${gapView()}
+            ${planView()}
           </div>
           <aside class="panel set-list"><p class="eyebrow">Saved sets</p><h2>Subtitle Sets</h2>
             ${model.sets.length === 0 ? html`<p>No saved sets yet.</p>` : model.sets.map((set) => html`<button type="button" class="set-button" @click=${() => openSet(set)}><strong>${set.title}</strong><span>${set.episodes.length} episode(s) · ${set.analysis?.state ?? "not analyzed"}</span></button>`)}
