@@ -1,6 +1,6 @@
 # Phase 0 — Prove the risky seams
 
-**Status:** In implementation — patch 0.1 complete · 1.1
+**Status:** In implementation — patches 0.1–0.2 complete · 1.2
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)
 **Product source:** [`../V2.md`](../V2.md)
 **Last updated:** 2026-09-08
@@ -229,7 +229,7 @@ one.
 | Patch | Status | Purpose | Depends on |
 |---|---|---|---|
 | 0.1 | Done | Establish the executable skeleton and quality contract | — |
-| 0.2 | Not started | Build and freeze the Japanese fixture oracle | 0.1 |
+| 0.2 | Done | Build and freeze the Japanese fixture oracle | 0.1 |
 | 0.3 | Not started | Characterize and select Japanese analysis | 0.2 |
 | 0.4 | Not started | Prove or reject `i`/`i+1` validation | 0.3 |
 | 0.5 | Not started | Prove complete, resumable agent batching | 0.2, 0.3 |
