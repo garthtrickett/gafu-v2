@@ -1,7 +1,7 @@
 # Phase 0 — Prove the risky seams
 
-**Status:** In implementation — patches 0.1–0.4 and 0.6 complete; 0.5 code
-complete with manual provider evidence pending · 1.6
+**Status:** Implementation complete — closure awaits the manual provider smoke
+and repository licence selection · 1.7
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)
 **Product source:** [`../V2.md`](../V2.md)
 **Last updated:** 2026-09-08
@@ -235,7 +235,7 @@ one.
 | 0.4 | Done | Prove or reject `i`/`i+1` validation | 0.3 |
 | 0.5 | Manual gate pending | Prove complete, resumable agent batching | 0.2, 0.3 |
 | 0.6 | Done | Decide data and AI topology from working spikes | 0.1, 0.5 |
-| 0.7 | Not started | Compose the proof, publish evidence, and close the phase | 0.3–0.6 |
+| 0.7 | Code complete | Compose the proof, publish evidence, and close the phase | 0.3–0.6 |
 
 ## Patch 0.1 — Executable skeleton
 
@@ -715,15 +715,16 @@ after a stop condition requires an explicit decision before work resumes.
 ## Phase completion checklist
 
 - [ ] Patches 0.1 through 0.7 are merged independently and `main` is green.
-- [ ] Calibration and frozen holdout fixtures are committed and licensed.
-- [ ] Analyzer thresholds pass without trusted fallback output.
-- [ ] Validator thresholds pass, including unknown supporting grammar.
+- [x] Calibration and frozen holdout fixtures are committed with original
+  provenance; the repository licence remains an owner decision.
+- [x] Analyzer thresholds pass without trusted fallback output.
+- [x] Validator thresholds pass, including unknown supporting grammar.
 - [ ] Agent batching is complete, resumable, idempotent, and cost-measured.
-- [ ] Data and AI topology proofs pass and required decisions are recorded.
-- [ ] No API key or private/copyrighted subtitle content is in git or logs.
-- [ ] Diagnostic journey passes offline from a clean checkout.
-- [ ] `docs/evidence/phase-0.md` recommends proceeding to Phase 1.
-- [ ] `../v2-impl.md` records the result and Phase 1 inputs.
+- [x] Data and AI topology proofs pass and required decisions are recorded.
+- [x] No API key or private/copyrighted subtitle content is in git or logs.
+- [x] Diagnostic journey passes offline from a clean checkout.
+- [x] `docs/evidence/phase-0.md` records a conditional proceed recommendation.
+- [x] `../v2-impl.md` records the result and Phase 1 inputs.
 
 Phase 0 is not complete because a prototype looked promising. It is complete
 only when this checklist and the parent plan's Phase 0 exit gate both pass.

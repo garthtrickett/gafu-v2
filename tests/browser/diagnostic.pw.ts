@@ -6,7 +6,13 @@ test("boots the Phase 0 diagnostic route", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Gafu V2 diagnostics" }),
   ).toBeVisible();
-  await expect(page.getByText("Executable skeleton is ready.")).toBeVisible();
+  await expect(page.getByText("Integrated Phase 0 proof passed.")).toBeVisible();
+  const proof = page.getByTestId("phase0-proof");
+  await expect(proof).toContainText("4 cues");
+  await expect(proof).toContainText("4 batches");
+  await expect(proof).toContainText("Final-batch target");
+  await expect(proof).toContainText("retained");
+  await expect(proof).toContainText("3 invalid rejected");
 });
 
 test("analyzes Japanese off the browser main thread", async ({ page }) => {

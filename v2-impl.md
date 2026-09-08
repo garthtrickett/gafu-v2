@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 0 in implementation · 1.2
+**Status:** Phase 0 implementation complete; two closure gates pending · 1.3
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -202,6 +202,39 @@ type-check, unit tests, and one browser smoke test.
 
 Real SRS scheduling, persistent Cards, production agent calls, ZIP upload,
 series planning, or playback.
+
+### Phase 0 implementation result
+
+The executable proof is complete. Kuromoji/IPADIC reconstructs the selected
+held-out Japanese spans without trusted fallback; conservative subtraction has
+zero held-out false-known exclusions; the independent material validator
+rejects all 1,200 frozen invalid presentations; complete-only batching resumes
+without silently repeating completed or uncertain work; and the browser
+diagnostic composes these boundaries offline. A local Bun server with SQLite is
+the selected writer, provider keys/calls remain server-side, and both choices
+are recorded in ADRs.
+
+Phase 1 remains planned rather than ready until two closure gates are cleared:
+the three-run paid provider smoke needs a developer-supplied
+`OPENAI_API_KEY`, and the owner must select the repository licence. The code
+does not depend on either being silently assumed.
+
+Phase 1 may rely on these facts:
+
+- analyzed spans index NFKC-normalized text in UTF-16 code units;
+- analyzer failure and ambiguity remain typed and cannot subtract knowledge;
+- the selected analyzer supplies surface, lemma, reading, broad part of speech,
+  and conjugation but no trustworthy sense identity;
+- `i`/`i+1` validation is independent from the generating provider and covers
+  the declared 22-construction grammar envelope;
+- Study will own one SQLite transaction for Cards, schedules, plan membership,
+  and evidence; and
+- the browser never owns provider keys or authoritative learner progress.
+
+Before Phase 1 freezes Vocabulary Card identity, select a dictionary/sense
+authority consistent with the glossary's “one lemma or fixed expression in one
+meaning” definition. IPADIC alone cannot supply that identity, and an unknown
+sense must stay unresolved rather than being guessed.
 
 ## Phase 1 — Card and SRS core, offline
 
