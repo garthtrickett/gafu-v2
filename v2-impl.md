@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 0 detailed and ready · 1.1
+**Status:** Phase 0 in implementation · 1.2
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
