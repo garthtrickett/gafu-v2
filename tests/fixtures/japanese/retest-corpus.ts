@@ -356,3 +356,65 @@ export const freshHoldoutFixtures: readonly JapaneseCueFixture[] = seeds.flatMap
       });
     }),
 );
+
+export const invalidatedFreshHoldoutIds = ["fresh-13-1", "fresh-13-2"] as const;
+
+const replacementFixtures: readonly JapaneseCueFixture[] = [
+  cue({
+    id: "fresh-replacement-13-1",
+    split: "holdout",
+    pieces: [
+      n("来週", "らいしゅう"),
+      p("から"),
+      v("歩く", "歩く", "あるく", "基本形"),
+      n("こと", "こと"),
+      p("に"),
+      v("し", "する", "し", "連用形"),
+      x("た", "た", "基本形"),
+      q("。"),
+    ],
+    construction: "〜ことにする",
+    grammarTokenRange: [2, 7],
+    targetTokenIndex: 2,
+    riskSlices: ["fresh-holdout", "grammar", "inflection", "replacement"],
+    annotationNote:
+      "Unseen replacement for an invalid target annotation; analyzer configuration unchanged.",
+  }),
+  cue({
+    id: "fresh-replacement-13-2",
+    split: "holdout",
+    pieces: [
+      q("🎵"),
+      "\n",
+      n("夜", "よる"),
+      p("は"),
+      v("読む", "読む", "よむ", "基本形"),
+      n("こと", "こと"),
+      p("に"),
+      v("し", "する", "し", "連用形"),
+      x("た", "た", "基本形"),
+      q("。"),
+    ],
+    construction: "〜ことにする",
+    grammarTokenRange: [4, 9],
+    targetTokenIndex: 4,
+    riskSlices: [
+      "fresh-holdout",
+      "grammar",
+      "inflection",
+      "replacement",
+      "astral",
+      "multiline",
+      "utf16-offset",
+    ],
+    annotationNote:
+      "Unseen replacement for an invalid target annotation; analyzer configuration unchanged.",
+  }),
+];
+
+export const selectionHoldoutFixtures: readonly JapaneseCueFixture[] = [
+  ...freshHoldoutFixtures.filter(
+    (fixture) => !invalidatedFreshHoldoutIds.some((id) => id === fixture.id),
+  ),
+  ...replacementFixtures,
+];
