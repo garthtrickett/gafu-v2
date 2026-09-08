@@ -1,6 +1,6 @@
 # Phase 5 — Watch and Subtitle Capture
 
-**Status:** Refined implementation contract · 5.0
+**Status:** Implemented and verified · 5.1
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)  
 **Product source:** [`../V2.md`](../V2.md)  
 **Last updated:** 2026-09-08
@@ -144,7 +144,7 @@ the learner to invoke the shortcut again; no partial Card exists.
 IPADIC supplies morphology, not dictionary-grade senses. Therefore Phase 5
 requires the learner to confirm a concise meaning and a stable local sense label
 before commit. The UI suggests a deterministic local label derived from lemma,
-reading, POS, and normalized meaning, while making its non-dictionary status
+reading, and POS, while making its non-dictionary status
 clear. A future dictionary may turn this into a choice, but the semantic identity
 is never guessed from the selected spelling alone.
 
@@ -153,7 +153,7 @@ is never guessed from the selected spelling alone.
 ```ts
 type Watch = {
   resolve(command: ResolveCapture): Promise<Result<CaptureResolution, WatchFailure>>;
-  commit(command: CommitCapture, study: Study): Result<CaptureOutcome, WatchFailure>;
+  commit(command: CommitCapture): Result<CaptureOutcome, WatchFailure>;
 };
 ```
 
@@ -228,8 +228,9 @@ Study migration 4 adds:
 - capture Staging Sources using the Phase 4 table.
 
 Watch stores no database rows. Pending Capture tokens live only in bounded
-server memory, expire after ten minutes, and are consumed after successful
-commit. Browser local storage contains only the validated shortcut chord. Object
+server memory and expire after ten minutes. A successful token retains only its
+command and outcome until expiry so an exact lost-response retry is safe; a
+changed retry is rejected. Browser local storage contains only the validated shortcut chord. Object
 URLs, media bytes, subtitle bytes, cue text, selection, and candidate dialogs are
 ephemeral.
 
@@ -381,7 +382,7 @@ Phase 6 handoff.
 - [x] Contextual resolution and sense-confirmation limits are explicit.
 - [x] Atomic Study capture and shared staging are explicit.
 - [x] Persistence, privacy, recovery, and deferrals are explicit.
-- [ ] Browser subtitle/playback internals are implemented.
-- [ ] Watch resolution and pending capture are implemented.
-- [ ] Atomic Study capture is implemented.
-- [ ] Watch browser journey and closure evidence pass.
+- [x] Browser subtitle/playback internals are implemented.
+- [x] Watch resolution and pending capture are implemented.
+- [x] Atomic Study capture is implemented.
+- [x] Watch browser journey and closure evidence pass.

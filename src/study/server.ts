@@ -25,6 +25,8 @@ import {
   createOpenAiKeyVerifier,
   createProviderKeyCustody,
 } from "../topology/provider-key-custody.ts";
+import { handleWatchApi } from "../watch/server.ts";
+import { createWatch } from "../watch/watch.ts";
 import type {
   AnswerGrade,
   CardContent,
@@ -113,6 +115,7 @@ const failureStatus = (failure: StudyFailure): number => {
     case "presentationExpired":
     case "presentationForWrongCard":
     case "invalidPlanDraft":
+    case "invalidCapture":
       return 422;
     case "invalidStateTransition":
     case "identityConflict":
@@ -121,6 +124,7 @@ const failureStatus = (failure: StudyFailure): number => {
     case "unsupportedSchema":
     case "planOperationConflict":
     case "invalidPlanTransition":
+    case "captureOperationConflict":
       return 409;
     case "openFailed":
     case "migrationFailed":
@@ -522,6 +526,15 @@ if (!opened.ok) {
   throw new Error(`Study failed to open: ${opened.error.kind}`);
 }
 
+const watch = createWatch({
+  analyzer,
+  clock: () => new Date(),
+  nextToken: () => crypto.randomUUID(),
+  captureVocabulary: opened.value.captureVocabulary,
+  pendingTtlMs: 10 * 60 * 1_000,
+  maximumPending: 128,
+});
+
 const preparationProvider = fakeAi
   ? createDeterministicPreparationProvider()
   : createOpenAiBatchProvider({
@@ -555,6 +568,8 @@ const server = Bun.serve({
     if (!new URL(request.url).pathname.startsWith("/api/")) {
       return staticResponse(request);
     }
+    const watchResponse = await handleWatchApi(request, watch);
+    if (watchResponse !== null) return watchResponse;
     const preparationResponse = await handlePreparationApi(
       request,
       openedPreparation.value,

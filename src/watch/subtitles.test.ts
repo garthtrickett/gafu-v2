@@ -1,0 +1,39 @@
+import { describe, expect, test } from "bun:test";
+import { episodeOne } from "../../tests/fixtures/preparation/subtitles.ts";
+import { activeWatchCues, parseWatchSrt } from "./subtitles.ts";
+
+describe("Watch subtitles", () => {
+  test("uses Phase 3 content identities and inclusive active boundaries", async () => {
+    const parsed = await parseWatchSrt(new TextEncoder().encode(episodeOne));
+    if (!parsed.ok) throw new Error(parsed.error.detail);
+    expect(parsed.value.episodeKey).toStartWith("episode-v1:sha256:");
+    expect(
+      parsed.value.cues.every((cue) => cue.cueKey.startsWith("cue-v1:sha256:")),
+    ).toBe(true);
+    const first = parsed.value.cues[0];
+    if (first === undefined) throw new Error("fixture has no cue");
+    expect(activeWatchCues(parsed.value.cues, first.startMs)).toContain(first);
+    expect(activeWatchCues(parsed.value.cues, first.endMs)).toContain(first);
+  });
+
+  test("preserves multiline text but never markup", async () => {
+    const source = `1\n00:00:01,000 --> 00:00:03,000\n<b>猫</b>です。\n二行目。\n`;
+    const parsed = await parseWatchSrt(new TextEncoder().encode(source));
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { cues: [{ text: "猫です。\n二行目。" }] },
+    });
+  });
+
+  test("rejects malformed and non-Japanese files", async () => {
+    expect(await parseWatchSrt(new TextEncoder().encode("bad"))).toMatchObject({
+      ok: false,
+      error: { kind: "subtitleInvalid" },
+    });
+    expect(
+      await parseWatchSrt(
+        new TextEncoder().encode("1\n00:00:01,000 --> 00:00:02,000\nhello\n"),
+      ),
+    ).toMatchObject({ ok: false, error: { kind: "subtitleInvalid" } });
+  });
+});

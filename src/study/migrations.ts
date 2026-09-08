@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 3;
+export const STUDY_SCHEMA_VERSION = 4;
 
 const migrations: readonly Migration[] = [
   {
@@ -183,6 +183,30 @@ const migrations: readonly Migration[] = [
         PRIMARY KEY (plan_id, finding_key, episode_key, cue_key),
         FOREIGN KEY (plan_id, finding_key)
           REFERENCES preparation_plan_member(plan_id, finding_key) ON DELETE CASCADE
+      );
+    `,
+  },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE capture_operation (
+        operation_key TEXT PRIMARY KEY,
+        payload_digest TEXT NOT NULL,
+        card_id TEXT NOT NULL REFERENCES card(id) ON DELETE RESTRICT,
+        outcome TEXT NOT NULL CHECK (outcome IN ('created', 'existing')),
+        evidence_added INTEGER NOT NULL CHECK (evidence_added IN (0, 1)),
+        captured_at TEXT NOT NULL
+      );
+
+      CREATE TABLE subtitle_capture_evidence (
+        card_id TEXT NOT NULL REFERENCES card(id) ON DELETE RESTRICT,
+        source_key TEXT NOT NULL,
+        cue_key TEXT NOT NULL,
+        selected_surface TEXT NOT NULL,
+        span_start INTEGER NOT NULL,
+        span_end INTEGER NOT NULL,
+        captured_at TEXT NOT NULL,
+        PRIMARY KEY (card_id, source_key, cue_key, span_start, span_end)
       );
     `,
   },

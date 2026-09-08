@@ -62,6 +62,24 @@ export type CreateCardOutcome = Readonly<{
   card: CardSummary;
 }>;
 
+export type SubtitleVocabularyCapture = Readonly<{
+  operationKey: string;
+  card: Extract<CreateCard, { type: "vocabulary" }>;
+  identityClaim: Readonly<{
+    authority: "gafu-capture-v1";
+    claimKey: string;
+  }>;
+  evidence: Readonly<{
+    sourceKey: string;
+    cueKey: string;
+    selectedSurface: string;
+    span: Readonly<{ start: number; end: number }>;
+  }>;
+}>;
+
+export type CaptureCardOutcome = CreateCardOutcome &
+  Readonly<{ evidenceAdded: boolean }>;
+
 export type CardQuery = Readonly<{
   search?: string;
   type?: CardType;
@@ -247,7 +265,9 @@ export type StudyFailure =
   | { readonly kind: "invalidPlanDraft"; readonly detail: string }
   | { readonly kind: "planOperationConflict" }
   | { readonly kind: "planNotFound"; readonly planId: string }
-  | { readonly kind: "invalidPlanTransition"; readonly detail: string };
+  | { readonly kind: "invalidPlanTransition"; readonly detail: string }
+  | { readonly kind: "invalidCapture"; readonly detail: string }
+  | { readonly kind: "captureOperationConflict" };
 
 export type Study = Readonly<{
   createCard: (input: CreateCard) => Result<CreateCardOutcome, StudyFailure>;
@@ -274,6 +294,9 @@ export type Study = Readonly<{
   plan: (id: PlanId) => Result<PlanSnapshot, StudyFailure>;
   setPlanState: (command: PlanStateCommand) => Result<PlanSnapshot, StudyFailure>;
   deletePlan: (id: PlanId, confirmation: "delete") => Result<void, StudyFailure>;
+  captureVocabulary: (
+    command: SubtitleVocabularyCapture,
+  ) => Result<CaptureCardOutcome, StudyFailure>;
   close: () => void;
 }>;
 
