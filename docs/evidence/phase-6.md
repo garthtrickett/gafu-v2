@@ -2,7 +2,7 @@
 
 **Evidence date:** 2026-09-08  
 **Reference runtime:** Bun 1.3.2, Linux x64, headless Chromium and Firefox  
-**Result:** local implementation validation complete; owner-only real-data gate open
+**Result:** implementation validation complete; owner-only real-data gate open
 
 ## Implemented replacement boundary
 
@@ -69,8 +69,9 @@ git diff --check
 The final local run produced 157 passing tests and 6,268 assertions across 42
 files, a successful Vite production build, ten passing browser journeys (eight
 Chromium, one Firefox critical-surface, and one mobile Chromium
-critical-surface), and a clean whitespace check. Authoritative PR CI is recorded
-after publication.
+critical-surface), and a clean whitespace check. GitHub Actions run
+[`34288678323`](https://github.com/garthtrickett/gafu-v2/actions/runs/34288678323)
+repeated the complete check/test/build/browser workflow successfully on PR #16.
 
 ## Open release gates
 

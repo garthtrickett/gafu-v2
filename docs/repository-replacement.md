@@ -42,7 +42,7 @@ verified on the owner's actual media. Before archiving:
 
 ## Current status
 
-- Phase 6 implementation evidence: locally complete; authoritative PR CI pending.
+- Phase 6 implementation evidence: complete in PR #16, including authoritative CI.
 - Real private-data reconciliation: not recorded.
 - Multi-day owner acceptance journey: not recorded.
 - Licence/external data gates: pending.
