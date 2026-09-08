@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: "tests/browser",
   testMatch: "**/*.pw.ts",
   fullyParallel: false,
+  // Browser journeys share one authoritative local SQLite server by design.
+  workers: 1,
   retries: process.env["CI"] ? 2 : 0,
   reporter: process.env["CI"] ? "github" : "line",
   use: {
