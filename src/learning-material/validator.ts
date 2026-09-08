@@ -17,6 +17,11 @@ const sameSpan = (
   right: DecodedPresentation["targetSpan"],
 ): boolean => left.start === right.start && left.end === right.end;
 
+const insideSpan = (
+  inner: DecodedPresentation["targetSpan"],
+  outer: DecodedPresentation["targetSpan"],
+): boolean => inner.start >= outer.start && inner.end <= outer.end;
+
 const grammarContainsTarget = (
   evidence: readonly DetectedGrammar[],
   canonicalForm: string,
@@ -117,7 +122,9 @@ export const createLearningMaterialValidator = (
         }
         const isVocabularyTarget =
           target.kind === "vocabulary" && sameSpan(token.span, presentation.targetSpan);
-        return !isVocabularyTarget && status !== "known";
+        const isGrammarTargetComponent =
+          target.kind === "grammar" && insideSpan(token.span, presentation.targetSpan);
+        return !isVocabularyTarget && !isGrammarTargetComponent && status !== "known";
       })
       .map(({ token }) => token.surface);
     if (unknownVocabulary.length > 0) {

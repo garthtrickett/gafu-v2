@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 1;
+export const STUDY_SCHEMA_VERSION = 2;
 
 const migrations: readonly Migration[] = [
   {
@@ -108,6 +108,13 @@ const migrations: readonly Migration[] = [
         availability TEXT NOT NULL CHECK (availability IN ('available', 'unavailable')),
         applied_at TEXT NOT NULL
       );
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE known_word ADD COLUMN part_of_speech TEXT;
+      DELETE FROM seed_ledger;
     `,
   },
 ];

@@ -1,7 +1,25 @@
 import { mkdirSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
-import type { Result } from "../result.ts";
+import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
+import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
+import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
+import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
 import type {
+  LearningMaterial,
+  MaterialFailure,
+} from "../learning-material/generated-contracts.ts";
+import { createGeneratedMaterialValidator } from "../learning-material/generated-validator.ts";
+import { openLearningMaterial } from "../learning-material/learning-material.ts";
+import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
+import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
+import type { Result } from "../result.ts";
+import { ok } from "../result.ts";
+import {
+  createOpenAiKeyVerifier,
+  createProviderKeyCustody,
+} from "../topology/provider-key-custody.ts";
+import type {
+  AnswerGrade,
   CardContent,
   CardStateCommand,
   CreateCard,
@@ -115,6 +133,51 @@ const jsonResult = <Value>(
     ? Response.json(result.value, { status: successStatus })
     : failureResponse(result.error);
 
+const materialFailureStatus = (failure: MaterialFailure): number => {
+  switch (failure.kind) {
+    case "providerNotConfigured":
+    case "authentication":
+      return 401;
+    case "permission":
+      return 403;
+    case "rateLimit":
+      return 429;
+    case "unsupportedGrammarTarget":
+    case "unsupportedVocabularyPartOfSpeech":
+    case "validationRejected":
+    case "tooSimilar":
+    case "noValidCandidate":
+    case "teachingNotAcknowledged":
+    case "presentationNotFound":
+    case "presentationAlreadyShown":
+      return 422;
+    case "inspectionDisabled":
+      return 404;
+    case "cancelled":
+      return 409;
+    case "offline":
+    case "timeout":
+    case "refusal":
+    case "incompleteResponse":
+    case "malformedResponse":
+    case "temporarilyUnavailable":
+      return 503;
+    case "migrationFailed":
+    case "readFailed":
+    case "writeFailed":
+    case "clockFailed":
+      return 500;
+  }
+};
+
+const materialResponse = <Value>(result: Result<Value, MaterialFailure>): Response =>
+  result.ok
+    ? Response.json(result.value)
+    : Response.json(
+        { error: { kind: result.error.kind } },
+        { status: materialFailureStatus(result.error) },
+      );
+
 const readJson = async (request: Request): Promise<unknown | Response> => {
   try {
     return await request.json();
@@ -140,8 +203,101 @@ const snapshot = (study: Study): Response => {
   });
 };
 
-const handleApi = async (request: Request, study: Study): Promise<Response> => {
+const handleApi = async (
+  request: Request,
+  study: Study,
+  material: LearningMaterial,
+): Promise<Response> => {
   const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/api/provider") {
+    return Response.json(material.providerStatus());
+  }
+  if (request.method === "PUT" && url.pathname === "/api/provider/key") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (!isRecord(body) || typeof body["apiKey"] !== "string") {
+      return invalidRequest("apiKey must be a string.");
+    }
+    return materialResponse(await material.replaceProviderKey(body["apiKey"]));
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/provider/key") {
+    return Response.json(material.removeProviderKey());
+  }
+  if (request.method === "GET" && url.pathname === "/api/provider/last-request") {
+    return materialResponse(material.inspectLastRequest());
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session") {
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const first = queue.value.due[0];
+    if (first === undefined)
+      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const prepared = await material.prepare({
+      card: first.card,
+      knowledge: knowledge.value,
+    });
+    if (!prepared.ok) return materialResponse(prepared);
+    const current = study.studyQueue();
+    if (!current.ok) return failureResponse(current.error);
+    if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
+      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+    }
+    return Response.json(prepared.value);
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session/teach") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      typeof body["cardId"] !== "string" ||
+      typeof body["presentationId"] !== "string"
+    )
+      return invalidRequest("Teaching acknowledgement is invalid.");
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const card = queue.value.due.find((item) => item.card.id === body["cardId"]);
+    if (card === undefined)
+      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+    const acknowledged = material.acknowledgeTeaching(
+      asCardId(body["cardId"]),
+      body["presentationId"],
+    );
+    if (!acknowledged.ok) return materialResponse(acknowledged);
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const prepared = await material.prepare({
+      card: card.card,
+      knowledge: knowledge.value,
+    });
+    if (!prepared.ok) return materialResponse(prepared);
+    const current = study.studyQueue();
+    if (!current.ok) return failureResponse(current.error);
+    if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
+      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+    }
+    return Response.json(prepared.value);
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session/answer") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    const grades: readonly AnswerGrade[] = ["again", "hard", "good", "easy"];
+    if (
+      !isRecord(body) ||
+      typeof body["cardId"] !== "string" ||
+      typeof body["permit"] !== "string" ||
+      !grades.includes(body["grade"] as AnswerGrade)
+    )
+      return invalidRequest("Review answer is invalid.");
+    return jsonResult(
+      study.answer({
+        cardId: asCardId(body["cardId"]),
+        grade: body["grade"] as AnswerGrade,
+        permit: { token: body["permit"] },
+      }),
+    );
+  }
   if (request.method === "GET" && url.pathname === "/api/study") {
     return snapshot(study);
   }
@@ -267,13 +423,55 @@ const staticResponse = async (request: Request): Promise<Response> => {
 const databasePath = process.env["GAFU_DATABASE_PATH"] ?? "data/gafu-v2.sqlite";
 if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
 
+const fakeAi = process.env["GAFU_FAKE_AI"] === "1";
+const openAiModel = process.env["GAFU_OPENAI_MODEL"] ?? "gpt-5.6-luna";
+const keyCustody = createProviderKeyCustody(
+  fakeAi
+    ? { verify: async () => ok(undefined) }
+    : createOpenAiKeyVerifier({ timeoutMs: 10_000, model: openAiModel }),
+);
+const provider = fakeAi
+  ? createDeterministicMaterialProvider()
+  : createOpenAiMaterialProvider({
+      apiKey: keyCustody.readForServerAdapter,
+      model: openAiModel,
+      promptVersion: "study-v1",
+      timeoutMs: 30_000,
+    });
+const analyzer = createKuromojiAnalyzer(() =>
+  loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
+);
+const transparentPartOfSpeech = new Set<BroadPartOfSpeech>([
+  "particle",
+  "auxiliary",
+  "copula",
+  "symbol",
+]);
+const validator = createGeneratedMaterialValidator({
+  analyzer,
+  grammar: declaredGrammarDetector,
+  senses: { resolve: () => [] },
+  policy: { transparentPartOfSpeech },
+});
+const openedMaterial = openLearningMaterial({
+  databasePath,
+  clock: () => new Date(),
+  nextId: () => crypto.randomUUID(),
+  nextToken: () => crypto.randomUUID(),
+  provider,
+  keyCustody,
+  validate: validator,
+  inspectionEnabled: process.env["GAFU_DEVELOPER_INSPECTION"] === "1",
+});
+if (!openedMaterial.ok) {
+  throw new Error(`Learning Material failed to open: ${openedMaterial.error.kind}`);
+}
+
 const opened = openStudy({
   databasePath,
   clock: () => new Date(),
   nextId: () => crypto.randomUUID(),
-  permitVerifier: {
-    verify: () => ({ ok: false, error: { kind: "presentationMissing" } }),
-  },
+  permitVerifier: openedMaterial.value.permitVerifier,
   knownWordSeed: unavailableKaishiSeed,
 });
 
@@ -287,7 +485,7 @@ const server = Bun.serve({
   port,
   fetch: (request) =>
     new URL(request.url).pathname.startsWith("/api/")
-      ? handleApi(request, opened.value)
+      ? handleApi(request, opened.value, openedMaterial.value)
       : staticResponse(request),
 });
 
@@ -295,6 +493,7 @@ console.info(`Gafu V2 local server listening on ${server.url}`);
 
 const close = () => {
   opened.value.close();
+  openedMaterial.value.close();
   void server.stop();
 };
 process.once("SIGINT", close);

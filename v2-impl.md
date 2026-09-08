@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 1 implementation complete; closure data and licence gates pending · 1.4
+**Status:** Phase 2 implementation complete; external provider, Kaishi, and licence gates pending · 1.6
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -310,6 +310,9 @@ Phase 2 must preserve these facts:
 
 ## Phase 2 — AI-generated study material
 
+**Detailed execution contract:** [`phases/phase-2.md`](phases/phase-2.md). It is
+authoritative for Phase 2 where this outline is less specific.
+
 ### Outcome
 
 Every admitted Card can be taught and reviewed with varied, validated material
@@ -348,6 +351,29 @@ API key without copying configuration JSON.
 ### Not in this phase
 
 Subtitle-derived targets, Preparation Plans, synthesized audio, or Watch.
+
+### Phase 2 implementation result
+
+Learning Material now owns structured `gpt-5.6-luna` generation, independent
+local validation, teach-before-test state, versioned exact/near-copy rejection,
+validated reserves, and opaque Presentation Permits. The local settings flow
+verifies, replaces, and removes a server-memory API key without JSON; Study
+remains the only review and schedule writer and rejects stale second-tab
+answers. The full deterministic and browser gates pass.
+
+The paid provider smoke remains pending because this environment has no API
+key. The declared 22-form grammar envelope, lack of dictionary-grade sense
+attestation, production Kaishi source, and repository licence remain explicit
+gates or limitations. See [`docs/evidence/phase-2.md`](docs/evidence/phase-2.md).
+
+Phase 3 must preserve these facts:
+
+- agent output is a proposal until local evidence and identity checks pass;
+- provider credentials and calls stay in the local server;
+- Study is the sole Card/progress writer;
+- provider failures cannot create partial learner state; and
+- subtitle analysis uses its own complete, resumable batching contract rather
+  than Learning Material's three-candidate reserve protocol.
 
 ## Phase 3 — Subtitle Set to Preparation Gap
 

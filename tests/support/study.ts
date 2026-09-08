@@ -35,8 +35,20 @@ export const testSeed: KnownWordSeed = {
   version: "1",
   availability: "available",
   entries: [
-    { key: "inu", lemma: "犬", reading: "いぬ", meaning: "dog" },
-    { key: "neko", lemma: "猫", reading: "ねこ", meaning: "cat" },
+    {
+      key: "inu",
+      lemma: "犬",
+      reading: "いぬ",
+      meaning: "dog",
+      partOfSpeech: "noun",
+    },
+    {
+      key: "neko",
+      lemma: "猫",
+      reading: "ねこ",
+      meaning: "cat",
+      partOfSpeech: "noun",
+    },
   ],
 };
 

@@ -1,5 +1,10 @@
 import { html, render, type TemplateResult } from "lit-html";
 import type {
+  PreparedMaterial,
+  ProviderStatus,
+} from "../learning-material/generated-contracts.ts";
+import type {
+  AnswerGrade,
   CardContent,
   CardStateCommand,
   CardSummary,
@@ -18,6 +23,9 @@ type BrowserSnapshot = Readonly<{
 
 type BrowserModel = {
   snapshot: BrowserSnapshot | null;
+  provider: ProviderStatus | null;
+  presentation: PreparedMaterial | null;
+  revealed: boolean;
   busy: boolean;
   message: string;
   messageKind: "neutral" | "success" | "error";
@@ -121,6 +129,9 @@ const editForm = (
 export const mountStudyApp = (root: HTMLElement): void => {
   const model: BrowserModel = {
     snapshot: null,
+    provider: null,
+    presentation: null,
+    revealed: false,
     busy: true,
     message: "Loading your Card bank…",
     messageKind: "neutral",
@@ -129,7 +140,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
 
   const refresh = async (): Promise<void> => {
-    model.snapshot = await requestJson<BrowserSnapshot>("/api/study");
+    [model.snapshot, model.provider] = await Promise.all([
+      requestJson<BrowserSnapshot>("/api/study"),
+      requestJson<ProviderStatus>("/api/provider"),
+    ]);
   };
 
   const run = async (operation: () => Promise<string>): Promise<void> => {
@@ -258,6 +272,78 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  const replaceProviderKey = (event: SubmitEvent): void => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const fields = new FormData(form);
+    void run(async () => {
+      model.provider = await requestJson<ProviderStatus>("/api/provider/key", {
+        method: "PUT",
+        body: JSON.stringify({ apiKey: value(fields, "apiKey") }),
+      });
+      form.reset();
+      return "OpenAI API key verified and held in server memory.";
+    });
+  };
+
+  const removeProviderKey = (): void => {
+    void run(async () => {
+      model.provider = await requestJson<ProviderStatus>("/api/provider/key", {
+        method: "DELETE",
+      });
+      return "Provider API key removed.";
+    });
+  };
+
+  const startStudy = (): void => {
+    void run(async () => {
+      model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
+        method: "POST",
+      });
+      model.revealed = false;
+      return model.presentation.mode === "teach"
+        ? "Learn this target before its first recall."
+        : "Recall the target, then reveal the answer.";
+    });
+  };
+
+  const finishTeaching = (): void => {
+    const current = model.presentation;
+    if (current === null) return;
+    void run(async () => {
+      model.presentation = await requestJson<PreparedMaterial>(
+        "/api/study/session/teach",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            cardId: current.cardId,
+            presentationId: current.id,
+          }),
+        },
+      );
+      model.revealed = false;
+      return "Teaching complete. Now recall it in a different sentence.";
+    });
+  };
+
+  const answer = (grade: AnswerGrade): void => {
+    const current = model.presentation;
+    if (current?.permit === null || current?.permit === undefined) return;
+    void run(async () => {
+      await requestJson("/api/study/session/answer", {
+        method: "POST",
+        body: JSON.stringify({
+          cardId: current.cardId,
+          grade,
+          permit: current.permit?.token,
+        }),
+      });
+      model.presentation = null;
+      model.revealed = false;
+      return "Review recorded once. The Card's next due time is saved.";
+    });
+  };
+
   const draw = (): void => {
     const snapshot = model.snapshot;
     const matching =
@@ -275,7 +361,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             <p class="eyebrow">Gafu V2 · Study foundation</p>
             <h1>Learn the Japanese your shows need.</h1>
             <p class="lede">
-              Cards own progress. Fresh AI study material arrives in Phase 2.
+              Cards own progress. AI material varies; local validation decides what is safe.
             </p>
           </div>
           <a class="secondary button-link" href="?diagnostic=phase0">Phase 0 diagnostic</a>
@@ -292,6 +378,56 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 <article><strong>${snapshot.status.activeCount}</strong><span>active</span></article>
                 <article><strong>${snapshot.status.dueCount}</strong><span>due</span></article>
                 <article><strong>${snapshot.status.knownCount}</strong><span>known</span></article>
+              </section>
+
+              <section class="panel review-panel" data-testid="review-panel">
+                <div class="review-heading">
+                  <div>
+                    <p class="eyebrow">Fresh validated material</p>
+                    <h2>Study</h2>
+                  </div>
+                  ${
+                    model.presentation === null
+                      ? html`<button type="button" @click=${startStudy} ?disabled=${model.busy}>
+                          Start next Card
+                        </button>`
+                      : ""
+                  }
+                </div>
+                ${
+                  model.presentation === null
+                    ? html`<p>Starting Study admits staged Cards under your daily limit, then prepares the first due Card.</p>`
+                    : html`<article class="presentation presentation--${model.presentation.mode}">
+                        <span class="pill">${model.presentation.mode}</span>
+                        <p class="context">${model.presentation.material.context}</p>
+                        <p class="prompt">${model.presentation.material.prompt}</p>
+                        <p class="japanese" lang="ja">${model.presentation.material.japanese}</p>
+                        ${
+                          model.presentation.mode === "teach" || model.revealed
+                            ? html`<div class="answer" data-testid="material-answer">
+                                <strong>${model.presentation.material.answer}</strong>
+                                <p class="answer-copy">${model.presentation.material.explanation}</p>
+                                <p class="answer-copy">${model.presentation.material.usageNote}</p>
+                              </div>`
+                            : html`<button type="button" @click=${() => {
+                                model.revealed = true;
+                                draw();
+                              }}>Reveal answer</button>`
+                        }
+                        ${
+                          model.presentation.mode === "teach"
+                            ? html`<button type="button" @click=${finishTeaching} ?disabled=${model.busy}>I've studied this — start recall</button>`
+                            : model.revealed
+                              ? html`<div class="grades" aria-label="Recall grade">
+                                  ${(["again", "hard", "good", "easy"] as const).map(
+                                    (grade) =>
+                                      html`<button type="button" class="secondary" @click=${() => answer(grade)}>${grade}</button>`,
+                                  )}
+                                </div>`
+                              : ""
+                        }
+                      </article>`
+                }
               </section>
 
               <div class="workspace">
@@ -339,6 +475,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     </label>
                     <button type="submit" ?disabled=${model.busy}>Save settings</button>
                   </form>
+                  <div class="provider-settings">
+                    <h3>AI provider</h3>
+                    <p>${model.provider?.provider ?? "OpenAI"} · ${model.provider?.model ?? "gpt-5.6-luna"}</p>
+                    <p>${model.provider?.configured ? "API key configured until server restart." : "No API key configured."}</p>
+                    <form @submit=${replaceProviderKey}>
+                      <label>OpenAI API key <input name="apiKey" type="password" autocomplete="off" required /></label>
+                      <button type="submit" ?disabled=${model.busy}>Verify and use key</button>
+                    </form>
+                    ${
+                      model.provider?.configured
+                        ? html`<button type="button" class="secondary" @click=${removeProviderKey}>Remove API key</button>`
+                        : ""
+                    }
+                    <p class="privacy-note">Card content and the supporting-language allowlist are sent to OpenAI. Gafu requests no response storage, but OpenAI's retention and abuse-monitoring policies still apply. Video and audio are never sent.</p>
+                  </div>
                   <div class="baseline baseline--${snapshot.knowledge.baseline.availability}">
                     <h3>Known Word baseline</h3>
                     ${

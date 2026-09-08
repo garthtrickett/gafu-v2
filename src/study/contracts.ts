@@ -139,6 +139,7 @@ export type KnownVocabulary = Readonly<{
   lemma: string;
   reading: string;
   meaning: string;
+  partOfSpeech: string | null;
   source: "baseline" | "card";
 }>;
 
@@ -170,6 +171,7 @@ export type KnownWordSeedEntry = Readonly<{
   lemma: string;
   reading: string;
   meaning: string;
+  partOfSpeech: string;
 }>;
 
 export type KnownWordSeed = Readonly<{

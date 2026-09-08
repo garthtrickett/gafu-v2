@@ -205,7 +205,7 @@ export const createOpenAiBatchProvider = (
           },
           body: JSON.stringify({
             model: options.model,
-            store: true,
+            store: false,
             metadata: {
               gafu_request_key: requestKey.slice(0, 512),
               gafu_batch_id: batch.batchId,
