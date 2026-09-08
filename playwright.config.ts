@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "tests/browser",
+  testMatch: "**/*.pw.ts",
   fullyParallel: false,
   retries: process.env["CI"] ? 2 : 0,
   reporter: process.env["CI"] ? "github" : "line",
