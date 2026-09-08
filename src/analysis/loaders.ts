@@ -1,5 +1,4 @@
 import kuromoji, { type Tokenizer } from "@faanau/kuromoji";
-import { Suzume } from "@libraz/suzume";
 
 export const loadKuromojiFromDirectory = (dictionaryPath: string): Promise<Tokenizer> =>
   new Promise((resolve, reject) => {
@@ -10,13 +9,4 @@ export const loadKuromojiFromDirectory = (dictionaryPath: string): Promise<Token
         resolve(tokenizer);
       }
     });
-  });
-
-export const loadSuzume = (): Promise<Suzume> =>
-  Suzume.create({
-    preserveSymbols: true,
-    preserveCase: true,
-    preserveVu: true,
-    mode: "normal",
-    mergeCompounds: false,
   });
