@@ -13,6 +13,8 @@
     "test:browser": "playwright test"
   },
   "dependencies": {
+    "@faanau/kuromoji": "0.2.1",
+    "@libraz/suzume": "0.9.10",
     "lit-html": "latest"
   },
   "devDependencies": {
