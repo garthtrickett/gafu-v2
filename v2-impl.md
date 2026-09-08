@@ -518,6 +518,9 @@ Phase 5 must preserve these facts:
 
 ## Phase 5 — Watch and Subtitle Capture
 
+**Detailed execution contract:** [`phases/phase-5.md`](phases/phase-5.md). It is
+authoritative for Phase 5 where this outline is less specific.
+
 ### Outcome
 
 The learner can watch local media with selectable subtitles, copy arbitrary

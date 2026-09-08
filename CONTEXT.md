@@ -83,6 +83,11 @@ A learner-initiated action that turns one selected vocabulary item in a subtitle
 into a Vocabulary Card while preserving ordinary text selection and copying.
 _Avoid_: Automatic mining, lookup on selection, sentence Card
 
+**Pending Capture**:
+A short-lived, context-bound proposal produced from an explicit subtitle
+selection before the learner confirms vocabulary identity and Study writes it.
+_Avoid_: Card, lookup result, saved selection
+
 **Subtitle Set**:
 An ordered collection of one or more subtitle files that the learner intends to
 prepare for as one body of media.
