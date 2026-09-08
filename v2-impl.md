@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 3 implementation complete; external provider, Kaishi, sense, grammar, and licence gates pending · 1.7
+**Status:** Phase 5 implementation complete; replacement and external provider, Kaishi, sense, grammar, and licence gates pending · 1.9
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -518,6 +518,9 @@ Phase 5 must preserve these facts:
 
 ## Phase 5 — Watch and Subtitle Capture
 
+**Detailed execution contract:** [`phases/phase-5.md`](phases/phase-5.md). It is
+authoritative for Phase 5 where this outline is less specific.
+
 ### Outcome
 
 The learner can watch local media with selectable subtitles, copy arbitrary
@@ -559,6 +562,33 @@ playback usable.
 
 Automatic mining during playback, passive encounter credit, Grammar Card
 capture, automatic subtitle alignment, transcoding, or every V1 player setting.
+
+### Phase 5 implementation result
+
+Watch now owns strict browser-local SRT parsing, content-derived episode/cue
+identity, playback-time cue projection, selectable full-screen subtitle
+rendering, and exact configurable shortcut recognition. Selection and native
+copy are inert. An explicit shortcut sends one active cue to the localhost
+analyzer, presents every overlapping content-word candidate, and requires the
+learner to confirm a meaning and local sense label.
+
+Study schema 4 owns the only durable capture write. It creates or reuses one
+Vocabulary Card, adds opaque cue provenance once, records a capture Staging
+Source, and records an idempotent operation in one transaction. Lost-response
+retries replay the same outcome; changed retries fail. Captured Cards remain
+staged until the shared New Cards per Day transaction admits them. See
+[`docs/evidence/phase-5.md`](docs/evidence/phase-5.md).
+
+Phase 6 must preserve these facts:
+
+- media and subtitle bytes stay browser-local and complete cue text is
+  ephemeral;
+- a capture identity is lemma, reading, part of speech, and learner-confirmed
+  sense—not spelling alone;
+- migration may import capture provenance, but it cannot turn evidence into
+  progress or bypass staging; and
+- V1 player compatibility work cannot widen Watch's deliberately small codec,
+  subtitle, or capture boundary without new evidence.
 
 ## Phase 6 — Migration, reliability, and replacement
 

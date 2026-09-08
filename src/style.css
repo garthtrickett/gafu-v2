@@ -657,3 +657,128 @@ summary {
   border-radius: 0.65rem;
   background: #181b17;
 }
+
+.watch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(17rem, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.watch-main,
+.watch-controls,
+.capture-panel fieldset,
+.capture-panel form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.watch-stage {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #343a32;
+  border-radius: 0.9rem;
+  background: #060706;
+}
+
+.watch-stage video,
+.watch-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.watch-stage video {
+  display: block;
+  object-fit: contain;
+}
+
+.watch-placeholder {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 2rem;
+  color: #8f978b;
+}
+
+.subtitle-overlay {
+  position: absolute;
+  right: 2%;
+  bottom: 9%;
+  left: 2%;
+  display: grid;
+  gap: 0.8em;
+  place-items: center;
+  pointer-events: none;
+}
+
+.subtitle-overlay p {
+  max-width: 92%;
+  margin: 0;
+  padding: 0.08em 0.3em;
+  color: white;
+  font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+  font-size: clamp(1.45rem, 4.5vw, 4rem);
+  font-weight: 750;
+  line-height: 1.42;
+  text-align: center;
+  white-space: pre-line;
+  text-shadow:
+    0 0 0.08em black,
+    0 0.04em 0.08em black,
+    0 0 0.18em black;
+  user-select: text;
+  pointer-events: auto;
+}
+
+.watch-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
+.watch-controls {
+  gap: 1rem;
+}
+
+.watch-controls h2,
+.capture-panel h2 {
+  margin: 0;
+}
+
+.watch-controls hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid #343a32;
+}
+
+kbd {
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #596155;
+  border-radius: 0.35rem;
+  background: #101310;
+  font: inherit;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.capture-panel {
+  max-width: 48rem;
+  margin-top: 1rem;
+}
+
+.candidate-choice {
+  grid-template-columns: auto minmax(4rem, auto) 1fr;
+  align-items: center;
+}
+
+.candidate-choice input {
+  width: auto;
+}
+
+@media (max-width: 850px) {
+  .watch-grid {
+    grid-template-columns: 1fr;
+  }
+}

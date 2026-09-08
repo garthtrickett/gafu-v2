@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../result.ts";
 import type {
   AnswerCard,
   AnswerOutcome,
+  CaptureCardOutcome,
   CardContent,
   CardId,
   CardQuery,
@@ -23,6 +24,7 @@ import type {
   StudyPreparationSnapshot,
   StudyQueue,
   StudyStatus,
+  SubtitleVocabularyCapture,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
 import { canonicalizeCard, canonicalizeUpdatedContent } from "./identity.ts";
@@ -490,6 +492,190 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       return ok({ newCardsPerDay: nextLimit, timeZone: zone.value });
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
+  const captureVocabulary = (
+    command: SubtitleVocabularyCapture,
+  ): Result<CaptureCardOutcome, StudyFailure> => {
+    const canonical = canonicalizeCard(command.card);
+    if (!canonical.ok) return canonical;
+    const operationKey = command.operationKey.normalize("NFKC").trim();
+    const sourceKey = command.evidence.sourceKey.normalize("NFKC").trim();
+    const cueKey = command.evidence.cueKey.normalize("NFKC").trim();
+    const selectedSurface = command.evidence.selectedSurface.normalize("NFKC");
+    const claimKey = command.identityClaim.claimKey.normalize("NFKC").trim();
+    const { start, end } = command.evidence.span;
+    if (
+      operationKey === "" ||
+      operationKey.length > 200 ||
+      sourceKey === "" ||
+      sourceKey.length > 300 ||
+      cueKey === "" ||
+      cueKey.length > 300 ||
+      selectedSurface.trim() === "" ||
+      selectedSurface.length > 100 ||
+      claimKey === "" ||
+      claimKey.length > 500 ||
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end <= start
+    ) {
+      return err({ kind: "invalidCapture", detail: "Capture evidence is invalid." });
+    }
+    const now = safeNow(dependencies.clock);
+    if (!now.ok) return now;
+    const payloadDigest = createHash("sha256")
+      .update(
+        JSON.stringify({
+          card: canonical.value,
+          identityClaim: { ...command.identityClaim, claimKey },
+          evidence: { sourceKey, cueKey, selectedSurface, start, end },
+        }),
+      )
+      .digest("hex");
+    try {
+      const prior = database
+        .query(
+          `SELECT payload_digest, card_id, outcome, evidence_added
+           FROM capture_operation WHERE operation_key = ?`,
+        )
+        .get(operationKey) as {
+        payload_digest: string;
+        card_id: string;
+        outcome: "created" | "existing";
+        evidence_added: number;
+      } | null;
+      if (prior !== null) {
+        if (prior.payload_digest !== payloadDigest) {
+          return err({ kind: "captureOperationConflict" });
+        }
+        const card = readCard(database, prior.card_id);
+        return card.ok
+          ? ok({
+              outcome: prior.outcome,
+              card: card.value,
+              evidenceAdded: prior.evidence_added === 1,
+            })
+          : card;
+      }
+      let cardId = "";
+      let outcome: "created" | "existing" = "existing";
+      let evidenceAdded = false;
+      const commit = database.transaction(() => {
+        const captureClaim = database
+          .query(
+            "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
+          )
+          .get(command.identityClaim.authority, claimKey) as {
+          card_id: string;
+        } | null;
+        const manualClaim = database
+          .query(
+            "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
+          )
+          .get(canonical.value.claimAuthority, canonical.value.claimKey) as {
+          card_id: string;
+        } | null;
+        if (
+          captureClaim !== null &&
+          manualClaim !== null &&
+          captureClaim.card_id !== manualClaim.card_id
+        ) {
+          throw new CaptureFailure({
+            kind: "identityConflict",
+            existingCardId: captureClaim.card_id,
+          });
+        }
+        cardId = captureClaim?.card_id ?? manualClaim?.card_id ?? "";
+        if (cardId === "") {
+          cardId = dependencies.nextId();
+          outcome = "created";
+          database
+            .query(
+              `INSERT INTO card(id, type, content_json, searchable_text, staged_at, staging_priority)
+               VALUES (?, 'vocabulary', ?, ?, ?, ?)`,
+            )
+            .run(
+              cardId,
+              JSON.stringify(canonical.value.content),
+              canonical.value.searchableText,
+              now.value.toISOString(),
+              command.card.stagingPriority ?? 0,
+            );
+          database
+            .query(
+              "INSERT INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+            )
+            .run(canonical.value.claimAuthority, canonical.value.claimKey, cardId);
+          database
+            .query("INSERT INTO card_progress(card_id, state) VALUES (?, 'staged')")
+            .run(cardId);
+        }
+        database
+          .query(
+            "INSERT OR IGNORE INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+          )
+          .run(command.identityClaim.authority, claimKey, cardId);
+        const evidence = database
+          .query(
+            `INSERT OR IGNORE INTO subtitle_capture_evidence(
+               card_id, source_key, cue_key, selected_surface,
+               span_start, span_end, captured_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            cardId,
+            sourceKey,
+            cueKey,
+            selectedSurface,
+            start,
+            end,
+            now.value.toISOString(),
+          );
+        evidenceAdded = evidence.changes === 1;
+        const state = database
+          .query("SELECT state FROM card_progress WHERE card_id = ?")
+          .get(cardId) as { state: CardState };
+        if (state.state === "staged") {
+          database
+            .query(
+              `INSERT INTO staging_source(
+                 card_id, source_kind, source_key, priority, active, created_at
+               ) VALUES (?, 'capture', ?, ?, 1, ?)
+               ON CONFLICT(card_id, source_kind, source_key) DO UPDATE SET active = 1`,
+            )
+            .run(
+              cardId,
+              `${sourceKey}:${cueKey}:${start}:${end}`,
+              command.card.stagingPriority ?? 0,
+              now.value.toISOString(),
+            );
+        }
+        database
+          .query(
+            `INSERT INTO capture_operation(
+               operation_key, payload_digest, card_id, outcome,
+               evidence_added, captured_at
+             ) VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            operationKey,
+            payloadDigest,
+            cardId,
+            outcome,
+            evidenceAdded ? 1 : 0,
+            now.value.toISOString(),
+          );
+      });
+      commit.immediate();
+      const card = readCard(database, cardId);
+      return card.ok ? ok({ outcome, card: card.value, evidenceAdded }) : card;
+    } catch (cause) {
+      return cause instanceof CaptureFailure
+        ? err(cause.failure)
+        : err({ kind: "writeFailed", detail: detail(cause) });
     }
   };
 
@@ -979,6 +1165,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     plan: planOperations.plan,
     setPlanState: planOperations.setPlanState,
     deletePlan: planOperations.deletePlan,
+    captureVocabulary,
     close: () => database.close(),
   };
 };
@@ -1001,6 +1188,12 @@ class ClockFailure extends Error {
 class IdentityConflict extends Error {
   constructor(readonly existingCardId: string) {
     super(`identity already belongs to ${existingCardId}`);
+  }
+}
+
+class CaptureFailure extends Error {
+  constructor(readonly failure: StudyFailure) {
+    super(failure.kind);
   }
 }
 

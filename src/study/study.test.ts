@@ -501,7 +501,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 3 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 4 },
     });
   });
 
@@ -533,12 +533,14 @@ describe("Study persistence and recovery", () => {
     const database = new Database(path, { strict: true });
     database.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE capture_operation;
+      DROP TABLE subtitle_capture_evidence;
       DROP TABLE plan_start_operation;
       DROP TABLE preparation_plan_evidence;
       DROP TABLE preparation_plan_member;
       DROP TABLE preparation_plan;
       DROP TABLE staging_source;
-      DELETE FROM schema_migration WHERE version = 3;
+      DELETE FROM schema_migration WHERE version >= 3;
     `);
     database.close();
 
