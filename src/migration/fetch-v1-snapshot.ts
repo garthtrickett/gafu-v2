@@ -1,0 +1,136 @@
+import { err, ok, type Result } from "../result.ts";
+import { MAX_V1_SNAPSHOT_BYTES, V1_SNAPSHOT_VERSION } from "./contracts.ts";
+import { parseV1Snapshot } from "./snapshot.ts";
+
+export type FetchV1SnapshotFailure =
+  | { readonly kind: "credentialMissing" }
+  | { readonly kind: "originInvalid" }
+  | { readonly kind: "authentication" }
+  | { readonly kind: "remoteUnavailable"; readonly status: number | null }
+  | { readonly kind: "remoteInvalid"; readonly detail: string };
+
+export type FetchV1SnapshotDependencies = Readonly<{
+  fetch: (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
+  clock: () => Date;
+}>;
+
+type JsonRecord = Record<string, unknown>;
+const record = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const validatedOrigin = (value: string): Result<URL, FetchV1SnapshotFailure> => {
+  try {
+    const origin = new URL(value);
+    const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname);
+    if (
+      (origin.protocol !== "https:" && !(origin.protocol === "http:" && loopback)) ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      origin.pathname !== "/"
+    ) {
+      return err({ kind: "originInvalid" });
+    }
+    return ok(origin);
+  } catch {
+    return err({ kind: "originInvalid" });
+  }
+};
+
+const responseJson = async (
+  response: Response,
+): Promise<Result<unknown, FetchV1SnapshotFailure>> => {
+  if (response.status === 401 || response.status === 403) {
+    return err({ kind: "authentication" });
+  }
+  if (!response.ok) {
+    return err({ kind: "remoteUnavailable", status: response.status });
+  }
+  try {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_V1_SNAPSHOT_BYTES) {
+      return err({
+        kind: "remoteInvalid",
+        detail: "V1 sync response exceeds the snapshot limit.",
+      });
+    }
+    return ok(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+  } catch {
+    return err({ kind: "remoteInvalid", detail: "V1 returned invalid JSON." });
+  }
+};
+
+export const fetchV1Snapshot = async (
+  originValue: string,
+  bearerToken: string,
+  dependencies: FetchV1SnapshotDependencies,
+): Promise<Result<Uint8Array, FetchV1SnapshotFailure>> => {
+  const token = bearerToken.trim();
+  if (token === "") return err({ kind: "credentialMissing" });
+  const origin = validatedOrigin(originValue);
+  if (!origin.ok) return origin;
+  const pull = new URL("api/sync/pull", origin.value);
+  const request = async (
+    url: URL,
+  ): Promise<Result<unknown, FetchV1SnapshotFailure>> => {
+    try {
+      return await responseJson(
+        await dependencies.fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          redirect: "error",
+        }),
+      );
+    } catch {
+      return err({ kind: "remoteUnavailable", status: null });
+    }
+  };
+  const handshake = await request(pull);
+  if (!handshake.ok) return handshake;
+  if (!record(handshake.value)) {
+    return err({ kind: "remoteInvalid", detail: "V1 sync handshake is invalid." });
+  }
+  let sync = handshake.value;
+  if (handshake.value["resetSync"] === true) {
+    const epochId = handshake.value["epochId"];
+    if (typeof epochId !== "string" || epochId === "") {
+      return err({ kind: "remoteInvalid", detail: "V1 sync epoch is missing." });
+    }
+    pull.searchParams.set("since", "0000000000000:0000:initial");
+    pull.searchParams.set("epochId", epochId);
+    const completed = await request(pull);
+    if (!completed.ok) return completed;
+    if (!record(completed.value) || completed.value["resetSync"] === true) {
+      return err({ kind: "remoteInvalid", detail: "V1 sync epoch changed." });
+    }
+    sync = completed.value;
+  }
+  let now: Date;
+  try {
+    now = dependencies.clock();
+  } catch {
+    return err({ kind: "remoteInvalid", detail: "Snapshot clock is invalid." });
+  }
+  if (!Number.isFinite(now.getTime())) {
+    return err({ kind: "remoteInvalid", detail: "Snapshot clock is invalid." });
+  }
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      contractVersion: V1_SNAPSHOT_VERSION,
+      capturedAt: now.toISOString(),
+      sourceOrigin: origin.value.origin,
+      sync: {
+        knowledgePoints: Array.isArray(sync["knowledgePoints"])
+          ? sync["knowledgePoints"]
+          : [],
+        grammarPoints: Array.isArray(sync["grammarPoints"])
+          ? sync["grammarPoints"]
+          : [],
+        srsUpdates: Array.isArray(sync["srsUpdates"]) ? sync["srsUpdates"] : [],
+        userPreference: record(sync["userPreference"]) ? sync["userPreference"] : null,
+      },
+    }),
+  );
+  const parsed = parseV1Snapshot(bytes);
+  return parsed.ok
+    ? ok(bytes)
+    : err({ kind: "remoteInvalid", detail: parsed.error.kind });
+};

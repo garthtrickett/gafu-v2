@@ -37,7 +37,7 @@ import {
 } from "./projection.ts";
 import { createSqliteCheckpointStore } from "./sqlite-checkpoint-store.ts";
 
-const PREPARATION_SCHEMA_VERSION = 1;
+export const PREPARATION_SCHEMA_VERSION = 1;
 const NORMALIZATION_VERSION = "nfkc-v1";
 
 type PendingImport = Readonly<{

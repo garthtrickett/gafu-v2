@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 5 implementation complete; replacement and external provider, Kaishi, sense, grammar, and licence gates pending · 1.9
+**Status:** Phase 6 implementation complete; owner cutover and external provider, Kaishi, sense, grammar, and licence gates pending · 2.0
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -592,6 +592,9 @@ Phase 6 must preserve these facts:
 
 ## Phase 6 — Migration, reliability, and replacement
 
+**Detailed execution contract:** [`phases/phase-6.md`](phases/phase-6.md). It is
+authoritative for Phase 6 where this outline is less specific.
+
 ### Outcome
 
 V2 can safely replace the current Gafu for the learner's real data and realistic
@@ -603,8 +606,9 @@ series-sized workloads.
   survived the earlier phases.
 - Build an idempotent, one-way V1 importer with a dry-run report for mapped,
   merged, skipped, ambiguous, and invalid records.
-- Preserve legitimate learner progress and review history where semantics match;
-  quarantine records that cannot be mapped honestly instead of guessing.
+- Preserve legitimate projected learner progress where semantics match;
+  quarantine records that cannot be mapped honestly, and never invent review
+  events that V1's sync contract does not expose.
 - Never import provider credentials or API keys from V1; the learner configures
   them again through V2 settings.
 - Test backup followed by destructive restore into a clean installation.
@@ -631,6 +635,31 @@ restore it cleanly, and repeat the workflow without V1.
 
 Silent in-place conversion of the V1 database, two-way V1/V2 synchronization,
 or indefinite maintenance of both products.
+
+### Phase 6 implementation result
+
+The replacement tooling consumes a versioned, credential-free V1 sync
+snapshot through authenticated fetch or an existing private file. It performs
+a bounded dry run, accounts for every progress row, and applies Cards,
+conservative learner state, explicitly labelled V1-derived schedules,
+preferences, audit rows, and hashed quarantine evidence in one idempotent
+transaction. Existing stronger V2 state wins and no historical Review Event is
+fabricated.
+
+Whole-file inspection and confirmed offline restore validate size, SQLite
+integrity, foreign keys, and exact Study/Preparation schemas. Replacement uses
+a validated same-directory temporary copy and creates a timestamped safety copy
+of an existing destination. Health diagnostics reveal counts and actionable
+workflow states without private bodies. Deterministic 5,000-Card/row and
+10,000-cue gates pass, as do the desktop Chromium, desktop Firefox, mobile
+Chromium, keyboard-focus, selection, and overflow checks. See
+[`docs/evidence/phase-6.md`](docs/evidence/phase-6.md) and
+[`docs/cutover.md`](docs/cutover.md).
+
+This closes repository implementation, not replacement release. A real private
+V1 snapshot, multi-day series journey, restored production backup, and owner
+acceptance remain deliberately external. Until they are recorded, V1 stays the
+rollback product and neither V1 nor `jp-player` is archived.
 
 ## Quality gates for every phase
 
