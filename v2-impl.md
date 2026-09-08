@@ -452,6 +452,9 @@ Phase 4 must preserve these facts:
 
 ## Phase 4 — Preparation Plan and staged learning
 
+**Detailed execution contract:** [`phases/phase-4.md`](phases/phase-4.md). It is
+authoritative for Phase 4 where this outline is less specific.
+
 ### Outcome
 
 The learner can turn a corrected Preparation Gap into Cards, learn them at the

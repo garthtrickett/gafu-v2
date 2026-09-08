@@ -119,6 +119,21 @@ A learner-specific path that reuses or creates Cards for a Preparation Gap and
 stages their study before the corresponding media is watched.
 _Avoid_: Episode Plan, Card, subtitle analysis
 
+**Plan Draft**:
+An immutable, evidence-backed proposal from Preparation that Study can validate
+and atomically commit as a Preparation Plan.
+_Avoid_: Generated deck, browser form state, partial Card batch
+
+**Staging Source**:
+A Study-owned reason an unseen Card is waiting for admission, such as manual
+creation, a Preparation Plan, or Subtitle Capture.
+_Avoid_: Second schedule, plan queue, Card owner
+
+**Episode Readiness**:
+The fact that every required Preparation Plan Card evidenced in one episode is
+known or support-ready; helpful and incidental items do not block it.
+_Avoid_: Episode completion, exposure, guaranteed comprehension
+
 **New Cards per Day**:
 The learner's single SRS limit for how many previously unseen Cards may enter
 study each day, shared by Grammar Cards and Vocabulary Cards from every source.
