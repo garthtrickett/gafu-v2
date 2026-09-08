@@ -104,7 +104,7 @@ describe("selected Japanese analyzer", () => {
       }
     }
 
-    expect(atRisk).toBeGreaterThanOrEqual(20);
+    expect(atRisk).toBe(26);
     expect(falseKnown).toBe(0);
   }, 15_000);
 });
