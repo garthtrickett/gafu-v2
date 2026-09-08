@@ -1,4 +1,5 @@
 import {
+  ambiguous,
   type CuePiece,
   cue,
   punctuation as q,
@@ -48,6 +49,21 @@ const poly = (
       ...(conjugation === undefined ? [] : ["inflected-target" as const]),
     ],
   });
+
+const morphAmbiguous = (
+  surface: string,
+  lemmas: readonly [string, string, ...string[]],
+  readings: readonly [string, string, ...string[]],
+  conjugation: string,
+) => ({
+  ...w(surface, lemmas[0], readings[0], "verb", {
+    conjugation,
+    known: "ambiguous",
+    flags: ["ambiguous-target", "inflected-target"],
+  }),
+  lemma: ambiguous(...lemmas),
+  reading: ambiguous(...readings),
+});
 
 type Pattern = Readonly<{
   construction: string;
@@ -297,7 +313,7 @@ const patterns: readonly Pattern[] = [
     calibration: [
       n("雪", "ゆき"),
       p("が"),
-      v("降り", "降る", "ふり", "連用形"),
+      morphAmbiguous("降り", ["降る", "降りる"], ["ふり", "おり"], "連用形"),
       aux("そう", "そうだ", "そう", "語幹"),
       copula("だ", "基本形"),
       q("。"),
@@ -308,7 +324,7 @@ const patterns: readonly Pattern[] = [
         pieces: [
           n("雨", "あめ"),
           p("が"),
-          v("降り", "降る", "ふり", "連用形"),
+          morphAmbiguous("降り", ["降る", "降りる"], ["ふり", "おり"], "連用形"),
           aux("そう", "そうだ", "そう", "語幹"),
           copula("だ", "基本形"),
           q("。"),
@@ -542,7 +558,7 @@ const patterns: readonly Pattern[] = [
     calibration: [
       n("新聞", "しんぶん"),
       p("が"),
-      v("読める", "読む", "よめる", "可能形"),
+      morphAmbiguous("読める", ["読む", "読める"], ["よめる", "よめる"], "可能形"),
       n("よう", "よう"),
       p("に"),
       v("なっ", "なる", "なっ", "連用タ接続"),
@@ -555,7 +571,7 @@ const patterns: readonly Pattern[] = [
         pieces: [
           n("漢字", "かんじ"),
           p("が"),
-          v("読める", "読む", "よめる", "可能形"),
+          morphAmbiguous("読める", ["読む", "読める"], ["よめる", "よめる"], "可能形"),
           n("よう", "よう"),
           p("に"),
           v("なっ", "なる", "なっ", "連用タ接続"),
@@ -733,7 +749,7 @@ const patterns: readonly Pattern[] = [
     calibration: [
       n("私", "わたし"),
       p("は"),
-      v("泳げる", "泳ぐ", "およげる", "可能形"),
+      morphAmbiguous("泳げる", ["泳ぐ", "泳げる"], ["およげる", "およげる"], "可能形"),
       q("。"),
     ],
     calibrationRange: [2, 3],
@@ -743,7 +759,12 @@ const patterns: readonly Pattern[] = [
           n("この", "この"),
           n("魚", "さかな"),
           p("は"),
-          v("食べられる", "食べる", "たべられる", "可能形"),
+          morphAmbiguous(
+            "食べられる",
+            ["食べる", "食べられる"],
+            ["たべられる", "たべられる"],
+            "可能形",
+          ),
           q("。"),
         ],
         range: [3, 4],

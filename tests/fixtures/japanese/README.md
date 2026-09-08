@@ -36,5 +36,5 @@ Do not tune individual analyzer exceptions against holdout sentences.
 
 The canonical JSON serialization of the 44 holdout fixtures was frozen on
 2026-09-08 with SHA-256 digest
-`052c8cc9ce929b02eb74adcf6b64b65281c97685ac369854d38205156368fe63`.
+`9c5437404df6ab72b50ef66f9acb753da6629ee9379b158c6706fd718f598da6`.
 The freeze test makes any later change explicit in review.

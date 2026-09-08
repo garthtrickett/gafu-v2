@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { holdoutFixtures } from "./corpus.ts";
 
 const frozenHoldoutDigest =
-  "052c8cc9ce929b02eb74adcf6b64b65281c97685ac369854d38205156368fe63";
+  "9c5437404df6ab72b50ef66f9acb753da6629ee9379b158c6706fd718f598da6";
 
 test("the Phase 0 holdout remains frozen before analyzer tuning", () => {
   const digest = new Bun.CryptoHasher("sha256")

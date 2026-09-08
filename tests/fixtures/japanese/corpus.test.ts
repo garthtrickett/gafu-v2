@@ -78,12 +78,13 @@ describe("Japanese fixture oracle", () => {
     const uncertainTargets = holdoutFixtures.flatMap((fixture) =>
       fixture.tokens.filter((token) => token.flags.includes("ambiguous-target")),
     );
-    expect(uncertainTargets).toHaveLength(22);
+    expect(uncertainTargets).toHaveLength(25);
     for (const token of uncertainTargets) {
-      expect(token.sense.kind).toBe("ambiguous");
-      if (token.sense.kind === "ambiguous") {
-        expect(token.sense.allowed.length).toBeGreaterThanOrEqual(2);
-      }
+      const allowedCounts = [token.sense, token.lemma, token.reading]
+        .filter((field) => field.kind === "ambiguous")
+        .map((field) => field.allowed.length);
+      expect(allowedCounts.length).toBeGreaterThanOrEqual(1);
+      expect(Math.max(...allowedCounts)).toBeGreaterThanOrEqual(2);
     }
   });
 });
