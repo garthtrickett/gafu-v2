@@ -592,6 +592,9 @@ Phase 6 must preserve these facts:
 
 ## Phase 6 — Migration, reliability, and replacement
 
+**Detailed execution contract:** [`phases/phase-6.md`](phases/phase-6.md). It is
+authoritative for Phase 6 where this outline is less specific.
+
 ### Outcome
 
 V2 can safely replace the current Gafu for the learner's real data and realistic

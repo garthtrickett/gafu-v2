@@ -143,3 +143,23 @@ _Avoid_: Episode completion, exposure, guaranteed comprehension
 The learner's single SRS limit for how many previously unseen Cards may enter
 study each day, shared by Grammar Cards and Vocabulary Cards from every source.
 _Avoid_: Daily new rule limit, Preparation Plan pace, review limit
+
+**V1 Snapshot**:
+A bounded, versioned, credential-free capture of one learner's final V1 sync
+projection used only for one-way migration into V2.
+_Avoid_: Database dump, live sync, account backup
+
+**Migration Reconciliation**:
+A complete dry-run accounting of how every V1 learner-progress row will be
+mapped, merged, skipped, or quarantined before any V2 write occurs.
+_Avoid_: Import log, best-effort conversion, Card list
+
+**Migration Quarantine**:
+An auditable refusal to guess when a V1 record lacks the content or progress
+semantics needed for a valid V2 Card. It is not a learner Card or Card State.
+_Avoid_: Suspended Card, import error, deleted record
+
+**Restore Receipt**:
+Evidence that a validated whole-database backup replaced an offline V2 database
+and identifies the pre-restore safety copy available for rollback.
+_Avoid_: Backup, migration report, sync checkpoint
