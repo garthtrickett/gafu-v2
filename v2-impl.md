@@ -377,6 +377,9 @@ Phase 3 must preserve these facts:
 
 ## Phase 3 — Subtitle Set to Preparation Gap
 
+**Detailed execution contract:** [`phases/phase-3.md`](phases/phase-3.md). It is
+authoritative for Phase 3 where this outline is less specific.
+
 ### Outcome
 
 One or more `.srt` files, selected directly or supplied in a `.zip`, produce one

@@ -88,6 +88,27 @@ An ordered collection of one or more subtitle files that the learner intends to
 prepare for as one body of media.
 _Avoid_: SRS files, deck, permanent corpus
 
+**Source Revision**:
+One immutable, ordered version of the episode cue text and timing in a Subtitle
+Set. Editable titles and later analyses do not change it.
+_Avoid_: Upload, mutable file list, analysis run
+
+**Cue Evidence**:
+A stable, source-bound occurrence of Japanese subtitle text with its episode
+and timing. It supports a Card match but never owns learning progress.
+_Avoid_: Cue index, sentence Card, encounter credit
+
+**Analysis Run**:
+One resumable, versioned analysis of a Source Revision against a particular
+provider contract and learner-knowledge snapshot.
+_Avoid_: Request, session, Preparation Plan
+
+**Preparation Finding**:
+One resolved or explicitly ambiguous grammar construction or vocabulary sense
+found during analysis, aggregating every relevant Cue Evidence occurrence and
+its relation to the learner's current knowledge.
+_Avoid_: Token, subtitle line, Card
+
 **Preparation Gap**:
 The comprehension-relevant grammar and vocabulary found in a Subtitle Set that
 the learner does not already know and is not already learning.
