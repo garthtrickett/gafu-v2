@@ -1,0 +1,104 @@
+import { err, ok } from "../result.ts";
+import type {
+  AnalysisManifest,
+  BatchCheckpoint,
+  BatchFailure,
+  CheckpointStore,
+  ProviderBatchResponse,
+} from "./batching-contracts.ts";
+
+type StoredRun = {
+  manifest: AnalysisManifest;
+  checkpoints: Map<string, BatchCheckpoint>;
+};
+
+export type StoreFault = "open" | "requested" | "uncertain" | "complete";
+
+export const createInMemoryCheckpointStore = (): CheckpointStore & {
+  failNext: (operation: StoreFault) => void;
+  history: readonly string[];
+} => {
+  const runs = new Map<string, StoredRun>();
+  const failures = new Set<StoreFault>();
+  const history: string[] = [];
+  const fail = (operation: StoreFault): BatchFailure | null => {
+    if (!failures.delete(operation)) return null;
+    return { kind: "persistence", detail: `injected ${operation} failure` };
+  };
+  const find = (runId: string, inputDigest: string): StoredRun | null => {
+    const run = runs.get(runId);
+    return run?.checkpoints.has(inputDigest) === true ? run : null;
+  };
+  return {
+    history,
+    failNext: (operation) => failures.add(operation),
+    open: async (manifest) => {
+      const failure = fail("open");
+      if (failure !== null) return err(failure);
+      const existing = runs.get(manifest.runId);
+      if (existing !== undefined) {
+        if (JSON.stringify(existing.manifest) !== JSON.stringify(manifest)) {
+          return err({
+            kind: "incompatibleResumeMetadata",
+            detail: `manifest does not match ${manifest.runId}`,
+          });
+        }
+        return ok([...existing.checkpoints.values()]);
+      }
+      const checkpoints = new Map(
+        manifest.batches.map((batch) => [
+          batch.inputDigest,
+          { state: "pending", inputDigest: batch.inputDigest } as const,
+        ]),
+      );
+      runs.set(manifest.runId, { manifest, checkpoints });
+      history.push(`open:${manifest.runId}`);
+      return ok([...checkpoints.values()]);
+    },
+    markRequested: async (runId, inputDigest, requestKey) => {
+      const failure = fail("requested");
+      if (failure !== null) return err(failure);
+      const run = find(runId, inputDigest);
+      if (run === null) return err({ kind: "persistence", detail: "batch missing" });
+      run.checkpoints.set(inputDigest, {
+        state: "requested",
+        inputDigest,
+        requestKey,
+      });
+      history.push(`requested:${inputDigest}`);
+      return ok(undefined);
+    },
+    markUncertain: async (runId, inputDigest, requestKey) => {
+      const failure = fail("uncertain");
+      if (failure !== null) return err(failure);
+      const run = find(runId, inputDigest);
+      if (run === null) return err({ kind: "persistence", detail: "batch missing" });
+      run.checkpoints.set(inputDigest, {
+        state: "uncertain",
+        inputDigest,
+        requestKey,
+      });
+      history.push(`uncertain:${inputDigest}`);
+      return ok(undefined);
+    },
+    complete: async (
+      runId: string,
+      inputDigest: string,
+      requestKey: string,
+      response: ProviderBatchResponse,
+    ) => {
+      const failure = fail("complete");
+      if (failure !== null) return err(failure);
+      const run = find(runId, inputDigest);
+      if (run === null) return err({ kind: "persistence", detail: "batch missing" });
+      run.checkpoints.set(inputDigest, {
+        state: "completed",
+        inputDigest,
+        requestKey,
+        response,
+      });
+      history.push(`completed:${inputDigest}`);
+      return ok(undefined);
+    },
+  };
+};
