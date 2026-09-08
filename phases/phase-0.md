@@ -1,7 +1,7 @@
 # Phase 0 — Prove the risky seams
 
-**Status:** Implementation complete — closure awaits the manual provider smoke
-and repository licence selection · 1.7
+**Status:** All implementation patches merged — closure awaits the manual
+provider smoke and repository licence selection · 1.8
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)
 **Product source:** [`../V2.md`](../V2.md)
 **Last updated:** 2026-09-08
@@ -235,7 +235,7 @@ one.
 | 0.4 | Done | Prove or reject `i`/`i+1` validation | 0.3 |
 | 0.5 | Manual gate pending | Prove complete, resumable agent batching | 0.2, 0.3 |
 | 0.6 | Done | Decide data and AI topology from working spikes | 0.1, 0.5 |
-| 0.7 | Code complete | Compose the proof, publish evidence, and close the phase | 0.3–0.6 |
+| 0.7 | Merged; closure pending | Compose the proof, publish evidence, and close the phase | 0.3–0.6 |
 
 ## Patch 0.1 — Executable skeleton
 
@@ -714,7 +714,7 @@ after a stop condition requires an explicit decision before work resumes.
 
 ## Phase completion checklist
 
-- [ ] Patches 0.1 through 0.7 are merged independently and `main` is green.
+- [x] Patches 0.1 through 0.7 are merged independently and `main` is green.
 - [x] Calibration and frozen holdout fixtures are committed with original
   provenance; the repository licence remains an owner decision.
 - [x] Analyzer thresholds pass without trusted fallback output.
