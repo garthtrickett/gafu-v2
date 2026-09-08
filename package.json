@@ -5,7 +5,8 @@
   "packageManager": "bun@1.3.2",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bun run scripts/dev.ts",
+    "start": "bun run src/study/server.ts",
     "check": "biome check . && tsc --noEmit",
     "format": "biome format --write .",
     "test": "bun test",
@@ -15,7 +16,8 @@
   },
   "dependencies": {
     "@faanau/kuromoji": "0.2.1",
-    "lit-html": "latest"
+    "lit-html": "latest",
+    "ts-fsrs": "5.4.2"
   },
   "devDependencies": {
     "@biomejs/biome": "latest",

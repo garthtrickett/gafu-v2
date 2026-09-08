@@ -1,6 +1,6 @@
 # Phase 1 — Card and SRS core, offline
 
-**Status:** Ready for implementation · 1.0
+**Status:** Implementation complete — production Kaishi source pending · 1.1
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)
 **Product source:** [`../V2.md`](../V2.md)
 **Last updated:** 2026-09-08
@@ -65,9 +65,11 @@ fresh, validated AI-generated material.
   authorities may add their own claim to the same Card instead of replacing the
   Card ID or schedule. Phase 3 must leave an unresolved sense ambiguous rather
   than minting a guessed claim.
-- Display content can be corrected without changing identity. A correction that
-  actually identifies a different construction or sense is a different Card;
-  silently moving review history to it is forbidden.
+- Display content can be corrected without removing an earlier claim. The
+  corrected normalized form is attached as another alias for future duplicate
+  matching. If that alias already belongs to another Card, the whole correction
+  is rejected; a correction that actually identifies a different construction
+  or sense must become a different Card rather than silently moving history.
 - Repeating the same create command returns `existing`, including after a
   retry or restart. It does not reset state, reorder admission, or add another
   schedule.
@@ -129,8 +131,11 @@ disable or re-enable a mistaken baseline entry independently.
   version. Existing history is never recomputed when code or settings change.
 - All instants are persisted in UTC with millisecond precision. Calendar-day
   admission uses one persisted IANA time-zone preference.
-- A time-zone change applies to later commands. Existing admission events keep
-  their original local-day key and are never reclassified.
+- A time-zone change applies immediately to review-day recording. The current
+  admission window remains pinned to its original zone until that local day
+  rolls over, then the next window uses the new zone. Existing admission events
+  keep their original local-day key and are never reclassified, so changing a
+  setting cannot reset today's allowance.
 - The injected clock is read once per Study command. No transition depends on
   wall-clock reads hidden inside helpers.
 
@@ -161,11 +166,13 @@ type Study = {
   listCards(query?: CardQuery): Result<readonly CardSummary[], StudyFailure>;
   updateCard(command: UpdateCard): Result<CardSummary, StudyFailure>;
   setCardState(command: SetCardState): Result<CardSummary, StudyFailure>;
+  status(): Result<StudyStatus, StudyFailure>;
   studyQueue(): Result<StudyQueue, StudyFailure>;
   answer(command: AnswerCard): Result<AnswerOutcome, StudyFailure>;
   knowledgeSnapshot(): Result<KnowledgeSnapshot, StudyFailure>;
   preferences(): Result<StudyPreferences, StudyFailure>;
   setPreferences(change: PreferenceChange): Result<StudyPreferences, StudyFailure>;
+  setBaselineWordEnabled(key: string, enabled: boolean): Result<KnowledgeSnapshot, StudyFailure>;
   exportBackup(): Result<StudyBackup, StudyFailure>;
   close(): void;
 };
@@ -225,9 +232,10 @@ learner database. A backup failure cannot modify learner data.
 
 ## Kaishi baseline constraint
 
-The Kaishi project publishes its deck without an explicit repository licence.
-Gafu therefore does not copy its words, example sentences, media, or deck file
-into this repository while `LICENSE-DECISION.md` remains unresolved.
+The Kaishi project publishes its deck without an explicit content licence in its
+repository. Choosing Gafu's own repository licence cannot grant rights to that
+third-party content, so Gafu does not copy Kaishi words, example sentences,
+media, or deck files into this repository.
 
 Phase 1 implements and tests an idempotent, versioned `KnownWordSeed` seam. The
 production Kaishi seed is a closure gate: it must come from an owner-approved,
@@ -281,7 +289,8 @@ The browser route provides:
 - Card-bank list and type/search filters;
 - manual Grammar and Vocabulary Card forms;
 - explicit created-versus-existing feedback;
-- editable display content while identity fields remain visibly immutable;
+- editable display content with a clear warning that the immutable Identity
+  Claim and existing progress do not silently move to a different sense;
 - mark known, mark not known, suspend, and restore controls;
 - New Cards per Day and IANA time-zone settings;
 - queue counts that distinguish due, learning, and staged Cards;
@@ -419,3 +428,21 @@ git diff --check
 The evidence report records exact versions, commands, test counts, migration
 fixtures, scheduler version/parameters, backup reconciliation, browser journey,
 known limitations, and the Phase 2 handoff.
+
+## Completion checklist
+
+- [x] Card and Identity Claim contracts are explicit and executable.
+- [x] SQLite schema v1 migrates atomically and rejects a newer schema.
+- [x] Grammar and Vocabulary Cards create, deduplicate, update, and persist.
+- [x] Known, not-known, suspended, and restored transitions preserve history.
+- [x] Synthetic baseline seeding is atomic, idempotent, and correctable.
+- [ ] An owner-approved production Kaishi 1.5k source is installed.
+- [x] FSRS 6 schedules all admitted Cards behind the Study interface.
+- [x] New Cards per Day is shared, deterministic, and resistant to time-zone
+  reset.
+- [x] Review permits are target-bound, expiring, and single-use.
+- [x] Support readiness requires explicit knowledge or delayed recall.
+- [x] Backup, restart, duplicate, migration, and bounded property gates pass.
+- [x] The browser manages Cards/settings without exposing fixture study.
+- [x] [`../docs/evidence/phase-1.md`](../docs/evidence/phase-1.md) records the
+  result and Phase 2 handoff.

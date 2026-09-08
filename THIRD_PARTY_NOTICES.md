@@ -27,3 +27,10 @@ notice text remains in the installed package and built distribution.
 - License: BSD 3-Clause.
 - Distribution: bundled into the application JavaScript; upstream `LICENSE`
   remains in the installed package.
+
+## ts-fsrs 5.4.2
+
+- Purpose: deterministic FSRS 6 scheduling behind the Study module.
+- License: MIT.
+- Distribution: used by the local Bun server; upstream `LICENSE` remains in the
+  installed package.
