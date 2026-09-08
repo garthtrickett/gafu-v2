@@ -238,6 +238,9 @@ sense must stay unresolved rather than being guessed.
 
 ## Phase 1 — Card and SRS core, offline
 
+**Detailed execution contract:** [`phases/phase-1.md`](phases/phase-1.md). It is
+authoritative for Phase 1 where this outline is less specific.
+
 ### Outcome
 
 A learner can create Grammar and Vocabulary Cards, study them, reload, and keep

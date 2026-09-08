@@ -1,8 +1,8 @@
 # Gafu V2 agent guide
 
 Read `V2.md`, `CONTEXT.md`, and `v2-impl.md` before changing product behavior.
-During Phase 0, follow `phases/phase-0.md` in patch order and keep each patch
-independently reviewable.
+During implementation, follow the active detailed phase document in patch order
+and keep each patch independently reviewable.
 
 ## Architecture
 
