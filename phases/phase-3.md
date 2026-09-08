@@ -1,6 +1,6 @@
 # Phase 3 — Subtitle Set to Preparation Gap
 
-**Status:** Refined implementation contract · 3.0  
+**Status:** Implementation complete; external provider, Kaishi, sense, grammar, and licence gates pending · 3.1
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)  
 **Product source:** [`../V2.md`](../V2.md)  
 **Last updated:** 2026-09-08
@@ -174,7 +174,7 @@ confidence is explanatory metadata, never local attestation.
 
 ### Complete-only resumable paid batches
 
-One Analysis Run is a deterministic manifest over the Subtitle Set revision,
+One Analysis Run is a deterministic manifest over the Subtitle Set identity and revision,
 normalization/analyzer versions, provider/model/prompt version, and fixed cue
 batches. The Study comparison digest is deliberately absent: learner progress
 can be re-compared locally without buying the same linguistic analysis again.
@@ -237,7 +237,10 @@ Study exposes a `preparationSnapshot` that contains:
 
 It contains no schedule internals or review history. Preparation receives the
 snapshot as a value and cannot query Study's tables. Baseline/support-ready
-items are excluded as known. Existing known Cards are excluded. Existing
+items are excluded as known. A baseline word-level claim matches normalized
+lemma, reading, and compatible broad part of speech without pretending Kaishi
+provides sense IDs. A learned Card remains sense-conservative and also requires
+a compatible meaning. Existing known Cards are excluded. Existing
 staged, active, or suspended Cards remain visible as `existing` preparation
 items with their Card attached, so Phase 4 can count them without recreating
 them. A disabled baseline item is not subtracted.
@@ -281,11 +284,10 @@ stored result or imposes a target-count limit.
 
 The learner may:
 
-- choose a supplied sense or enter corrected display metadata;
-- attach an item to an existing compatible Card;
+- choose a supplied sense or enter corrected meaning/sense metadata;
+- let local Study recomparison attach a compatible existing Card;
 - mark it known for this Subtitle Set;
 - override required/helpful/incidental classification;
-- exclude or restore a false-positive evidence link; and
 - defer or dismiss the item from the future Plan Draft.
 
 Corrections are Preparation-owned overlays keyed to source/candidate identity
@@ -315,6 +317,7 @@ type Preparation = {
   getSubtitleSet(id: SubtitleSetId): Result<SubtitleSetSnapshot, PreparationFailure>;
   preflight(id: SubtitleSetId, study: StudyPreparationSnapshot): Promise<Result<AnalysisPreflight, PreparationFailure>>;
   analyze(command: AnalyzeCommand): Promise<Result<PreparationSnapshot, PreparationFailure>>;
+  recompare(id: SubtitleSetId, study: StudyPreparationSnapshot): Result<PreparationSnapshot, PreparationFailure>;
   correct(command: CorrectionCommand): Result<PreparationSnapshot, PreparationFailure>;
   evidence(query: EvidenceQuery): Result<EvidencePage, PreparationFailure>;
   deleteSubtitleSet(command: DeleteSubtitleSet): Result<void, PreparationFailure>;
@@ -336,7 +339,7 @@ parser helpers remain private.
 - Study preparation snapshot supplied per workflow;
 - clock and ID generation;
 - archive/import/ranking policy values; and
-- logger.
+- opaque token generation.
 
 The external AI seam has both production and deterministic adapters. Import,
 SRT/ZIP parsing, evidence identity, aggregation, and ranking are in-process
@@ -347,8 +350,8 @@ implementation details tested through Preparation wherever practical.
 Preparation owns a separate forward-only migration ledger in the shared SQLite
 file and stores:
 
-- Subtitle Set, current Source Revision, ordered episode metadata, accepted
-  source bytes/text, and cue evidence;
+- Subtitle Set, current Source Revision, ordered episode metadata, accepted cue
+  text/timing, and cue evidence;
 - deterministic Analysis Run manifests and per-batch checkpoints;
 - validated normalized provider responses and usage;
 - candidate/evidence aggregation and versioned rank projection;
@@ -517,8 +520,8 @@ workarounds:
 26. The same target occurs hundreds of times across several episodes.
 27. A target is early and rare; another is late and frequent; ties are stable.
 28. An ambiguous target ranks but cannot become a resolved future Card Draft.
-29. The learner overrides classification, excludes one evidence link, marks the
-    item known-for-set, then recomputes comparison and restarts.
+29. The learner overrides classification, corrects meaning/sense, marks the item
+    known-for-set, then recomputes comparison and restarts.
 30. Evidence pagination changes page size or filter but not totals/rank.
 31. A set is deleted while no run is active, while paused, and after completion.
 32. Preparation deletion is followed by a Study snapshot and backup comparison.
@@ -582,8 +585,8 @@ and the Phase 4 handoff.
 - [x] Remote scope, consent, checkpoint, and uncertain retry rules are explicit.
 - [x] Study comparison and Preparation deletion ownership are explicit.
 - [x] Complete gap, ranking, pagination, and correction rules are explicit.
-- [ ] Safe direct/ZIP import and SRT parsing are implemented.
-- [ ] Preparation persistence and Study comparison snapshot are implemented.
-- [ ] Resumable local/provider analysis is implemented.
-- [ ] Complete gap projection and corrections are implemented.
-- [ ] Prepare browser journey and phase evidence pass.
+- [x] Safe direct/ZIP import and SRT parsing are implemented.
+- [x] Preparation persistence and Study comparison snapshot are implemented.
+- [x] Resumable local/provider analysis is implemented.
+- [x] Complete gap projection and corrections are implemented.
+- [x] Prepare browser journey and phase evidence pass.

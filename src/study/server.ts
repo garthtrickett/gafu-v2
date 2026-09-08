@@ -12,6 +12,12 @@ import { createGeneratedMaterialValidator } from "../learning-material/generated
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
 import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
 import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
+import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
+import { createSubtitleImportInspector } from "../preparation/import.ts";
+import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
+import { createOpenAiBatchProvider } from "../preparation/openai-batch-provider.ts";
+import { openPreparation } from "../preparation/preparation.ts";
+import { handlePreparationApi } from "../preparation/server.ts";
 import type { Result } from "../result.ts";
 import { ok } from "../result.ts";
 import {
@@ -430,7 +436,7 @@ const keyCustody = createProviderKeyCustody(
     ? { verify: async () => ok(undefined) }
     : createOpenAiKeyVerifier({ timeoutMs: 10_000, model: openAiModel }),
 );
-const provider = fakeAi
+const materialProvider = fakeAi
   ? createDeterministicMaterialProvider()
   : createOpenAiMaterialProvider({
       apiKey: keyCustody.readForServerAdapter,
@@ -458,7 +464,7 @@ const openedMaterial = openLearningMaterial({
   clock: () => new Date(),
   nextId: () => crypto.randomUUID(),
   nextToken: () => crypto.randomUUID(),
-  provider,
+  provider: materialProvider,
   keyCustody,
   validate: validator,
   inspectionEnabled: process.env["GAFU_DEVELOPER_INSPECTION"] === "1",
@@ -479,14 +485,48 @@ if (!opened.ok) {
   throw new Error(`Study failed to open: ${opened.error.kind}`);
 }
 
+const preparationProvider = fakeAi
+  ? createDeterministicPreparationProvider()
+  : createOpenAiBatchProvider({
+      apiKey: keyCustody.readForServerAdapter,
+      model: openAiModel,
+      promptVersion: "preparation-v2",
+      timeoutMs: 60_000,
+    });
+const openedPreparation = openPreparation({
+  databasePath,
+  clock: () => new Date(),
+  nextId: () => crypto.randomUUID(),
+  nextToken: () => crypto.randomUUID(),
+  importPolicy: phase3ImportPolicy,
+  inspector: createSubtitleImportInspector(phase3ImportPolicy),
+  analyzer,
+  grammar: declaredGrammarDetector,
+  provider: preparationProvider,
+  providerConfigured: () => fakeAi || keyCustody.isConfigured(),
+  batchSize: 20,
+});
+if (!openedPreparation.ok) {
+  throw new Error(`Preparation failed to open: ${openedPreparation.error.kind}`);
+}
+
 const port = Number(process.env["GAFU_SERVER_PORT"] ?? 42070);
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port,
-  fetch: (request) =>
-    new URL(request.url).pathname.startsWith("/api/")
-      ? handleApi(request, opened.value, openedMaterial.value)
-      : staticResponse(request),
+  fetch: async (request) => {
+    if (!new URL(request.url).pathname.startsWith("/api/")) {
+      return staticResponse(request);
+    }
+    const preparationResponse = await handlePreparationApi(
+      request,
+      openedPreparation.value,
+      opened.value,
+    );
+    return (
+      preparationResponse ?? handleApi(request, opened.value, openedMaterial.value)
+    );
+  },
 });
 
 console.info(`Gafu V2 local server listening on ${server.url}`);
@@ -494,6 +534,7 @@ console.info(`Gafu V2 local server listening on ${server.url}`);
 const close = () => {
   opened.value.close();
   openedMaterial.value.close();
+  openedPreparation.value.close();
   void server.stop();
 };
 process.once("SIGINT", close);

@@ -364,7 +364,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
               Cards own progress. AI material varies; local validation decides what is safe.
             </p>
           </div>
-          <a class="secondary button-link" href="?diagnostic=phase0">Phase 0 diagnostic</a>
+          <div class="button-row">
+            <a class="secondary button-link" href="?view=prepare">Prepare a show</a>
+            <a class="secondary button-link" href="?diagnostic=phase0">Phase 0 diagnostic</a>
+          </div>
         </header>
 
         <p class="notice notice--${model.messageKind}" role="status">${model.message}</p>

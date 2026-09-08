@@ -1,4 +1,4 @@
-import { render } from "lit-html";
+import { html, render } from "lit-html";
 import { createBrowserAnalysisClient } from "./analysis/browser-client.ts";
 import { diagnosticView, loadDiagnostic } from "./diagnostic.ts";
 import { createDevelopmentLogger } from "./log.ts";
@@ -17,6 +17,14 @@ declare global {
 }
 
 export const mountPhase0Diagnostic = async (root: HTMLElement): Promise<void> => {
+  render(
+    html`<section class="diagnostic" aria-labelledby="diagnostic-heading">
+      <p class="eyebrow">Phase 0</p>
+      <h1 id="diagnostic-heading">Gafu V2 diagnostics</h1>
+      <p class="status">Running the integrated proof…</p>
+    </section>`,
+    root,
+  );
   const logger = createDevelopmentLogger((level, record) => {
     console[level](JSON.stringify({ level, ...record }));
   });

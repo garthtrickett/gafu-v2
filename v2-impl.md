@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 2 implementation complete; external provider, Kaishi, and licence gates pending · 1.6
+**Status:** Phase 3 implementation complete; external provider, Kaishi, sense, grammar, and licence gates pending · 1.7
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -397,8 +397,8 @@ inspectable, resumable, evidence-backed Preparation Gap across a series.
   pays for nor merges the same agent work twice.
 - Show the learner the subtitle scope, configured provider, and estimated remote
   analysis usage before the first paid request.
-- Give the agent only subtitle text and the minimum learner-state summary needed
-  for gap analysis; never send video or audio.
+- Give the agent only subtitle text and local token/grammar evidence; keep the
+  complete learner-state comparison local and never send video or audio.
 - Compare results with the Known Word Bank and Study knowledge snapshot. Exclude
   known targets, attach already-learning Cards, and preserve ambiguity instead
   of inventing certainty.
@@ -406,8 +406,8 @@ inspectable, resumable, evidence-backed Preparation Gap across a series.
   cross-episode reuse, comprehension impact, and first important appearance.
 - Keep the complete useful gap inspectable even when agent context or UI page
   size requires batching.
-- Let the learner correct canonical matches, known state, classification, and
-  episode evidence before Card creation.
+- Let the learner correct meaning/sense, known-for-set state, classification,
+  disposition, episode order/title, and inclusion before Card creation.
 - Deleting or replacing a Subtitle Set removes its analysis and evidence links
   only under an explicit policy; it cannot delete a shared Card or change Study
   progress.
@@ -424,6 +424,31 @@ completed work nor duplicates it.
 
 Creating the plan's missing Cards, admitting them to daily study, readiness,
 or playback.
+
+### Phase 3 implementation result
+
+Preparation now owns bounded direct/ZIP inspection, strict SRT parsing,
+content-derived provenance, durable Subtitle Sets, complete resumable analysis,
+local Study comparison, evidence aggregation, deterministic ranking, correction
+overlays, and deletion that cannot cross into Study. The Prepare browser covers
+both direct and equivalent ZIP journeys; the deterministic restart test recovers
+an accepted-but-lost batch without resubmission. The full local and browser
+gates pass.
+
+The paid provider smoke remains pending because this environment has no API
+key. IPADIC sense limits, the declared 22-form grammar envelope, production
+Kaishi source, and repository licence remain explicit gates or limitations. See
+[`docs/evidence/phase-3.md`](docs/evidence/phase-3.md).
+
+Phase 4 must preserve these facts:
+
+- only a complete corrected Preparation Gap can become a Plan Draft;
+- Study remains the sole Card, staging, schedule, and progress writer;
+- existing Cards are reused and ambiguous Vocabulary findings require learner
+  correction rather than guessed identity;
+- the shared New Cards per Day setting is the only daily admission limit; and
+- plan changes never require another paid subtitle analysis when the source and
+  linguistic-analysis versions are unchanged.
 
 ## Phase 4 — Preparation Plan and staged learning
 
