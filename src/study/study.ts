@@ -134,13 +134,15 @@ const applySeed = (
       if (seed.availability === "available" && seed.version !== null) {
         const insert = database.query(
           `INSERT INTO known_word(
-             seed_id, seed_key, seed_version, lemma, reading, meaning, enabled
-           ) VALUES (?, ?, ?, ?, ?, ?, 1)
+             seed_id, seed_key, seed_version, lemma, reading, meaning,
+             part_of_speech, enabled
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
            ON CONFLICT(seed_id, seed_key) DO UPDATE SET
              seed_version = excluded.seed_version,
              lemma = excluded.lemma,
              reading = excluded.reading,
-             meaning = excluded.meaning`,
+             meaning = excluded.meaning,
+             part_of_speech = excluded.part_of_speech`,
         );
         for (const entry of seed.entries) {
           insert.run(
@@ -150,6 +152,7 @@ const applySeed = (
             entry.lemma,
             entry.reading,
             entry.meaning,
+            entry.partOfSpeech,
           );
         }
       }
@@ -644,9 +647,12 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         return err({ kind: "cardNotAnswerable", state: current.value.state });
       }
       const scheduleRow = database
-        .query("SELECT schedule_json FROM schedule WHERE card_id = ?")
-        .get(command.cardId) as { schedule_json: string } | null;
+        .query("SELECT schedule_json, due_at FROM schedule WHERE card_id = ?")
+        .get(command.cardId) as { schedule_json: string; due_at: string } | null;
       if (scheduleRow === null) {
+        return err({ kind: "cardNotAnswerable", state: current.value.state });
+      }
+      if (new Date(scheduleRow.due_at).getTime() > now.value.getTime()) {
         return err({ kind: "cardNotAnswerable", state: current.value.state });
       }
       const before = JSON.parse(scheduleRow.schedule_json) as StoredSchedule;
@@ -740,7 +746,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     try {
       const allBaselineRows = database
         .query(
-          `SELECT seed_id, seed_key, lemma, reading, meaning, enabled
+          `SELECT seed_id, seed_key, lemma, reading, meaning, part_of_speech, enabled
            FROM known_word ORDER BY seed_id, seed_key`,
         )
         .all() as {
@@ -749,6 +755,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         lemma: string;
         reading: string;
         meaning: string;
+        part_of_speech: string | null;
         enabled: number;
       }[];
       const baselineRows = allBaselineRows.filter((row) => row.enabled === 1);
@@ -782,6 +789,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             lemma: row.lemma,
             reading: row.reading,
             meaning: row.meaning,
+            partOfSpeech: row.part_of_speech,
             source: "baseline" as const,
           })),
           ...vocabularyCards.map((row) => {
@@ -796,6 +804,8 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
               lemma: content.lemma,
               reading: content.reading,
               meaning: content.meaning,
+              partOfSpeech: (JSON.parse(row.content_json) as { partOfSpeech: string })
+                .partOfSpeech,
               source: "card" as const,
             };
           }),

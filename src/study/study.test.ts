@@ -501,7 +501,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 1 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 2 },
     });
   });
 

@@ -56,6 +56,7 @@ export const createProviderKeyCustody = (
 export const createOpenAiKeyVerifier = (options: {
   fetch?: KeyVerificationFetch;
   timeoutMs: number;
+  model?: string;
 }): ProviderKeyVerifier => ({
   verify: async (candidate, outerSignal) => {
     const request = options.fetch ?? fetch;
@@ -69,7 +70,11 @@ export const createOpenAiKeyVerifier = (options: {
     if (outerSignal?.aborted === true) cancel();
     else outerSignal?.addEventListener("abort", cancel, { once: true });
     try {
-      const response = await request("https://api.openai.com/v1/models", {
+      const endpoint =
+        options.model === undefined
+          ? "https://api.openai.com/v1/models"
+          : `https://api.openai.com/v1/models/${encodeURIComponent(options.model)}`;
+      const response = await request(endpoint, {
         headers: { Authorization: `Bearer ${candidate}` },
         signal: controller.signal,
       });
@@ -79,7 +84,7 @@ export const createOpenAiKeyVerifier = (options: {
       if (response.status === 403) return err({ kind: "permission", ...failure });
       if (response.status === 429) return err({ kind: "rateLimit", ...failure });
       return err({ kind: "offline", ...failure });
-    } catch (cause) {
+    } catch {
       if (outerSignal?.aborted === true) {
         return err({ kind: "cancelled", detail: "key verification was cancelled" });
       }
@@ -88,7 +93,7 @@ export const createOpenAiKeyVerifier = (options: {
       }
       return err({
         kind: "offline",
-        detail: cause instanceof Error ? cause.message : String(cause),
+        detail: "key verification network request failed",
       });
     } finally {
       clearTimeout(timeout);

@@ -36,6 +36,21 @@ A fresh AI-generated presentation that teaches or tests one Card without owning
 the learner's progress.
 _Avoid_: Card, permanent sentence, saved flashcard
 
+**Validated Presentation**:
+Learning Material that passed Gafu's local structure, target, `i`/`i+1`, and
+variation checks and is therefore eligible to be shown.
+_Avoid_: Provider response, generated draft, trusted AI output
+
+**Presentation Permit**:
+An opaque, expiring, target-bound capability issued for one validated review
+presentation. Study must consume it when recording the answer.
+_Avoid_: Validation flag, schedule token, reusable session ID
+
+**Validated Reserve**:
+An unshown Validated Presentation retained locally so a brief provider outage
+does not interrupt an already-started study session.
+_Avoid_: Fixed fallback sentence, rejected generation, review history
+
 **Known Word Bank**:
 The learner's trusted pool of already-known vocabulary. It begins with Kaishi
 1.5k and supplies the supporting words used to generate Learning Material.
