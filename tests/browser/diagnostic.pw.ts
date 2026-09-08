@@ -17,6 +17,10 @@ test("boots the Phase 0 diagnostic route", async ({ page }) => {
 
 test("analyzes Japanese off the browser main thread", async ({ page }) => {
   await page.goto("/?diagnostic=phase0");
+  await expect(
+    page.getByRole("heading", { name: "Gafu V2 diagnostics" }),
+  ).toBeVisible();
+  await page.waitForFunction(() => window.gafuDiagnostics !== undefined);
 
   const result = await page.evaluate(() =>
     window.gafuDiagnostics.analyzeJapanese("犬がいる。"),
