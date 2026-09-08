@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 4;
+export const STUDY_SCHEMA_VERSION = 5;
 
 const migrations: readonly Migration[] = [
   {
@@ -207,6 +207,60 @@ const migrations: readonly Migration[] = [
         span_end INTEGER NOT NULL,
         captured_at TEXT NOT NULL,
         PRIMARY KEY (card_id, source_key, cue_key, span_start, span_end)
+      );
+    `,
+  },
+  {
+    version: 5,
+    sql: `
+      ALTER TABLE staging_source RENAME TO staging_source_v4;
+
+      CREATE TABLE staging_source (
+        card_id TEXT NOT NULL REFERENCES card(id) ON DELETE RESTRICT,
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('manual', 'plan', 'capture', 'migration')),
+        source_key TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (card_id, source_kind, source_key)
+      );
+
+      INSERT INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
+      SELECT card_id, source_kind, source_key, priority, active, created_at
+      FROM staging_source_v4;
+
+      DROP TABLE staging_source_v4;
+
+      CREATE TABLE legacy_import (
+        import_key TEXT PRIMARY KEY,
+        source_digest TEXT NOT NULL,
+        source_contract TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+
+      CREATE TABLE legacy_import_item (
+        import_key TEXT NOT NULL REFERENCES legacy_import(import_key) ON DELETE RESTRICT,
+        source_id TEXT NOT NULL,
+        record_digest TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('grammar', 'vocabulary', 'unknown')),
+        disposition TEXT NOT NULL CHECK (disposition IN ('mapped', 'merged', 'skipped', 'quarantined')),
+        reason TEXT NOT NULL,
+        card_id TEXT REFERENCES card(id) ON DELETE RESTRICT,
+        PRIMARY KEY (import_key, source_id)
+      );
+
+      CREATE INDEX legacy_import_item_card_idx ON legacy_import_item(card_id);
+
+      CREATE TABLE legacy_quarantine (
+        import_key TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        record_digest TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (import_key, source_id),
+        FOREIGN KEY (import_key, source_id)
+          REFERENCES legacy_import_item(import_key, source_id) ON DELETE RESTRICT
       );
     `,
   },

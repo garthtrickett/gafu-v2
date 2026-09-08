@@ -1,6 +1,6 @@
 # Phase 6 — Migration, Reliability, and Replacement
 
-**Status:** Refined implementation contract · 6.0  
+**Status:** Implementation complete; owner real-data cutover gate pending · 6.1
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)  
 **Product source:** [`../V2.md`](../V2.md)  
 **Last updated:** 2026-09-08
@@ -363,9 +363,9 @@ owner-only real-data release gate.
 - [x] Backup/restore safety and rollback are explicit.
 - [x] Reliability budgets and browser matrix are explicit.
 - [x] External cutover/archive authority is explicit.
-- [ ] Snapshot fetch, validation, and dry run are implemented.
-- [ ] Atomic import and audit are implemented.
-- [ ] Backup inspection and restore are implemented.
-- [ ] Reliability/scale and browser-matrix gates pass.
-- [ ] Cutover documentation and implementation evidence are published.
+- [x] Snapshot fetch, validation, and dry run are implemented.
+- [x] Atomic import and audit are implemented.
+- [x] Backup inspection and restore are implemented.
+- [x] Reliability/scale and browser-matrix gates pass.
+- [x] Cutover documentation and implementation evidence are published.
 - [ ] Owner real-data parallel run is recorded and accepted.
