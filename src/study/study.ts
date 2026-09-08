@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { err, ok, type Result } from "../result.ts";
 import type {
   AnswerCard,
@@ -19,6 +20,7 @@ import type {
   StudyDependencies,
   StudyFailure,
   StudyPreferences,
+  StudyPreparationSnapshot,
   StudyQueue,
   StudyStatus,
 } from "./contracts.ts";
@@ -852,6 +854,41 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
+  const preparationSnapshot = (): Result<StudyPreparationSnapshot, StudyFailure> => {
+    const knowledge = knowledgeSnapshot();
+    if (!knowledge.ok) return knowledge;
+    try {
+      const cards = listCards();
+      if (!cards.ok) return cards;
+      const claims = database
+        .query(
+          "SELECT authority, claim_key, card_id FROM identity_claim ORDER BY card_id, authority, claim_key",
+        )
+        .all() as { authority: string; claim_key: string; card_id: string }[];
+      const value = {
+        vocabulary: knowledge.value.vocabulary,
+        grammar: knowledge.value.grammar,
+        cards: cards.value.map((card) => ({
+          cardId: card.id,
+          type: card.type,
+          state: card.state,
+          supportReady: card.supportReadyAt !== null,
+          content: card.content,
+          identityClaims: claims
+            .filter((claim) => claim.card_id === card.id)
+            .map((claim) => ({
+              authority: claim.authority,
+              claimKey: claim.claim_key,
+            })),
+        })),
+      };
+      const digest = createHash("sha256").update(JSON.stringify(value)).digest("hex");
+      return ok({ digest: `study-preparation-v1:sha256:${digest}`, ...value });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const exportBackup = (): Result<StudyBackup, StudyFailure> => {
     const now = safeNow(dependencies.clock);
     if (!now.ok) return now;
@@ -878,6 +915,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     status,
     answer,
     knowledgeSnapshot,
+    preparationSnapshot,
     preferences,
     setPreferences,
     setBaselineWordEnabled,

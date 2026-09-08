@@ -29,6 +29,7 @@ const vocabularyCue = (
       lemma,
       reading,
       partOfSpeech: ["名詞または動詞"],
+      broadPartOfSpeech: "noun",
       span: span(normalizedJapanese, surface),
     },
   ],
