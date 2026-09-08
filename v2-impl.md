@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Ready to expand Phase 0 · 1.0
+**Status:** Phase 0 detailed and ready · 1.1
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -150,6 +150,9 @@ These must hold from the first phase in which the relevant behavior exists:
 - Every destructive or batch operation is atomic or explicitly resumable.
 
 ## Phase 0 — Prove the risky seams
+
+**Detailed execution contract:** [`phases/phase-0.md`](phases/phase-0.md). It is
+authoritative for Phase 0 where this outline is less specific.
 
 ### Outcome
 
