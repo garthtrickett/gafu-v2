@@ -1,7 +1,7 @@
 # Phase 0 — Prove the risky seams
 
-**Status:** In implementation — patches 0.1–0.4 complete; 0.5 code complete,
-manual provider evidence pending · 1.5
+**Status:** In implementation — patches 0.1–0.4 and 0.6 complete; 0.5 code
+complete with manual provider evidence pending · 1.6
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)
 **Product source:** [`../V2.md`](../V2.md)
 **Last updated:** 2026-09-08
@@ -234,7 +234,7 @@ one.
 | 0.3 | Done | Characterize and select Japanese analysis | 0.2 |
 | 0.4 | Done | Prove or reject `i`/`i+1` validation | 0.3 |
 | 0.5 | Manual gate pending | Prove complete, resumable agent batching | 0.2, 0.3 |
-| 0.6 | Not started | Decide data and AI topology from working spikes | 0.1, 0.5 |
+| 0.6 | Done | Decide data and AI topology from working spikes | 0.1, 0.5 |
 | 0.7 | Not started | Compose the proof, publish evidence, and close the phase | 0.3–0.6 |
 
 ## Patch 0.1 — Executable skeleton
