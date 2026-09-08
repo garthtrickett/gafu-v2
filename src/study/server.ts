@@ -18,6 +18,7 @@ import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
 import { createOpenAiBatchProvider } from "../preparation/openai-batch-provider.ts";
 import { openPreparation } from "../preparation/preparation.ts";
 import { handlePreparationApi } from "../preparation/server.ts";
+import { asPlanId } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
 import { ok } from "../result.ts";
 import {
@@ -103,6 +104,7 @@ const decodeContent = (type: string, value: unknown): CardContent | null => {
 const failureStatus = (failure: StudyFailure): number => {
   switch (failure.kind) {
     case "cardNotFound":
+    case "planNotFound":
       return 404;
     case "invalidCard":
     case "invalidPreference":
@@ -110,12 +112,15 @@ const failureStatus = (failure: StudyFailure): number => {
     case "presentationInvalid":
     case "presentationExpired":
     case "presentationForWrongCard":
+    case "invalidPlanDraft":
       return 422;
     case "invalidStateTransition":
     case "identityConflict":
     case "presentationAlreadyUsed":
     case "cardNotAnswerable":
     case "unsupportedSchema":
+    case "planOperationConflict":
+    case "invalidPlanTransition":
       return 409;
     case "openFailed":
     case "migrationFailed":
@@ -136,7 +141,9 @@ const jsonResult = <Value>(
   successStatus = 200,
 ): Response =>
   result.ok
-    ? Response.json(result.value, { status: successStatus })
+    ? Response.json(result.value === undefined ? { ok: true } : result.value, {
+        status: successStatus,
+      })
     : failureResponse(result.error);
 
 const materialFailureStatus = (failure: MaterialFailure): number => {
@@ -306,6 +313,36 @@ const handleApi = async (
   }
   if (request.method === "GET" && url.pathname === "/api/study") {
     return snapshot(study);
+  }
+  if (request.method === "GET" && url.pathname === "/api/study/plans") {
+    return jsonResult(study.listPlans());
+  }
+  const planMatch = url.pathname.match(/^\/api\/study\/plans\/([^/]+)$/u);
+  if (planMatch !== null) {
+    const rawPlanId = planMatch[1];
+    if (rawPlanId === undefined) return invalidRequest("Missing Plan ID.");
+    const planId = asPlanId(decodeURIComponent(rawPlanId));
+    if (request.method === "GET") return jsonResult(study.plan(planId));
+    if (request.method === "POST") {
+      const body = await readJson(request);
+      if (
+        body instanceof Response ||
+        !isRecord(body) ||
+        (body["action"] !== "pause" && body["action"] !== "resume")
+      ) {
+        return body instanceof Response
+          ? body
+          : invalidRequest("Plan action must be pause or resume.");
+      }
+      return jsonResult(study.setPlanState({ planId, action: body["action"] }));
+    }
+    if (request.method === "DELETE") {
+      const body = await readJson(request);
+      if (body instanceof Response) return body;
+      return !isRecord(body) || body["confirmation"] !== "delete"
+        ? invalidRequest("Plan deletion requires confirmation=delete.")
+        : jsonResult(study.deletePlan(planId, "delete"));
+    }
   }
   if (request.method === "POST" && url.pathname === "/api/study/cards") {
     const body = await readJson(request);

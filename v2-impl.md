@@ -494,6 +494,28 @@ the correct episode—not necessarily the whole series—to ready.
 
 Video playback, automatic encounter credit, subtitle selection, or V1 import.
 
+### Phase 4 implementation result
+
+Preparation now projects a deterministic, complete Plan Draft with explicit
+identity/evidence blockers and no top-N cutoff. Study validates and commits that
+draft atomically, resolves identity again at write time, creates or reuses each
+Card once, retains source evidence, and records one durable plan revision.
+Manual and plan Staging Sources compete in the existing shared New Cards per Day
+transaction. Support readiness drives per-episode readiness; queue position
+drives clearly labelled introduction estimates. Pause, resume, replacement, and
+delete change plan staging intent without deleting Cards or progress. See
+[`docs/evidence/phase-4.md`](docs/evidence/phase-4.md).
+
+Phase 5 must preserve these facts:
+
+- selection alone and ordinary copy perform no network or Study write;
+- Subtitle Capture adds a capture Staging Source and never bypasses shared
+  admission;
+- Watch submits one vocabulary intent and never writes Study persistence;
+- subtitle provenance is evidence, not fixed Learning Material or progress; and
+- playback state must remain usable after ambiguous, duplicate, or failed
+  capture.
+
 ## Phase 5 — Watch and Subtitle Capture
 
 ### Outcome

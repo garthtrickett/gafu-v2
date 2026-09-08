@@ -289,8 +289,8 @@ export const projectFindings = (
         resolution:
           candidate.kind === "grammar" ||
           (correctedSense !== null &&
-            candidate.ambiguity.length === 0 &&
-            candidate.meanings.length === 1)
+            (correction?.senseId !== undefined ||
+              (candidate.ambiguity.length === 0 && candidate.meanings.length === 1)))
             ? "resolved"
             : "ambiguous",
         ambiguity: candidate.ambiguity,

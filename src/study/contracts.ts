@@ -1,3 +1,10 @@
+import type {
+  PlanId,
+  PlanSnapshot,
+  PlanStateCommand,
+  PlanSummary,
+  StartPlan,
+} from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
 
 declare const cardIdBrand: unique symbol;
@@ -236,7 +243,11 @@ export type StudyFailure =
   | { readonly kind: "presentationAlreadyUsed" }
   | { readonly kind: "cardNotAnswerable"; readonly state: CardState }
   | { readonly kind: "schedulerFailed"; readonly detail: string }
-  | { readonly kind: "clockFailed"; readonly detail: string };
+  | { readonly kind: "clockFailed"; readonly detail: string }
+  | { readonly kind: "invalidPlanDraft"; readonly detail: string }
+  | { readonly kind: "planOperationConflict" }
+  | { readonly kind: "planNotFound"; readonly planId: string }
+  | { readonly kind: "invalidPlanTransition"; readonly detail: string };
 
 export type Study = Readonly<{
   createCard: (input: CreateCard) => Result<CreateCardOutcome, StudyFailure>;
@@ -258,6 +269,11 @@ export type Study = Readonly<{
     enabled: boolean,
   ) => Result<KnowledgeSnapshot, StudyFailure>;
   exportBackup: () => Result<StudyBackup, StudyFailure>;
+  startPlan: (command: StartPlan) => Result<PlanSnapshot, StudyFailure>;
+  listPlans: () => Result<readonly PlanSummary[], StudyFailure>;
+  plan: (id: PlanId) => Result<PlanSnapshot, StudyFailure>;
+  setPlanState: (command: PlanStateCommand) => Result<PlanSnapshot, StudyFailure>;
+  deletePlan: (id: PlanId, confirmation: "delete") => Result<void, StudyFailure>;
   close: () => void;
 }>;
 

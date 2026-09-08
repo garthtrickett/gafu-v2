@@ -1,6 +1,6 @@
 # Phase 4 — Preparation Plan and staged learning
 
-**Status:** Refined implementation contract · 4.0
+**Status:** Implementation complete; external Kaishi, sense, grammar, provider, and licence gates pending · 4.1
 **Parent plan:** [`../v2-impl.md`](../v2-impl.md)  
 **Product source:** [`../V2.md`](../V2.md)  
 **Last updated:** 2026-09-08
@@ -401,7 +401,7 @@ scenarios, browser behavior, privacy inspection, and the Phase 5 handoff.
 - [x] Staging-source arbitration and shared admission are explicit.
 - [x] Readiness threshold and forecast limits are explicit.
 - [x] Pause/resume/replace/delete ownership is explicit.
-- [ ] Deterministic Plan Draft projection is implemented.
-- [ ] Atomic Study plan commit and staging sources are implemented.
-- [ ] Readiness and forecast are implemented.
-- [ ] Plan browser journey and closure evidence pass.
+- [x] Deterministic Plan Draft projection is implemented.
+- [x] Atomic Study plan commit and staging sources are implemented.
+- [x] Readiness and forecast are implemented.
+- [x] Plan browser journey and closure evidence pass.

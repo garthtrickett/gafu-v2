@@ -501,8 +501,54 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 2 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 3 },
     });
+  });
+
+  test("upgrades a Phase 2 database without stranding staged Cards", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-migration-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "study.sqlite");
+    const dependencies = {
+      databasePath: path,
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+      nextId: sequentialIds(),
+      permitVerifier: testPermitVerifier,
+      knownWordSeed: testSeed,
+    };
+    const current = openStudy(dependencies);
+    if (!current.ok) throw new Error(current.error.kind);
+    expect(
+      current.value.createCard({
+        type: "grammar",
+        content: {
+          canonicalForm: "〜ながら",
+          meaning: "while",
+          formation: "verb stem + ながら",
+          usageNotes: "",
+        },
+      }).ok,
+    ).toBe(true);
+    current.value.close();
+    const database = new Database(path, { strict: true });
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+      DROP TABLE plan_start_operation;
+      DROP TABLE preparation_plan_evidence;
+      DROP TABLE preparation_plan_member;
+      DROP TABLE preparation_plan;
+      DROP TABLE staging_source;
+      DELETE FROM schema_migration WHERE version = 3;
+    `);
+    database.close();
+
+    const upgraded = openStudy({ ...dependencies, nextId: sequentialIds() });
+    if (!upgraded.ok) throw new Error(upgraded.error.kind);
+    expect(upgraded.value.studyQueue()).toMatchObject({
+      ok: true,
+      value: { newlyAdmitted: 1, stagedCount: 0 },
+    });
+    upgraded.value.close();
   });
 
   test("does not record a failed migration as applied", () => {

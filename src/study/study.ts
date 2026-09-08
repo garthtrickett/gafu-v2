@@ -27,6 +27,7 @@ import type {
 import { asCardId } from "./contracts.ts";
 import { canonicalizeCard, canonicalizeUpdatedContent } from "./identity.ts";
 import { migrateStudyDatabase, STUDY_SCHEMA_VERSION } from "./migrations.ts";
+import { createPlanOperations } from "./plans.ts";
 import {
   newSchedule,
   SCHEDULER_VERSION,
@@ -192,6 +193,24 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       } | null;
       if (existing !== null) {
         const card = readCard(database, existing.card_id);
+        if (card.ok && card.value.state === "staged") {
+          try {
+            database
+              .query(
+                `INSERT OR IGNORE INTO staging_source(
+                   card_id, source_kind, source_key, priority, active, created_at
+                 ) VALUES (?, 'manual', ?, ?, 1, ?)`,
+              )
+              .run(
+                card.value.id,
+                card.value.id,
+                input.stagingPriority ?? 0,
+                now.value.toISOString(),
+              );
+          } catch (cause) {
+            return err({ kind: "writeFailed", detail: detail(cause) });
+          }
+        }
         return card.ok ? ok({ outcome: "existing", card: card.value }) : card;
       }
       const cardId = dependencies.nextId();
@@ -225,6 +244,13 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         database
           .query("INSERT INTO card_progress(card_id, state) VALUES (?, 'staged')")
           .run(cardId);
+        database
+          .query(
+            `INSERT INTO staging_source(
+               card_id, source_kind, source_key, priority, active, created_at
+             ) VALUES (?, 'manual', ?, ?, 1, ?)`,
+          )
+          .run(cardId, cardId, priority, now.value.toISOString());
       });
       insert.immediate();
       const card = readCard(database, cardId);
@@ -240,6 +266,24 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       } | null;
       if (existing !== null) {
         const card = readCard(database, existing.card_id);
+        if (card.ok && card.value.state === "staged") {
+          try {
+            database
+              .query(
+                `INSERT OR IGNORE INTO staging_source(
+                   card_id, source_kind, source_key, priority, active, created_at
+                 ) VALUES (?, 'manual', ?, ?, 1, ?)`,
+              )
+              .run(
+                card.value.id,
+                card.value.id,
+                input.stagingPriority ?? 0,
+                now.value.toISOString(),
+              );
+          } catch (writeCause) {
+            return err({ kind: "writeFailed", detail: detail(writeCause) });
+          }
+        }
         return card.ok ? ok({ outcome: "existing", card: card.value }) : card;
       }
       return err({ kind: "writeFailed", detail: detail(cause) });
@@ -449,6 +493,12 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
+  const planOperations = createPlanOperations(database, {
+    clock: dependencies.clock,
+    nextId: dependencies.nextId,
+    preferences,
+  });
+
   const studyQueue = (): Result<StudyQueue, StudyFailure> => {
     const now = safeNow(dependencies.clock);
     if (!now.ok) return now;
@@ -501,10 +551,14 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         if (remaining === 0) return;
         const staged = database
           .query(
-            `SELECT c.id FROM card c
+            `SELECT c.id, max(ss.priority) AS effective_priority,
+                    min(ss.created_at) AS source_created
+             FROM card c
              JOIN card_progress p ON p.card_id = c.id
+             JOIN staging_source ss ON ss.card_id = c.id AND ss.active = 1
              WHERE p.state = 'staged'
-             ORDER BY c.staging_priority DESC, c.staged_at, c.id
+             GROUP BY c.id
+             ORDER BY effective_priority DESC, source_created, c.id
              LIMIT ?`,
           )
           .all(remaining) as { id: string }[];
@@ -920,6 +974,11 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     setPreferences,
     setBaselineWordEnabled,
     exportBackup,
+    startPlan: planOperations.startPlan,
+    listPlans: planOperations.listPlans,
+    plan: planOperations.plan,
+    setPlanState: planOperations.setPlanState,
+    deletePlan: planOperations.deletePlan,
     close: () => database.close(),
   };
 };
