@@ -9,6 +9,9 @@ This repository currently contains the product and implementation foundation:
 - [`CONTEXT.md`](CONTEXT.md) — canonical domain language; and
 - [`v2-impl.md`](v2-impl.md) — phased implementation plan and exit gates.
 
+The next executable phase is documented in
+[`phases/phase-0.md`](phases/phase-0.md).
+
 The current application remains in
 [`garthtrickett/gafu`](https://github.com/garthtrickett/gafu) while V2 is built.
 V1 code is reference material, not the starting architecture for this repo.
