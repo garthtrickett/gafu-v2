@@ -21,6 +21,12 @@ export const evidence = (
   kind: CandidateEvidence["kind"],
   canonicalKey: string,
   ambiguity: readonly string[] = [],
+  annotation: Readonly<{
+    meaning?: string;
+    senseId?: string | null;
+    impact?: CandidateEvidence["impact"];
+    confidence?: number;
+  }> = {},
 ): CandidateEvidence => {
   const start = sentence.indexOf(surface);
   return {
@@ -34,6 +40,15 @@ export const evidence = (
       unit: "utf16-code-unit",
       normalization: "nfkc-v1",
     },
+    meaning: annotation.meaning ?? canonicalKey,
+    senseId:
+      annotation.senseId === undefined
+        ? kind === "vocabulary"
+          ? `fixture:${canonicalKey}`
+          : null
+        : annotation.senseId,
+    impact: annotation.impact ?? "helpful",
+    confidence: annotation.confidence ?? 0.9,
     ambiguity,
   };
 };

@@ -6,6 +6,119 @@
   color-scheme: dark;
 }
 
+.prepare-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.plain-list,
+.episode-order,
+.finding-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.import-entry,
+.episode-order > li,
+.finding,
+.evidence-list {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--panel-deep);
+}
+
+.import-entry,
+.episode-order > li,
+.finding-heading {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.import-entry span,
+.set-button span,
+.episode-order small {
+  color: var(--muted);
+}
+
+.episode-order > li {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1fr) minmax(12rem, 2fr) auto;
+  align-items: center;
+}
+
+.set-list {
+  position: sticky;
+  top: 1rem;
+}
+
+.set-button {
+  width: 100%;
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  text-align: left;
+}
+
+.metrics.compact {
+  margin-block: 1rem;
+}
+
+.finding h3 {
+  margin: 0.35rem 0;
+}
+
+.finding--known {
+  opacity: 0.75;
+}
+
+.evidence-list {
+  margin-top: 1rem;
+}
+
+.identity-correction {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(9rem, 0.6fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-top: 0.75rem;
+}
+
+.danger {
+  border-color: #a33a4b;
+  color: #ff9bad;
+  background: transparent;
+}
+
+@media (max-width: 850px) {
+  .prepare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .set-list {
+    position: static;
+  }
+
+  .episode-order > li {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-correction {
+    grid-template-columns: 1fr;
+  }
+}
+
 body {
   min-width: 20rem;
   min-height: 100vh;
@@ -90,6 +203,10 @@ label {
   font-weight: 650;
 }
 
+.identity-correction label {
+  gap: 0.35rem;
+}
+
 .study-shell {
   width: min(84rem, calc(100% - 2rem));
   margin: 0 auto;
@@ -154,6 +271,10 @@ label {
   border: 1px solid #333a31;
   border-radius: 0.8rem;
   background: #181c18;
+}
+
+.metrics.compact article {
+  min-height: 5.5rem;
 }
 
 .metrics strong {
@@ -372,6 +493,10 @@ form {
 
 details {
   position: relative;
+}
+
+.finding details {
+  margin-top: 1rem;
 }
 
 summary {

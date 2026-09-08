@@ -125,6 +125,10 @@ const vocabularyCandidate = (
   cueId,
   surface: token.surface,
   span: token.span,
+  meaning: token.lemma,
+  senseId: `fixture:${token.lemma}:${token.reading ?? ""}`,
+  impact: "helpful",
+  confidence: 1,
   ambiguity: token.senseCandidates,
 });
 
@@ -141,6 +145,10 @@ const grammarCandidate = (spec: CueSpec): CandidateEvidence => {
       unit: "utf16-code-unit",
       normalization: "nfkc-v1",
     },
+    meaning: spec.grammarForm ?? "",
+    senseId: null,
+    impact: "helpful",
+    confidence: 1,
     ambiguity: [],
   };
 };
@@ -230,6 +238,7 @@ export const runPhase0Proof = async (
         lemma: item.lemma,
         reading: item.reading,
         partOfSpeech: item.partOfSpeech,
+        broadPartOfSpeech: item.broadPartOfSpeech,
         span: item.span,
       })),
       grammarEvidence: declaredGrammarDetector.detect(analysis.normalizedText),

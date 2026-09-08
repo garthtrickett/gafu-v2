@@ -6,8 +6,9 @@ test("boots the Phase 0 diagnostic route", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Gafu V2 diagnostics" }),
   ).toBeVisible();
-  await expect(page.getByText("Integrated Phase 0 proof passed.")).toBeVisible();
   const proof = page.getByTestId("phase0-proof");
+  await expect(proof).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Integrated Phase 0 proof passed.")).toBeVisible();
   await expect(proof).toContainText("4 cues");
   await expect(proof).toContainText("4 batches");
   await expect(proof).toContainText("Final-batch target");

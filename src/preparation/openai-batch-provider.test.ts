@@ -65,6 +65,7 @@ describe("OpenAI preparation provider adapter", () => {
     });
     const body = JSON.parse(String(observed?.body)) as Record<string, unknown>;
     expect(body["store"]).toBe(false);
+    expect(String(body["safety_identifier"])).toHaveLength(64);
     expect(body["model"]).toBe("gpt-5.6-luna");
     expect(JSON.stringify(body)).not.toContain("test-secret");
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');

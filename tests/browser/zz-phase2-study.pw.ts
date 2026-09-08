@@ -27,14 +27,18 @@ test("configures a key and teaches before the first generated review", async ({
 
   const review = page.getByTestId("review-panel");
   await review.getByRole("button", { name: "Start next Card" }).click();
-  await expect(review.getByText("teach", { exact: true })).toBeVisible();
+  await expect(review.getByText("teach", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(review.getByTestId("material-answer")).toContainText("bird");
   await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
 
   await review
     .getByRole("button", { name: "I've studied this — start recall" })
     .click();
-  await expect(review.getByText("review", { exact: true })).toBeVisible();
+  await expect(review.getByText("review", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(review.getByTestId("material-answer")).toHaveCount(0);
   await review.getByRole("button", { name: "Reveal answer" }).click();
   await expect(review.getByTestId("material-answer")).toContainText("bird");

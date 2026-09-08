@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { err, ok } from "../result.ts";
 import type {
   BatchProvider,
@@ -22,7 +23,18 @@ type OpenAiProviderOptions = Readonly<{
 const candidateSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["kind", "canonicalKey", "cueId", "surface", "span", "ambiguity"],
+  required: [
+    "kind",
+    "canonicalKey",
+    "cueId",
+    "surface",
+    "span",
+    "meaning",
+    "senseId",
+    "impact",
+    "confidence",
+    "ambiguity",
+  ],
   properties: {
     kind: { type: "string", enum: ["vocabulary", "grammar"] },
     canonicalKey: { type: "string" },
@@ -39,6 +51,10 @@ const candidateSchema = {
         normalization: { type: "string", enum: ["nfkc-v1"] },
       },
     },
+    meaning: { type: "string" },
+    senseId: { type: ["string", "null"] },
+    impact: { type: "string", enum: ["required", "helpful", "incidental"] },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
     ambiguity: { type: "array", items: { type: "string" } },
   },
 } as const;
@@ -63,14 +79,29 @@ const isCandidate = (value: unknown): value is CandidateEvidence => {
   return (
     (value["kind"] === "vocabulary" || value["kind"] === "grammar") &&
     typeof value["canonicalKey"] === "string" &&
+    value["canonicalKey"].trim() !== "" &&
     typeof value["cueId"] === "string" &&
     typeof value["surface"] === "string" &&
+    value["surface"] !== "" &&
     Array.isArray(value["ambiguity"]) &&
     value["ambiguity"].every((item) => typeof item === "string") &&
     Number.isInteger(span["start"]) &&
     Number.isInteger(span["end"]) &&
     span["unit"] === "utf16-code-unit" &&
-    span["normalization"] === "nfkc-v1"
+    span["normalization"] === "nfkc-v1" &&
+    typeof value["meaning"] === "string" &&
+    value["meaning"].trim() !== "" &&
+    ((value["kind"] === "vocabulary" &&
+      typeof value["senseId"] === "string" &&
+      value["senseId"].trim() !== "") ||
+      (value["kind"] === "grammar" && value["senseId"] === null)) &&
+    (value["impact"] === "required" ||
+      value["impact"] === "helpful" ||
+      value["impact"] === "incidental") &&
+    typeof value["confidence"] === "number" &&
+    Number.isFinite(value["confidence"]) &&
+    value["confidence"] >= 0 &&
+    value["confidence"] <= 1
   );
 };
 
@@ -206,12 +237,15 @@ export const createOpenAiBatchProvider = (
           body: JSON.stringify({
             model: options.model,
             store: false,
+            safety_identifier: createHash("sha256")
+              .update("gafu-v2-local-learner")
+              .digest("hex"),
             metadata: {
               gafu_request_key: requestKey.slice(0, 512),
               gafu_batch_id: batch.batchId,
             },
             instructions:
-              "Return one candidate for every supplied token and deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token. For grammar, canonicalKey is exactly canonicalForm. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Preserve unresolved alternatives in ambiguity and invent no evidence.",
+              "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.",
             input: JSON.stringify({ cues: batch.cues }),
             text: {
               format: {

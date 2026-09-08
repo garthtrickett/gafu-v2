@@ -1,4 +1,4 @@
-import type { TextSpan } from "../analysis/contracts.ts";
+import type { BroadPartOfSpeech, TextSpan } from "../analysis/contracts.ts";
 import type { Result } from "../result.ts";
 
 export type ProviderIdentity = Readonly<{
@@ -15,6 +15,7 @@ export type AnalyzedCue = Readonly<{
     lemma: string;
     reading: string | null;
     partOfSpeech: readonly string[];
+    broadPartOfSpeech: BroadPartOfSpeech;
     span: TextSpan;
   }>[];
   grammarEvidence: readonly Readonly<{
@@ -29,6 +30,10 @@ export type CandidateEvidence = Readonly<{
   cueId: string;
   surface: string;
   span: TextSpan;
+  meaning: string;
+  senseId: string | null;
+  impact: "required" | "helpful" | "incidental";
+  confidence: number;
   ambiguity: readonly string[];
 }>;
 
@@ -114,6 +119,10 @@ export type MergedCandidate = Readonly<{
   canonicalKey: string;
   evidence: readonly Omit<CandidateEvidence, "kind" | "canonicalKey">[];
   ambiguity: readonly string[];
+  meanings: readonly string[];
+  senseIds: readonly string[];
+  impact: "required" | "helpful" | "incidental";
+  confidence: number;
 }>;
 
 export type AnalysisRunSnapshot = Readonly<{

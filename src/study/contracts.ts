@@ -166,6 +166,25 @@ export type KnowledgeSnapshot = Readonly<{
   }>;
 }>;
 
+export type StudyPreparationCard = Readonly<{
+  cardId: CardId;
+  type: CardType;
+  state: CardState;
+  supportReady: boolean;
+  content: CardContent;
+  identityClaims: readonly Readonly<{
+    authority: string;
+    claimKey: string;
+  }>[];
+}>;
+
+export type StudyPreparationSnapshot = Readonly<{
+  digest: string;
+  vocabulary: readonly KnownVocabulary[];
+  grammar: readonly KnownGrammar[];
+  cards: readonly StudyPreparationCard[];
+}>;
+
 export type KnownWordSeedEntry = Readonly<{
   key: string;
   lemma: string;
@@ -231,6 +250,7 @@ export type Study = Readonly<{
   status: () => Result<StudyStatus, StudyFailure>;
   answer: (command: AnswerCard) => Result<AnswerOutcome, StudyFailure>;
   knowledgeSnapshot: () => Result<KnowledgeSnapshot, StudyFailure>;
+  preparationSnapshot: () => Result<StudyPreparationSnapshot, StudyFailure>;
   preferences: () => Result<StudyPreferences, StudyFailure>;
   setPreferences: (change: PreferenceChange) => Result<StudyPreferences, StudyFailure>;
   setBaselineWordEnabled: (
