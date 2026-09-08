@@ -5,16 +5,15 @@ before the language-analysis and batching experiments add meaningful work.
 
 ## Patch 0.1 — executable skeleton
 
-Measured locally on 2026-09-08 with Bun 1.4.2:
+Measured locally on 2026-09-08 with the declared Bun 1.3.2 runtime:
 
 | Check | Result | Observed duration or size |
 |---|---|---|
 | `bun run check` | pass | under 1 second |
-| `bun test` | 5 pass, 0 fail | 17 ms reported test time |
-| `bun run build` | pass | 253 ms Vite build time |
-| `bun run test:browser` | 1 pass, 0 fail | 5.5 seconds |
+| `bun test` | 5 pass, 0 fail | 128 ms reported test time |
+| `bun run build` | pass | 337 ms Vite build time |
+| `bun run test:browser` | 1 pass, 0 fail | 4.4 seconds |
 | production JavaScript | built | 9.11 kB / 4.08 kB gzip |
 | production CSS | built | 0.67 kB / 0.39 kB gzip |
 
-The local runner used Bun 1.4.2 because that is the installed runtime. CI also
-exercises the locked dependencies with the repository's declared Bun version.
+CI exercises the same locked dependencies with Bun 1.3.2.
