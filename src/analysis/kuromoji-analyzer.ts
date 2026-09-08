@@ -20,7 +20,8 @@ export type KuromojiTokenizerLoader = () => Promise<Tokenizer>;
 const broadPartOfSpeech = (token: IpadicFeatures): BroadPartOfSpeech => {
   switch (token.pos) {
     case "名詞":
-      return token.pos_detail_1 === "副詞可能" ? "adverb" : "noun";
+      if (token.pos_detail_1 === "副詞可能") return "adverb";
+      return token.pos_detail_1 === "形容動詞語幹" ? "adjective" : "noun";
     case "動詞":
       return "verb";
     case "形容詞":
@@ -73,7 +74,12 @@ const mapTokens = (
     const [start, end] = located;
     tokens.push({
       surface: token.surface_form,
-      lemma: token.basic_form === "*" ? token.surface_form : token.basic_form,
+      lemma:
+        token.pos === "名詞" && token.pos_detail_1 === "形容動詞語幹"
+          ? `${token.basic_form === "*" ? token.surface_form : token.basic_form}だ`
+          : token.basic_form === "*"
+            ? token.surface_form
+            : token.basic_form,
       reading: token.reading === undefined ? null : katakanaToHiragana(token.reading),
       partOfSpeech: [
         token.pos,
@@ -82,7 +88,12 @@ const mapTokens = (
         token.pos_detail_3,
       ],
       broadPartOfSpeech: broadPartOfSpeech(token),
-      conjugation: token.conjugated_form === "*" ? null : token.conjugated_form,
+      conjugation:
+        token.pos === "名詞" && token.pos_detail_1 === "形容動詞語幹"
+          ? "語幹"
+          : token.conjugated_form === "*"
+            ? null
+            : token.conjugated_form,
       span: textSpan(start, end),
       dictionaryFormFound: token.word_type === "KNOWN",
       senseCandidates: [],
