@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 0 implementation complete; two closure gates pending · 1.3
+**Status:** Phase 1 implementation complete; closure data and licence gates pending · 1.4
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -238,6 +238,9 @@ sense must stay unresolved rather than being guessed.
 
 ## Phase 1 — Card and SRS core, offline
 
+**Detailed execution contract:** [`phases/phase-1.md`](phases/phase-1.md). It is
+authoritative for Phase 1 where this outline is less specific.
+
 ### Outcome
 
 A learner can create Grammar and Vocabulary Cards, study them, reload, and keep
@@ -278,6 +281,32 @@ not appear as study Cards. No production fixed-material study path exists.
 
 AI generation, automatic language analysis, subtitle import, Preparation Plans,
 or playback.
+
+### Phase 1 implementation result
+
+The offline Study module, local server, and Card-bank browser are implemented.
+SQLite owns Cards, unique versioned Identity Claims, reversible learner state,
+FSRS 6 schedules, append-only Review Events, support readiness, one shared
+time-zone-safe admission allowance, preferences, baseline corrections, and
+backup. The integrated injected-clock journey and browser management journey
+pass through the same Study seam used by the application.
+
+Phase 1 has one explicit closure gate: the official Kaishi project does not
+publish an explicit content licence, so its 1.5k entries are not copied into
+this repository. The versioned production seed seam reports `unavailable`
+instead of silently treating an empty bank as Kaishi; synthetic conformance
+proves the seed behavior. See [`docs/evidence/phase-1.md`](docs/evidence/phase-1.md).
+
+Phase 2 must preserve these facts:
+
+- Learning Material receives a Card and knowledge snapshot; it never writes a
+  schedule or Review Event.
+- Only a validated, target-bound Presentation Permit can authorize an answer.
+- Study consumes a permit in the same transaction as the FSRS transition.
+- Display corrections do not change a Card's immutable Identity Claims.
+- A trusted dictionary may attach an additional claim to a Card; unresolved
+  senses remain ambiguous.
+- No production fixed-material review route exists to fall back to.
 
 ## Phase 2 — AI-generated study material
 

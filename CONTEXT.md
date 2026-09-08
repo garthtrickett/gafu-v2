@@ -7,8 +7,19 @@ to understand. This glossary defines the product language used by Gafu V2.
 
 **Card**:
 A durable item the learner is trying to remember, with exactly one card type and
-one learner-specific review schedule.
+at most one learner-specific review schedule.
 _Avoid_: Knowledge point, rule, flashcard sentence
+
+**Identity Claim**:
+A stable assertion that a Card represents one particular vocabulary sense or
+grammar construction. Several trusted claims may identify the same Card, but one
+claim can never identify several Cards.
+_Avoid_: Display name, mutable Card content, database key
+
+**Card State**:
+The learner-owned place of a Card in study: staged, active, known, or suspended.
+It is distinct from the scheduler's private learning state.
+_Avoid_: Knowledge-point status, FSRS state, Card type
 
 **Grammar Card**:
 A Card for a reusable Japanese grammatical construction or function. Its
@@ -29,6 +40,22 @@ _Avoid_: Card, permanent sentence, saved flashcard
 The learner's trusted pool of already-known vocabulary. It begins with Kaishi
 1.5k and supplies the supporting words used to generate Learning Material.
 _Avoid_: Generation Word Bank, Card bank, vocabulary deck
+
+**Support-ready**:
+A learner-owned fact indicating that a Vocabulary or Grammar Card is trusted as
+supporting language in Learning Material, either by explicit confirmation or
+successful delayed recall.
+_Avoid_: Graduated, mastered, encountered
+
+**Admission**:
+The one-time transition of a staged Card into active study under the shared New
+Cards per Day allowance.
+_Avoid_: Card creation, review, plan inclusion
+
+**Review Event**:
+An immutable record of one learner answer to one Card presentation and the
+resulting schedule transition.
+_Avoid_: Encounter, passive exposure, mutable schedule
 
 **i/i+1 Presentation**:
 Learning Material containing either only language the learner already knows
