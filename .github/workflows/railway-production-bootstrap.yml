@@ -39,6 +39,10 @@ jobs:
       - name: Create the stopped V2 storage boundary
         run: |
           set -euo pipefail
+          railway link \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --json
           railway add --service gafu-v2 --json
           railway service link gafu-v2
           railway volume add --mount-path /data --json
