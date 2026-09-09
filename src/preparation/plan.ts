@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import type {
   PlanDraft,
   PlanDraftBlocker,
   PlanDraftItem,
 } from "../preparation-plan-contracts.ts";
+import { planDraftDigest } from "../preparation-plan-contracts.ts";
 import type { CreateCard } from "../study/contracts.ts";
 import type { PreparationFinding } from "./contracts.ts";
 import type { SubtitleSetSnapshot } from "./import-contracts.ts";
@@ -11,9 +11,6 @@ import type { StoredFinding } from "./projection.ts";
 
 const clean = (value: string | null): string =>
   (value ?? "").normalize("NFKC").trim().replace(/\s+/gu, " ");
-
-const digest = (value: unknown): string =>
-  `plan-draft-v1:sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 
 const selected = (finding: PreparationFinding): boolean =>
   finding.disposition === "include" &&
@@ -186,5 +183,5 @@ export const projectPlanDraft = (
     blockers,
     items,
   };
-  return { ...payload, digest: digest(payload) };
+  return { ...payload, digest: planDraftDigest(payload) };
 };

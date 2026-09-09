@@ -118,6 +118,12 @@ describe("Phase 2 generated study lifecycle", () => {
     });
     expect(concurrent.ok).toBe(true);
     expect(recalled.value.material.japanese).not.toBe(taught.value.material.japanese);
+    expect(
+      app.material.permitVerifier.verify(recalled.value.permit, app.clock.now()),
+    ).toMatchObject({
+      ok: true,
+      value: { presentationId: recalled.value.id, cardId: created.value.card.id },
+    });
     const answered = app.study.answer({
       cardId: created.value.card.id,
       grade: "good",

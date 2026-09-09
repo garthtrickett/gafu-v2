@@ -18,8 +18,10 @@ const text = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 const number = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
-const optionalArray = (recordValue: JsonRecord, key: string): readonly unknown[] =>
-  Array.isArray(recordValue[key]) ? recordValue[key] : [];
+const exactKeys = (value: JsonRecord, allowed: readonly string[]): boolean => {
+  const keys = new Set(allowed);
+  return Object.keys(value).every((key) => keys.has(key));
+};
 const forbiddenKey =
   /authorization|cookie|credential|password|secret|token|api[-_]?key/iu;
 
@@ -126,9 +128,26 @@ export const parseV1Snapshot = (
   ) {
     return err({ kind: "snapshotInvalid", detail: "Snapshot metadata is invalid." });
   }
-  const knowledgeValues = optionalArray(sync, "knowledgePoints");
-  const grammarValues = optionalArray(sync, "grammarPoints");
-  const progressValues = optionalArray(sync, "srsUpdates");
+  if (
+    !exactKeys(decoded, ["contractVersion", "capturedAt", "sourceOrigin", "sync"]) ||
+    !exactKeys(sync, [
+      "knowledgePoints",
+      "grammarPoints",
+      "srsUpdates",
+      "userPreference",
+    ]) ||
+    !Array.isArray(sync["knowledgePoints"]) ||
+    !Array.isArray(sync["grammarPoints"]) ||
+    !Array.isArray(sync["srsUpdates"])
+  ) {
+    return err({
+      kind: "snapshotInvalid",
+      detail: "Snapshot collections or fields are invalid.",
+    });
+  }
+  const knowledgeValues = sync["knowledgePoints"];
+  const grammarValues = sync["grammarPoints"];
+  const progressValues = sync["srsUpdates"];
   if (
     knowledgeValues.length + grammarValues.length > MAX_V1_RECORDS ||
     progressValues.length > MAX_V1_RECORDS

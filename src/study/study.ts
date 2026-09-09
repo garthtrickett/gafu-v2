@@ -907,8 +907,8 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             `INSERT INTO review_event(
                id, card_id, permit_id, grade, reviewed_at, local_day, time_zone,
                before_schedule_json, after_schedule_json, scheduler_version,
-               presentation_contract_version
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               presentation_contract_version, presentation_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             eventId,
@@ -922,6 +922,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             JSON.stringify(after.value),
             SCHEDULER_VERSION,
             verified.value.contractVersion,
+            verified.value.presentationId,
           );
         database
           .query(
@@ -1009,6 +1010,32 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
            ORDER BY c.id`,
         )
         .all() as { id: string; content_json: string }[];
+      const vocabularySenseClaims = database
+        .query(
+          `SELECT i.card_id, i.claim_key FROM identity_claim i
+           JOIN card c ON c.id = i.card_id
+           JOIN card_progress p ON p.card_id = c.id
+           WHERE c.type = 'vocabulary' AND p.support_ready_at IS NOT NULL
+             AND i.authority IN ('gafu-preparation-v1', 'gafu-capture-v1')
+           ORDER BY i.card_id, i.authority, i.claim_key`,
+        )
+        .all() as { card_id: string; claim_key: string }[];
+      const senseIdsByCard = new Map<string, string[]>();
+      for (const claim of vocabularySenseClaims) {
+        if (!claim.claim_key.startsWith("vocabulary:")) continue;
+        try {
+          const fields = JSON.parse(claim.claim_key.slice("vocabulary:".length)) as
+            | unknown[]
+            | null;
+          const senseId = Array.isArray(fields) ? fields[3] : null;
+          if (typeof senseId !== "string" || senseId.trim() === "") continue;
+          const values = senseIdsByCard.get(claim.card_id) ?? [];
+          if (!values.includes(senseId)) values.push(senseId);
+          senseIdsByCard.set(claim.card_id, values);
+        } catch {
+          // An invalid optional source claim cannot widen vocabulary knowledge.
+        }
+      }
       const grammarCards = database
         .query(
           `SELECT c.id, c.content_json FROM card c
@@ -1033,6 +1060,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             meaning: row.meaning,
             partOfSpeech: row.part_of_speech,
             source: "baseline" as const,
+            senseIds: [],
           })),
           ...vocabularyCards.map((row) => {
             const content = JSON.parse(row.content_json) as {
@@ -1049,6 +1077,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
               partOfSpeech: (JSON.parse(row.content_json) as { partOfSpeech: string })
                 .partOfSpeech,
               source: "card" as const,
+              senseIds: senseIdsByCard.get(row.id) ?? [],
             };
           }),
         ],

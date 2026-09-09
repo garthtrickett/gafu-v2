@@ -257,6 +257,50 @@ describe("Preparation deep module", () => {
     context.study.close();
   }, 15_000);
 
+  test("matches a captured Card by stable sense identity after its display gloss changes", async () => {
+    const context = setup();
+    const captured = context.study.captureVocabulary({
+      operationKey: "capture-panda",
+      card: {
+        type: "vocabulary",
+        content: {
+          lemma: "パンダ",
+          reading: "パンダ",
+          partOfSpeech: "noun",
+          meaning: "a black-and-white bear",
+          usageNotes: "A deliberately different display gloss.",
+        },
+      },
+      identityClaim: {
+        authority: "gafu-capture-v1",
+        claimKey: `vocabulary:${JSON.stringify([
+          "パンダ",
+          "ぱんだ",
+          "noun",
+          "fixture:パンダ:ぱんだ:1",
+        ])}`,
+      },
+      evidence: {
+        sourceKey: "episode:panda",
+        cueKey: "cue:panda:1",
+        selectedSurface: "パンダ",
+        span: { start: 0, end: 3 },
+      },
+    });
+    expect(captured.ok).toBe(true);
+    const set = await commit(context.preparation, direct, "captured-identity");
+    const analyzed = await analyze(context, set.id);
+    expect(
+      analyzed.result.findings.find((item) => item.lemma === "パンダ"),
+    ).toMatchObject({
+      relation: "existing",
+      existingCardId: captured.ok ? captured.value.card.id : null,
+      meaning: "fixture meaning for パンダ",
+    });
+    context.preparation.close();
+    context.study.close();
+  }, 15_000);
+
   test("direct and ZIP imports produce equivalent findings", async () => {
     const context = setup();
     const directSet = await commit(context.preparation, direct, "direct");

@@ -4,17 +4,26 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
+import { openLearningMaterial } from "../learning-material/learning-material.ts";
+import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
 import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
 import { createSubtitleImportInspector } from "../preparation/import.ts";
 import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
 import { openPreparation } from "../preparation/preparation.ts";
-import { err } from "../result.ts";
+import { err, ok } from "../result.ts";
+import type { KnownWordSeed } from "../study/contracts.ts";
 import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
+import { createProviderKeyCustody } from "../topology/provider-key-custody.ts";
 import { createBackupRecovery, inspectBackup } from "./backup.ts";
+import { acquireDatabaseLock } from "./database-lock.ts";
 
 const now = new Date("2026-09-08T12:00:00.000Z");
 
-const completeBackup = (databasePath: string, cardId: string): Uint8Array => {
+const completeBackup = (
+  databasePath: string,
+  cardId: string,
+  knownWordSeed: KnownWordSeed = unavailableKaishiSeed,
+): Uint8Array => {
   const study = openStudy({
     databasePath,
     clock: () => now,
@@ -22,7 +31,7 @@ const completeBackup = (databasePath: string, cardId: string): Uint8Array => {
     permitVerifier: {
       verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
     },
-    knownWordSeed: unavailableKaishiSeed,
+    knownWordSeed,
   });
   if (!study.ok) throw new Error(study.error.kind);
   const card = study.value.createCard({
@@ -54,6 +63,18 @@ const completeBackup = (databasePath: string, cardId: string): Uint8Array => {
   });
   if (!preparation.ok) throw new Error(preparation.error.kind);
   preparation.value.close();
+  const material = openLearningMaterial({
+    databasePath,
+    clock: () => now,
+    nextId: () => "material-one",
+    nextToken: () => "permit-one",
+    provider: createDeterministicMaterialProvider(),
+    keyCustody: createProviderKeyCustody({ verify: async () => ok(undefined) }),
+    validate: async ({ value }) => ok(value as never),
+    inspectionEnabled: false,
+  });
+  if (!material.ok) throw new Error(material.error.kind);
+  material.value.close();
   const backup = study.value.exportBackup();
   study.value.close();
   if (!backup.ok) throw new Error(backup.error.kind);
@@ -78,7 +99,7 @@ describe("backup recovery", () => {
       expect(inspected).toMatchObject({
         ok: true,
         value: {
-          studySchemaVersion: 5,
+          studySchemaVersion: 6,
           preparationSchemaVersion: 1,
           cardCount: 1,
           integrity: "ok",
@@ -143,6 +164,52 @@ describe("backup recovery", () => {
     }
   });
 
+  test("post-restore verification is read-only and preserves the seed ledger", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-readonly-recovery-"));
+    try {
+      const seed: KnownWordSeed = {
+        id: "kaishi",
+        version: "fixture-v1",
+        availability: "available",
+        entries: [
+          {
+            key: "cat",
+            lemma: "猫",
+            reading: "ねこ",
+            meaning: "cat",
+            partOfSpeech: "noun",
+          },
+        ],
+      };
+      const source = join(directory, "source.sqlite");
+      const destination = join(directory, "destination.sqlite");
+      writeFileSync(
+        source,
+        completeBackup(join(directory, "working.sqlite"), "card-a", seed),
+      );
+      const recovery = createBackupRecovery({
+        clock: () => now,
+        nextToken: () => "readonly",
+      });
+      expect(
+        recovery.restore({
+          sourcePath: source,
+          destinationPath: destination,
+          confirmation: "replace",
+        }),
+      ).toMatchObject({ ok: true });
+      const database = new Database(destination, { readonly: true });
+      expect(
+        database
+          .query("SELECT version, availability FROM seed_ledger WHERE seed_id = ?")
+          .get("kaishi"),
+      ).toEqual({ version: "fixture-v1", availability: "available" });
+      database.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("leaves destination bytes untouched for corrupt and newer backups", () => {
     const directory = mkdtempSync(join(tmpdir(), "gafu-v2-rejected-recovery-"));
     try {
@@ -185,6 +252,20 @@ describe("backup recovery", () => {
         error: { kind: "unsupportedStudySchema", found: 999 },
       });
       expect(readFileSync(destination)).toEqual(before);
+
+      const newerMaterial = join(directory, "newer-material.sqlite");
+      writeFileSync(newerMaterial, before);
+      const materialDatabase = new Database(newerMaterial);
+      materialDatabase
+        .query(
+          "INSERT INTO learning_material_migration(version, applied_at) VALUES (999, ?)",
+        )
+        .run(now.toISOString());
+      materialDatabase.close();
+      expect(inspectBackup(newerMaterial)).toMatchObject({
+        ok: false,
+        error: { kind: "unsupportedLearningMaterialSchema", found: 999 },
+      });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -229,6 +310,16 @@ describe("backup recovery", () => {
         }),
       ).toEqual({ ok: false, error: { kind: "destinationInUse" } });
       rmSync(`${destination}-wal`);
+      const lock = acquireDatabaseLock(destination);
+      if (!lock.ok) throw new Error(lock.error);
+      expect(
+        recovery.restore({
+          sourcePath: source,
+          destinationPath: destination,
+          confirmation: "replace",
+        }),
+      ).toEqual({ ok: false, error: { kind: "destinationInUse" } });
+      lock.value.release();
       const temporary = join(directory, ".destination.sqlite.restore-collision.tmp");
       writeFileSync(temporary, "collision");
       const before = readFileSync(destination);

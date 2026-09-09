@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 5;
+export const STUDY_SCHEMA_VERSION = 6;
 
 const migrations: readonly Migration[] = [
   {
@@ -262,6 +262,13 @@ const migrations: readonly Migration[] = [
         FOREIGN KEY (import_key, source_id)
           REFERENCES legacy_import_item(import_key, source_id) ON DELETE RESTRICT
       );
+    `,
+  },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE preparation_plan ADD COLUMN deleted_at TEXT;
+      ALTER TABLE review_event ADD COLUMN presentation_id TEXT;
     `,
   },
 ];

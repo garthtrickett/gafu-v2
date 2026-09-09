@@ -501,7 +501,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 5 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 6 },
     });
   });
 
@@ -543,6 +543,7 @@ describe("Study persistence and recovery", () => {
       DROP TABLE preparation_plan_member;
       DROP TABLE preparation_plan;
       DROP TABLE staging_source;
+      ALTER TABLE review_event DROP COLUMN presentation_id;
       DELETE FROM schema_migration WHERE version >= 3;
     `);
     database.close();

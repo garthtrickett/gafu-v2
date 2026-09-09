@@ -14,17 +14,10 @@ import {
   type Stats,
 } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
-import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
-import { createSubtitleImportInspector } from "../preparation/import.ts";
-import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
-import {
-  openPreparation,
-  PREPARATION_SCHEMA_VERSION,
-} from "../preparation/preparation.ts";
+import { MATERIAL_SCHEMA_VERSION } from "../learning-material/learning-material.ts";
+import { PREPARATION_SCHEMA_VERSION } from "../preparation/preparation.ts";
 import { err, ok, type Result } from "../result.ts";
 import { STUDY_SCHEMA_VERSION } from "../study/migrations.ts";
-import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
 import type {
   BackupInspection,
   BackupRecovery,
@@ -32,6 +25,7 @@ import type {
   RestoreReceipt,
 } from "./contracts.ts";
 import { MAXIMUM_BACKUP_BYTES } from "./contracts.ts";
+import { databaseLockIsActive } from "./database-lock.ts";
 
 export type BackupRecoveryDependencies = Readonly<{
   clock: () => Date;
@@ -142,10 +136,19 @@ export const inspectBackup = (
         supported: PREPARATION_SCHEMA_VERSION,
       });
     }
+    const learningMaterial = schemaVersion(database, "learning_material_migration");
+    if (learningMaterial !== MATERIAL_SCHEMA_VERSION) {
+      return err({
+        kind: "unsupportedLearningMaterialSchema",
+        found: learningMaterial,
+        supported: MATERIAL_SCHEMA_VERSION,
+      });
+    }
     return ok({
       byteSize: file.value.size,
       studySchemaVersion: study,
       preparationSchemaVersion: preparation,
+      learningMaterialSchemaVersion: learningMaterial,
       cardCount: tableCount(database, "card"),
       subtitleSetCount: tableCount(database, "subtitle_set"),
       integrity: "ok",
@@ -162,47 +165,24 @@ const safeToken = (value: string): string =>
   value.replace(/[^A-Za-z0-9_-]/gu, "").slice(0, 64) || "operation";
 
 const stopped = (destinationPath: string): boolean =>
-  !existsSync(`${destinationPath}-wal`) && !existsSync(`${destinationPath}-shm`);
+  !databaseLockIsActive(destinationPath) &&
+  !existsSync(`${destinationPath}-wal`) &&
+  !existsSync(`${destinationPath}-shm`);
 
-const reopened = (path: string, now: Date): boolean => {
-  const study = openStudy({
-    databasePath: path,
-    clock: () => new Date(now.getTime()),
-    nextId: () => "recovery-validation-id",
-    permitVerifier: {
-      verify: () =>
-        err({
-          kind: "presentationInvalid",
-          detail: "Recovery validation cannot verify a presentation.",
-        }),
-    },
-    knownWordSeed: unavailableKaishiSeed,
-  });
-  if (!study.ok) return false;
-  const preparation = openPreparation({
-    databasePath: path,
-    clock: () => new Date(now.getTime()),
-    nextId: () => "recovery-validation-id",
-    nextToken: () => "recovery-validation-token",
-    importPolicy: phase3ImportPolicy,
-    inspector: createSubtitleImportInspector(phase3ImportPolicy),
-    analyzer: {
-      name: "recovery-validation",
-      analyze: async () =>
-        err({ kind: "analyzerUnavailable", cause: "Recovery does not analyze." }),
-    },
-    grammar: declaredGrammarDetector,
-    provider: createDeterministicPreparationProvider(),
-    providerConfigured: () => false,
-    batchSize: 20,
-  });
-  if (!preparation.ok) {
-    study.value.close();
+const reopenedReadOnly = (path: string): boolean => {
+  let database: Database | null = null;
+  try {
+    database = new Database(path, { readonly: true, strict: true });
+    database.exec("PRAGMA query_only = ON");
+    database.query("SELECT id FROM card LIMIT 1").all();
+    database.query("SELECT id FROM subtitle_set LIMIT 1").all();
+    database.query("SELECT id FROM validated_presentation LIMIT 1").all();
+    return true;
+  } catch {
     return false;
+  } finally {
+    database?.close();
   }
-  preparation.value.close();
-  study.value.close();
-  return true;
 };
 
 const removeTemporary = (path: string): void => {
@@ -300,8 +280,7 @@ export const createBackupRecovery = (
       return err({ kind: "replacementFailed", safetyCopyPath });
     }
     const finalInspection = inspectBackup(command.destinationPath);
-    const verify =
-      dependencies.postRestoreVerify ?? ((path: string) => reopened(path, now));
+    const verify = dependencies.postRestoreVerify ?? reopenedReadOnly;
     let verified = false;
     try {
       verified = finalInspection.ok && verify(command.destinationPath);

@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createDevelopmentLogger } from "../src/log.ts";
+import { MAX_V1_SNAPSHOT_BYTES } from "../src/migration/contracts.ts";
 import {
   createV1Migration,
   initializeMigrationDestination,
@@ -29,11 +30,27 @@ if (
 }
 
 let bytes: Uint8Array;
+let descriptor: number | null = null;
 try {
-  bytes = new Uint8Array(readFileSync(resolve(source)));
+  descriptor = openSync(resolve(source), "r");
+  const size = fstatSync(descriptor).size;
+  if (size > MAX_V1_SNAPSHOT_BYTES) {
+    console.error(`V1 snapshot exceeds ${MAX_V1_SNAPSHOT_BYTES} bytes.`);
+    process.exit(1);
+  }
+  const buffer = Buffer.alloc(size);
+  let received = 0;
+  while (received < size) {
+    const count = readSync(descriptor, buffer, received, size - received, received);
+    if (count === 0) throw new Error("V1 snapshot ended before its declared size.");
+    received += count;
+  }
+  bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 } catch {
   console.error("V1 snapshot could not be read.");
   process.exit(1);
+} finally {
+  if (descriptor !== null) closeSync(descriptor);
 }
 const clock = () => new Date();
 const nextId = () => crypto.randomUUID();

@@ -12,6 +12,11 @@ import { createGeneratedMaterialValidator } from "../learning-material/generated
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
 import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
 import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
+import {
+  authorizeLocalMutation,
+  decodePathSegment,
+  readBoundedJson,
+} from "../local-api.ts";
 import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
 import { createSubtitleImportInspector } from "../preparation/import.ts";
 import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
@@ -19,6 +24,7 @@ import { createOpenAiBatchProvider } from "../preparation/openai-batch-provider.
 import { openPreparation } from "../preparation/preparation.ts";
 import { handlePreparationApi } from "../preparation/server.ts";
 import { asPlanId } from "../preparation-plan-contracts.ts";
+import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import type { Result } from "../result.ts";
 import { ok } from "../result.ts";
 import {
@@ -196,11 +202,18 @@ const materialResponse = <Value>(result: Result<Value, MaterialFailure>): Respon
       );
 
 const readJson = async (request: Request): Promise<unknown | Response> => {
-  try {
-    return await request.json();
-  } catch {
-    return invalidRequest("Request body must be valid JSON.");
-  }
+  const parsed = await readBoundedJson(request);
+  if (parsed.ok) return parsed.value;
+  return parsed.error.kind === "bodyTooLarge"
+    ? Response.json(
+        { error: { kind: "requestTooLarge", maximumBytes: parsed.error.maximumBytes } },
+        { status: 413 },
+      )
+    : invalidRequest(
+        parsed.error.kind === "contentTypeInvalid"
+          ? "Request body must use application/json."
+          : "Request body must be valid JSON.",
+      );
 };
 
 const snapshot = (study: Study): Response => {
@@ -325,7 +338,9 @@ const handleApi = async (
   if (planMatch !== null) {
     const rawPlanId = planMatch[1];
     if (rawPlanId === undefined) return invalidRequest("Missing Plan ID.");
-    const planId = asPlanId(decodeURIComponent(rawPlanId));
+    const decodedPlanId = decodePathSegment(rawPlanId);
+    if (!decodedPlanId.ok) return invalidRequest("Plan ID encoding is invalid.");
+    const planId = asPlanId(decodedPlanId.value);
     if (request.method === "GET") return jsonResult(study.plan(planId));
     if (request.method === "POST") {
       const body = await readJson(request);
@@ -420,9 +435,10 @@ const handleApi = async (
     if (!isRecord(body) || typeof body["enabled"] !== "boolean") {
       return invalidRequest("enabled must be a boolean.");
     }
-    return jsonResult(
-      study.setBaselineWordEnabled(decodeURIComponent(key), body["enabled"]),
-    );
+    const decodedKey = decodePathSegment(key);
+    return decodedKey.ok
+      ? jsonResult(study.setBaselineWordEnabled(decodedKey.value, body["enabled"]))
+      : invalidRequest("Baseline word key encoding is invalid.");
   }
   if (request.method === "GET" && url.pathname === "/api/study/backup") {
     const backup = study.exportBackup();
@@ -469,6 +485,15 @@ const staticResponse = async (request: Request): Promise<Response> => {
 
 const databasePath = process.env["GAFU_DATABASE_PATH"] ?? "data/gafu-v2.sqlite";
 if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
+const databaseLock =
+  databasePath === ":memory:" ? null : acquireDatabaseLock(databasePath);
+if (databaseLock !== null && !databaseLock.ok) {
+  throw new Error(`Gafu database lock failed: ${databaseLock.error}`);
+}
+const releaseDatabaseLock = (): void => {
+  if (databaseLock?.ok === true) databaseLock.value.release();
+};
+process.once("exit", releaseDatabaseLock);
 
 const fakeAi = process.env["GAFU_FAKE_AI"] === "1";
 const openAiModel = process.env["GAFU_OPENAI_MODEL"] ?? "gpt-5.6-luna";
@@ -568,6 +593,12 @@ const server = Bun.serve({
     if (!new URL(request.url).pathname.startsWith("/api/")) {
       return staticResponse(request);
     }
+    if (!authorizeLocalMutation(request).ok) {
+      return Response.json(
+        { error: { kind: "untrustedLocalRequest" } },
+        { status: 403 },
+      );
+    }
     const watchResponse = await handleWatchApi(request, watch);
     if (watchResponse !== null) return watchResponse;
     const preparationResponse = await handlePreparationApi(
@@ -587,6 +618,7 @@ const close = () => {
   opened.value.close();
   openedMaterial.value.close();
   openedPreparation.value.close();
+  releaseDatabaseLock();
   void server.stop();
 };
 process.once("SIGINT", close);

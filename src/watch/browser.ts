@@ -1,4 +1,5 @@
 import { html, render } from "lit-html";
+import { mutationHeaders } from "../local-api.ts";
 import type {
   CaptureCandidate,
   CaptureOutcome,
@@ -44,7 +45,7 @@ const shortcutStorageKey = "gafu-v2-watch-capture-shortcut";
 const requestJson = async <Value>(url: string, value: unknown): Promise<Value> => {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: mutationHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(value),
   });
   const body = (await response.json()) as Value | ApiError;
@@ -125,6 +126,15 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     message: "Choose one local video and its Japanese SRT subtitles.",
     messageKind: "neutral",
   };
+  let subtitleVersion = 0;
+  let captureVersion = 0;
+  let destroyed = false;
+
+  const invalidateCapture = (): void => {
+    captureVersion += 1;
+    model.capture = null;
+    model.busy = false;
+  };
 
   const setMessage = (
     message: string,
@@ -141,6 +151,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const selected = playback.replaceVideo(file);
     model.videoUrl = selected.url;
     model.videoName = selected.name;
+    invalidateCapture();
     model.activeCues = playback.cuesAt(model.track?.cues ?? [], 0);
     setMessage(`Loaded ${file.name} locally. No media bytes were uploaded.`, "success");
   };
@@ -149,7 +160,11 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (file === undefined) return;
+    const version = ++subtitleVersion;
+    invalidateCapture();
+    draw();
     const parsed = await parseWatchSrt(new Uint8Array(await file.arrayBuffer()));
+    if (destroyed || version !== subtitleVersion) return;
     if (!parsed.ok) {
       model.track = null;
       model.activeCues = [];
@@ -191,6 +206,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
       selectedSurface: selected.surface,
       selectedSpan: { start: selected.start, end: selected.end },
     };
+    const version = ++captureVersion;
     model.busy = true;
     draw();
     try {
@@ -198,6 +214,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
         "/api/watch/capture/resolve",
         command,
       );
+      if (destroyed || version !== captureVersion) return;
       const candidate = resolution.candidates[0];
       if (candidate === undefined) throw new Error("noContentCandidate");
       model.capture = {
@@ -213,12 +230,15 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
           : "The selection has multiple words. Choose the intended one and confirm its meaning.";
       model.messageKind = "neutral";
     } catch (cause) {
+      if (destroyed || version !== captureVersion) return;
       model.capture = null;
       model.message = cause instanceof Error ? cause.message : String(cause);
       model.messageKind = "error";
     } finally {
-      model.busy = false;
-      draw();
+      if (!destroyed && version === captureVersion) {
+        model.busy = false;
+        draw();
+      }
     }
   };
 
@@ -242,6 +262,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
       meaning: String(fields.get("meaning") ?? ""),
       senseId: String(fields.get("senseId") ?? ""),
     };
+    const version = ++captureVersion;
     model.busy = true;
     draw();
     void requestJson<CaptureOutcome>("/api/watch/capture/commit", {
@@ -252,6 +273,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
       operationKey: capture.operationKey,
     })
       .then((outcome) => {
+        if (destroyed || version !== captureVersion) return;
         model.capture = null;
         model.message =
           outcome.outcome === "created"
@@ -260,10 +282,12 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
         model.messageKind = "success";
       })
       .catch((cause: unknown) => {
+        if (destroyed || version !== captureVersion) return;
         model.message = cause instanceof Error ? cause.message : String(cause);
         model.messageKind = "error";
       })
       .finally(() => {
+        if (destroyed || version !== captureVersion) return;
         model.busy = false;
         draw();
       });
@@ -444,7 +468,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                       type="button"
                       class="secondary"
                       @click=${() => {
-                        model.capture = null;
+                        invalidateCapture();
                         setMessage(
                           "Capture dismissed. Playback and selection were unchanged.",
                         );
@@ -462,6 +486,9 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   document.addEventListener("keydown", keydown);
   draw();
   return () => {
+    destroyed = true;
+    subtitleVersion += 1;
+    captureVersion += 1;
     document.removeEventListener("keydown", keydown);
     playback.dispose();
   };

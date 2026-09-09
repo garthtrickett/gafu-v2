@@ -78,8 +78,9 @@ inspect the downloaded file:
 bun run backup:inspect -- ./gafu-v2-before-cutover.sqlite
 ```
 
-Keep it outside the repository. A valid complete backup reports Study schema 5,
-Preparation schema 1, `integrity: ok`, and `foreignKeys: ok`.
+Keep it outside the repository. A valid complete backup reports Study schema 6,
+Preparation schema 1, Learning Material schema 1, `integrity: ok`, and
+`foreignKeys: ok`.
 
 ## 4. Apply exactly once
 

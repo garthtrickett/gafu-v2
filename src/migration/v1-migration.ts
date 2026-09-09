@@ -517,6 +517,24 @@ const readStored = (
   });
 };
 
+const readStoredSource = (
+  database: Database,
+  sourceDigest: string,
+): Result<MigrationReconciliation | null, MigrationFailure> => {
+  const row = database
+    .query(
+      `SELECT report_json FROM legacy_import
+       WHERE source_digest = ? ORDER BY applied_at, import_key LIMIT 1`,
+    )
+    .get(sourceDigest) as { report_json: string } | null;
+  return row === null
+    ? ok(null)
+    : ok({
+        ...(JSON.parse(row.report_json) as MigrationReconciliation),
+        replayed: true,
+      });
+};
+
 const insertProgress = (
   database: Database,
   cardId: string,
@@ -650,6 +668,9 @@ export const createV1Migration = (
       const stored = readStored(database, importKey, sourceDigest);
       if (!stored.ok) return stored;
       if (stored.value !== null) return ok(stored.value);
+      const storedSource = readStoredSource(database, sourceDigest);
+      if (!storedSource.ok) return storedSource;
+      if (storedSource.value !== null) return ok(storedSource.value);
       const destination = readDestination(command.destinationPath);
       if (!destination.ok) return destination;
       const planned = buildPlan(

@@ -1,6 +1,6 @@
 import type { JapaneseAnalyzer } from "../analysis/contracts.ts";
 import type { Result } from "../result.ts";
-import type { Study } from "../study/contracts.ts";
+import type { Study, StudyFailure } from "../study/contracts.ts";
 
 export type ResolveCapture = Readonly<{
   sourceVersion: "watch-source-v1";
@@ -53,7 +53,9 @@ export type WatchFailure =
   | { readonly kind: "pendingCaptureExpired" }
   | { readonly kind: "captureCandidateMissing" }
   | { readonly kind: "invalidCaptureIdentity"; readonly detail: string }
-  | { readonly kind: "studyFailure"; readonly failure: string };
+  | { readonly kind: "clockFailed" }
+  | { readonly kind: "tokenFailed" }
+  | { readonly kind: "studyFailure"; readonly failure: StudyFailure };
 
 export type Watch = Readonly<{
   resolve: (

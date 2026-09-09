@@ -130,6 +130,7 @@ export type PresentationPermit = Readonly<{ token: string }>;
 export type VerifiedPresentationPermit = Readonly<{
   id: string;
   cardId: CardId;
+  presentationId: string;
   issuedAt: Date;
   contractVersion: string;
 }>;
@@ -166,6 +167,7 @@ export type KnownVocabulary = Readonly<{
   meaning: string;
   partOfSpeech: string | null;
   source: "baseline" | "card";
+  senseIds: readonly string[];
 }>;
 
 export type KnownGrammar = Readonly<{

@@ -158,6 +158,28 @@ describe("V1 migration", () => {
         destinationPath: context.destination,
       }),
     ).toMatchObject({ ok: true, value: { replayed: true } });
+    const preferences = new Database(context.destination);
+    preferences
+      .query("UPDATE study_preferences SET new_cards_per_day = 23 WHERE singleton = 1")
+      .run();
+    preferences.close();
+    expect(
+      context.migration.apply({
+        importKey: "same-source-new-key",
+        snapshotBytes: v1Snapshot(),
+        destinationPath: context.destination,
+      }),
+    ).toMatchObject({ ok: true, value: { replayed: true } });
+    const preservedPreferences = new Database(context.destination, { readonly: true });
+    expect(
+      preservedPreferences
+        .query("SELECT new_cards_per_day FROM study_preferences WHERE singleton = 1")
+        .get(),
+    ).toEqual({ new_cards_per_day: 23 });
+    expect(
+      preservedPreferences.query("SELECT count(*) AS count FROM legacy_import").get(),
+    ).toEqual({ count: 1 });
+    preservedPreferences.close();
     const changed = v1Snapshot({ capturedAt: "2026-09-08T12:00:01.000Z" });
     expect(
       context.migration.apply({

@@ -79,8 +79,32 @@ const matchingCard = (
   reading: string | null,
   partOfSpeech: string | null,
   meaning: string,
+  senseId: string | null,
   cards: readonly StudyPreparationCard[],
 ): StudyPreparationCard | null => {
+  const stableClaimKey =
+    candidate.kind === "grammar"
+      ? `grammar:${clean(candidate.canonicalKey)}`
+      : senseId === null
+        ? null
+        : `vocabulary:${JSON.stringify([
+            clean(lemma ?? ""),
+            clean(reading ?? ""),
+            clean(partOfSpeech ?? "").toLocaleLowerCase("en"),
+            clean(senseId),
+          ])}`;
+  const stable =
+    stableClaimKey === null
+      ? null
+      : (cards.find((card) =>
+          card.identityClaims.some(
+            (claim) =>
+              (claim.authority === "gafu-preparation-v1" ||
+                claim.authority === "gafu-capture-v1") &&
+              claim.claimKey === stableClaimKey,
+          ),
+        ) ?? null);
+  if (stable !== null) return stable;
   if (candidate.kind === "grammar") {
     return (
       cards.find(
@@ -111,6 +135,7 @@ const relationFor = (
   reading: string | null,
   partOfSpeech: string | null,
   meaning: string,
+  senseId: string | null,
   study: StudyPreparationSnapshot,
 ): Readonly<{ relation: "missing" | "existing" | "known"; cardId: string | null }> => {
   if (
@@ -142,6 +167,7 @@ const relationFor = (
     reading,
     partOfSpeech,
     meaning,
+    senseId,
     study.cards,
   );
   if (card === null) return { relation: "missing", cardId: null };
@@ -274,6 +300,7 @@ export const projectFindings = (
         reading,
         partOfSpeech,
         correctedMeaning,
+        correctedSense,
         study,
       );
       const knownForSet = correction?.knownForSet === true;

@@ -10,7 +10,7 @@ import {
   testSeed,
 } from "../../tests/support/study.ts";
 import type { JapaneseAnalyzer } from "../analysis/contracts.ts";
-import { ok } from "../result.ts";
+import { err, ok } from "../result.ts";
 import { openStudy } from "../study/study.ts";
 import { createWatch } from "./watch.ts";
 
@@ -197,5 +197,72 @@ describe("Watch capture", () => {
     });
     database.close();
     context.study.close();
+  });
+
+  test("converts thrown analyzer and token dependencies into typed failures", async () => {
+    const context = setup();
+    const analyzerFailure = createWatch({
+      analyzer: {
+        name: "throwing-analyzer",
+        analyze: async () => {
+          throw new Error("adapter failed");
+        },
+      },
+      clock: context.clock.now,
+      nextToken: () => "unused",
+      captureVocabulary: context.study.captureVocabulary,
+      pendingTtlMs: 60_000,
+      maximumPending: 4,
+    });
+    expect(await resolve(analyzerFailure)).toEqual({
+      ok: false,
+      error: { kind: "analyzerUnavailable" },
+    });
+    const tokenFailure = createWatch({
+      analyzer,
+      clock: context.clock.now,
+      nextToken: () => {
+        throw new Error("entropy failed");
+      },
+      captureVocabulary: context.study.captureVocabulary,
+      pendingTtlMs: 60_000,
+      maximumPending: 4,
+    });
+    expect(await resolve(tokenFailure)).toEqual({
+      ok: false,
+      error: { kind: "tokenFailed" },
+    });
+    context.study.close();
+  });
+
+  test("preserves the complete Study failure across the Watch boundary", async () => {
+    const watch = createWatch({
+      analyzer,
+      clock: () => new Date("2026-09-08T08:00:00.000Z"),
+      nextToken: () => "capture-token",
+      captureVocabulary: () =>
+        err({ kind: "identityConflict", existingCardId: "existing-card" }),
+      pendingTtlMs: 60_000,
+      maximumPending: 4,
+    });
+    const resolution = await resolve(watch);
+    if (!resolution.ok) throw new Error(resolution.error.kind);
+    const candidate = resolution.value.candidates[0];
+    if (candidate === undefined) throw new Error("candidate missing");
+    expect(
+      watch.commit({
+        token: resolution.value.token,
+        candidateKey: candidate.key,
+        meaning: "to eat",
+        senseId: candidate.suggestedSenseId,
+        operationKey: "failed-capture",
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: "studyFailure",
+        failure: { kind: "identityConflict", existingCardId: "existing-card" },
+      },
+    });
   });
 });

@@ -104,19 +104,26 @@ export const createGeneratedMaterialValidator = (
     }
 
     const knownVocabulary: KnownVocabularyEntry[] = knowledge.vocabulary.flatMap(
-      (word) => {
+      (word): readonly KnownVocabularyEntry[] => {
         const part =
           word.partOfSpeech === null ? null : parseBroadPartOfSpeech(word.partOfSpeech);
-        return part === null
-          ? []
-          : [
-              {
-                lemma: normalizeJapanese(word.lemma),
-                reading: normalizeReading(word.reading),
-                partOfSpeech: part,
-                scope: { kind: "allSenses" as const },
-              },
-            ];
+        if (part === null) return [];
+        if (word.source === "card") {
+          return word.senseIds.map((senseId) => ({
+            lemma: normalizeJapanese(word.lemma),
+            reading: normalizeReading(word.reading),
+            partOfSpeech: part,
+            scope: { kind: "oneSense" as const, senseId },
+          }));
+        }
+        return [
+          {
+            lemma: normalizeJapanese(word.lemma),
+            reading: normalizeReading(word.reading),
+            partOfSpeech: part,
+            scope: { kind: "allSenses" as const },
+          },
+        ];
       },
     );
     const target =
@@ -151,7 +158,7 @@ export const createGeneratedMaterialValidator = (
           normalizeReading(token.reading ?? "") === target.reading &&
           token.broadPartOfSpeech === target.partOfSpeech
             ? [targetSense]
-            : [],
+            : dependencies.senses.resolve(token, decoded.value.japanese),
       },
     });
     const checked = await scopedValidator.validate(decoded.value, target, {

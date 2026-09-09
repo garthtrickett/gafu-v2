@@ -4,12 +4,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
+import { openLearningMaterial } from "../learning-material/learning-material.ts";
+import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
 import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
 import { createSubtitleImportInspector } from "../preparation/import.ts";
 import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
 import { openPreparation } from "../preparation/preparation.ts";
-import { err } from "../result.ts";
+import { err, ok } from "../result.ts";
 import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
+import { createProviderKeyCustody } from "../topology/provider-key-custody.ts";
 import { inspectHealth } from "./health.ts";
 
 test("health reports only operational counts and flags unfinished preparation", () => {
@@ -54,6 +57,18 @@ test("health reports only operational counts and flags unfinished preparation", 
       batchSize: 20,
     });
     if (!preparation.ok) throw new Error(preparation.error.kind);
+    const material = openLearningMaterial({
+      databasePath: path,
+      clock: () => new Date("2026-09-08T13:00:00.000Z"),
+      nextId: () => "material-id",
+      nextToken: () => "permit-token",
+      provider: createDeterministicMaterialProvider(),
+      keyCustody: createProviderKeyCustody({ verify: async () => ok(undefined) }),
+      validate: async ({ value }) => ok(value as never),
+      inspectionEnabled: false,
+    });
+    if (!material.ok) throw new Error(material.error.kind);
+    material.value.close();
     preparation.value.close();
     study.value.close();
     const database = new Database(path);

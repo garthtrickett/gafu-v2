@@ -87,3 +87,49 @@ test("native copy is inert and the explicit shortcut captures one Card", async (
   );
   expect(watchRequests).toBe(4);
 });
+
+test("a late capture response cannot replace newly loaded subtitles", async ({
+  page,
+}) => {
+  let release = (): void => {};
+  let intercepted = false;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/watch/capture/resolve", async (route) => {
+    intercepted = true;
+    await gate;
+    await route.continue();
+  });
+  await page.goto("/?view=watch");
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "old.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(subtitles),
+  });
+  const oldSubtitle = page.locator("[data-cue-key]");
+  await expect(oldSubtitle).toContainText("昨日は泳いだ猫を見た");
+  await oldSubtitle.evaluate((element) => {
+    const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+    if (node === null) throw new Error("subtitle node missing");
+    const text = node.textContent ?? "";
+    const start = text.indexOf("泳いだ");
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + "泳いだ".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.press("Control+Shift+G");
+  await expect.poll(() => intercepted).toBe(true);
+
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "new.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(`1\n00:00:00,000 --> 00:00:10,000\n新しい字幕を読む。\n`),
+  });
+  release();
+  await expect(page.locator("[data-cue-key]")).toContainText("新しい字幕を読む");
+  await expect(page.getByTestId("capture-panel")).toHaveCount(0);
+});

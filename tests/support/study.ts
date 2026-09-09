@@ -86,6 +86,7 @@ export const testPermitVerifier: PresentationPermitVerifier = {
       return ok({
         id: parsed.id,
         cardId: asCardId(parsed.cardId),
+        presentationId: `fixture:${parsed.id}`,
         issuedAt,
         contractVersion: "prevalidated-fixture-v1",
       });

@@ -21,6 +21,8 @@ import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
 export const MATERIAL_SCHEMA_VERSION = 1;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
+const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
+const MAXIMUM_PENDING_PERMITS = 1_024;
 
 type MaterialRow = Readonly<{
   id: string;
@@ -153,10 +155,24 @@ export const openLearningMaterial = (
   }
 
   const permits = new Map<string, StoredPermit>();
+  const prunePermits = (time: number): void => {
+    for (const [token, permit] of permits) {
+      if (time - permit.issuedAt.getTime() > PRESENTATION_PERMIT_TTL_MS) {
+        permits.delete(token);
+      }
+    }
+    while (permits.size >= MAXIMUM_PENDING_PERMITS) {
+      const oldest = permits.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      permits.delete(oldest);
+    }
+  };
   const permitVerifier: PresentationPermitVerifier = {
     verify: (
       permit: PresentationPermit,
+      now: Date,
     ): Result<VerifiedPresentationPermit, PresentationPermitFailure> => {
+      prunePermits(now.getTime());
       const stored = permits.get(permit.token);
       return stored === undefined
         ? err({ kind: "presentationInvalid", detail: "unknown presentation permit" })
@@ -226,11 +242,13 @@ export const openLearningMaterial = (
       const material = JSON.parse(row.payload_json) as GeneratedMaterial;
       let permit: PresentationPermit | null = null;
       if (mode === "review") {
+        prunePermits(observedAt.value.getTime());
         const token = options.nextToken();
         permits.set(token, {
           token,
           id: options.nextId(),
           cardId,
+          presentationId: row.id,
           issuedAt: observedAt.value,
           contractVersion: MATERIAL_VALIDATION_VERSION,
         });
