@@ -18,7 +18,9 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      # Workspace API token: the project token reads production but its
+      # variable writes are rejected as Unauthorized (cutover run 34333435480).
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
       EXPECTED_PROJECT_ID: 480aadb5-09cc-4cdc-a463-cfd42ee888e4
       EXPECTED_ENVIRONMENT_ID: 99c4c48f-bd71-401e-9390-4e2134fa2660
       EXPECTED_V1_SERVICE_ID: 1d3e6245-5395-4fa1-97e6-f1e7883dac34
