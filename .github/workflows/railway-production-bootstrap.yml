@@ -1,0 +1,64 @@
+name: Railway Production Bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      EXPECTED_PROJECT_ID: 480aadb5-09cc-4cdc-a463-cfd42ee888e4
+      EXPECTED_ENVIRONMENT_ID: 99c4c48f-bd71-401e-9390-4e2134fa2660
+    steps:
+      - name: Install pinned Railway CLI
+        run: npm install --global @railway/cli@5.41.2
+
+      - name: Guard the exact target and absence of V2
+        run: |
+          set -euo pipefail
+          status="$(railway status --json)"
+
+          test "$(jq -r '.id' <<<"$status")" = "$EXPECTED_PROJECT_ID"
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" '
+            any(.environments.edges[]; .node.id == $environment_id and .node.name == "production" and .node.canAccess)
+          ' <<<"$status" >/dev/null
+          jq -e 'any(.services.edges[]; .node.name == "gafu")' <<<"$status" >/dev/null
+
+          if jq -e 'any(.services.edges[]; .node.name == "gafu-v2")' <<<"$status" >/dev/null; then
+            echo "Refusing to create a duplicate gafu-v2 service." >&2
+            exit 1
+          fi
+
+      - name: Create the stopped V2 storage boundary
+        run: |
+          set -euo pipefail
+          railway add --service gafu-v2 --json
+          railway service link gafu-v2
+          railway volume add --mount-path /data --json
+          railway variable set \
+            GAFU_PUBLIC_DEPLOYMENT=1 \
+            GAFU_DATABASE_PATH=/data/gafu-v2.sqlite \
+            GAFU_KAISHI_SEED_PATH=/data/kaishi-1.5k.local.json \
+            GAFU_OPENAI_MODEL=gpt-5.6-luna \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service gafu-v2 \
+            --skip-deploys \
+            --json
+
+      - name: Report only the new resource boundary
+        run: |
+          set -euo pipefail
+          railway service list --json | jq '[.[] | select(.name == "gafu-v2")]'
+          railway volume list --json | jq '{
+            environment,
+            project,
+            volumes: [.volumes[] | select(.serviceName == "gafu-v2")]
+          }'
