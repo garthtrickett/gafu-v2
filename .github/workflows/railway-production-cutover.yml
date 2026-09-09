@@ -59,7 +59,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          test -n "${RAILWAY_TOKEN:-}"
+          test -n "${RAILWAY_API_TOKEN:-}"
           test -n "${GAFU_V1_BEARER_TOKEN:-}"
           test -n "${OPENAI_API_KEY:-}"
           test "$(printf %s "$GAFU_ACCESS_PASSWORD" | wc -c)" -ge 16
