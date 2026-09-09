@@ -244,6 +244,14 @@ jobs:
       - name: Guard the exact untouched Railway boundary
         run: |
           set -euo pipefail
+          # Workspace tokens carry no implicit project link (unlike project
+          # tokens), so link the exact target first. Every assertion below
+          # re-verifies the linked project, environment, services, and volume
+          # by ID, so a wrong link fails closed here before anything mutates.
+          railway link \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID"
           status="$(railway status --json)"
           test "$(jq -r '.id' <<<"$status")" = "$EXPECTED_PROJECT_ID"
           jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" '
