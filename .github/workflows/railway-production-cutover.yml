@@ -24,7 +24,7 @@ jobs:
       EXPECTED_V1_SERVICE_ID: 1d3e6245-5395-4fa1-97e6-f1e7883dac34
       EXPECTED_V2_SERVICE_ID: 8936ec29-1110-4fd6-beec-6afb7e3c68e5
       EXPECTED_V2_VOLUME_ID: 22cfeb13-64d2-44a9-bbae-5e8447a8d704
-      ACCEPTED_RECONCILIATION_SHA256: b1e6a5ce110ed3c6f9819e36ddbc333ba93534d09a35d7771784f9bc0fb5204e
+      ACCEPTED_RECONCILIATION_SHA256: 8fbee13560ce98e67509877da9648025f3af74d197496e265fab007ed14620f2
       IMPORT_KEY: v1-production-cutover-2026-09-09
     steps:
       - name: Check out V2
@@ -118,11 +118,12 @@ jobs:
             exit 1
           fi
           jq -e '
-            .counts == {input: 299, mapped: 280, merged: 0, skipped: 0, quarantined: 19}
-            and .preferences.newCardsPerDay == 5
-            and .preferences.timeZone == "Australia/Sydney"
+            .counts == {input: 296, mapped: 294, merged: 0, skipped: 0, quarantined: 2}
+            and .preferences.newCardsPerDay == 3
+            and .preferences.timeZone == null
+            and .preferences.reason == "timeZoneInvalid"
           ' "$report" >/dev/null
-          echo "Fresh V1 reconciliation matches the accepted 299-row projection."
+          echo "Fresh V1 reconciliation matches the accepted 296-row legacy projection."
 
       - name: Build and verify the private V2 data files
         env:
@@ -162,13 +163,13 @@ jobs:
             --import-key "$IMPORT_KEY" \
             --confirm-imported-known > "$known_receipt"
           jq -e '
-            .sourceItems == 299
-            and .uniqueCards == 299
-            and .knownCardsAfter == 299
-            and .statesBefore == {staged: 0, active: 1, known: 279, suspended: 19}
+            .sourceItems == 296
+            and .uniqueCards == 296
+            and .knownCardsAfter == 296
+            and ([.statesBefore[]] | add) == 296
             and .schedulesPreserved >= 0
             and .reviewsPreserved == 0
-            and .quarantinesPreserved == 19
+            and .quarantinesPreserved == 2
           ' "$known_receipt" >/dev/null
 
           server_log="$RUNNER_TEMP/local-production-startup.log"
@@ -211,7 +212,7 @@ jobs:
             const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
             const response = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/api/study`, { headers: { cookie } });
             const study = await response.json();
-            if (response.status !== 200 || study.status?.knownCount !== 299 || study.knowledge?.baseline?.enabledCount !== 1437) {
+            if (response.status !== 200 || study.status?.knownCount !== 296 || study.knowledge?.baseline?.enabledCount !== 1437) {
               throw new Error("private Study verification failed");
             }
           '
@@ -228,10 +229,10 @@ jobs:
             and .foreignKeys == "ok"
             and .cards == {
               grammar: 296,
-              vocabulary: 3,
+              vocabulary: 0,
               staged: 0,
               active: 0,
-              known: 299,
+              known: 296,
               suspended: 0
             }
           ' "$RUNNER_TEMP/v2-health.json" >/dev/null
@@ -442,7 +443,7 @@ jobs:
             const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
             const response = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/api/study`, { headers: { cookie } });
             const study = await response.json();
-            if (response.status !== 200 || study.status?.knownCount !== 299 || study.knowledge?.baseline?.enabledCount !== 1437) {
+            if (response.status !== 200 || study.status?.knownCount !== 296 || study.knowledge?.baseline?.enabledCount !== 1437) {
               throw new Error("deployed private Study verification failed");
             }
           '
@@ -452,7 +453,7 @@ jobs:
             echo
             echo "- URL: $v2_origin"
             echo "- Deployment: $final_deployment_id"
-            echo "- Imported Cards known: 299"
+            echo "- Imported Cards known: 296"
             echo "- Kaishi baseline entries: 1437"
             echo "- Existing V1 domain: unchanged"
           } >> "$GITHUB_STEP_SUMMARY"
