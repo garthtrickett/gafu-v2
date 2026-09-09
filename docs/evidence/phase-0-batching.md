@@ -42,7 +42,7 @@ after all cited cue IDs and normalized UTF-16 spans reconstruct locally.
 ## OpenAI adapter
 
 The production experiment adapter uses the Responses API directly over `fetch`
-with a configurable model, `store: true`, and strict JSON-schema output. The API
+with a configurable model, `store: false`, and strict JSON-schema output. The API
 key is supplied by a server-side function and never appears in the body or an
 error detail. Authentication, permission, rate limit, transport, timeout,
 malformed structure, incomplete output, refusal, and cancellation are mapped to

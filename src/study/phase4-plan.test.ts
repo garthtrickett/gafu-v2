@@ -82,7 +82,7 @@ const vocabulary = (
   },
   identityClaim: {
     authority: "gafu-preparation-v1",
-    claimKey: `vocabulary:${lemma}:fixture-sense`,
+    claimKey: `vocabulary:${JSON.stringify([lemma, lemma, "noun", "fixture-sense"])}`,
   },
 });
 
@@ -305,6 +305,13 @@ describe("Phase 4 Preparation Plans", () => {
     expect(
       operations.query("SELECT deleted_at FROM preparation_plan").get(),
     ).toMatchObject({ deleted_at: expect.any(String) });
+    expect(
+      operations
+        .query(
+          "SELECT active FROM staging_source WHERE source_kind = 'plan' AND source_key = ?",
+        )
+        .get(started.value.id),
+    ).toEqual({ active: 0 });
     operations.close();
     expect(
       context.study.startPlan({
@@ -312,6 +319,53 @@ describe("Phase 4 Preparation Plans", () => {
         draft: draft([vocabulary("one", "珈琲", "episode-one", 1, 100)]),
       }),
     ).toMatchObject({ ok: true, value: { id: started.value.id } });
+    context.study.close();
+  });
+
+  test("rejects conflicting source and canonical Card identities", () => {
+    const context = setup();
+    const cat = context.study.createCard({
+      type: "vocabulary",
+      content: {
+        lemma: "猫",
+        reading: "猫",
+        partOfSpeech: "noun",
+        meaning: "meaning 猫",
+        usageNotes: "",
+      },
+    });
+    const dog = context.study.createCard({
+      type: "vocabulary",
+      content: {
+        lemma: "犬",
+        reading: "犬",
+        partOfSpeech: "noun",
+        meaning: "meaning 犬",
+        usageNotes: "",
+      },
+    });
+    if (!cat.ok || !dog.ok) throw new Error("fixture Card creation failed");
+    const item = vocabulary("cat", "猫", "episode-one", 1, 100);
+    const database = new Database(context.databasePath);
+    database
+      .query(
+        "INSERT INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+      )
+      .run(
+        item.identityClaim.authority,
+        item.identityClaim.claimKey,
+        dog.value.card.id,
+      );
+    database.close();
+    expect(
+      context.study.startPlan({
+        operationKey: "identity-conflict",
+        draft: draft([item]),
+      }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "identityConflict", existingCardId: dog.value.card.id },
+    });
     context.study.close();
   });
 });

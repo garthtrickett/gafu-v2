@@ -110,6 +110,19 @@ describe("OpenAI preparation provider adapter", () => {
     if (!refused.ok) expect(refused.error.kind).toBe("refusal");
   });
 
+  test("rejects oversized provider responses before JSON parsing", async () => {
+    const result = await provider(
+      async () => new Response("x".repeat(4 * 1024 * 1024 + 1)),
+    ).submit(batch, "request-key");
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformedStructure",
+        detail: "OpenAI response body is too large",
+      },
+    });
+  });
+
   test("distinguishes timeout, cancellation, and missing credentials", async () => {
     const hangingFetch: OpenAiFetch = async (_input, init) =>
       new Promise((_resolve, reject) => {

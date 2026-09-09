@@ -42,7 +42,20 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(review.getByTestId("material-answer")).toHaveCount(0);
   await review.getByRole("button", { name: "Reveal answer" }).click();
   await expect(review.getByTestId("material-answer")).toContainText("bird");
+  let releaseAnswer = (): void => {};
+  const answerGate = new Promise<void>((resolve) => {
+    releaseAnswer = resolve;
+  });
+  await page.route("**/api/study/session/answer", async (route) => {
+    await answerGate;
+    await route.continue();
+  });
   await review.getByRole("button", { name: "good" }).click();
+  await expect(review.getByRole("button", { name: "again" })).toBeDisabled();
+  await expect(review.getByRole("button", { name: "hard" })).toBeDisabled();
+  await expect(review.getByRole("button", { name: "good" })).toBeDisabled();
+  await expect(review.getByRole("button", { name: "easy" })).toBeDisabled();
+  releaseAnswer();
   await expect(page.getByRole("status")).toContainText("Review recorded once");
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
 

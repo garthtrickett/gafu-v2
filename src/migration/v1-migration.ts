@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { Logger } from "../log.ts";
+import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import { err, ok, type Result } from "../result.ts";
 import type { CardState, CreateCard } from "../study/contracts.ts";
 import { type CanonicalCard, canonicalizeCard } from "../study/identity.ts";
@@ -646,231 +647,242 @@ export const createV1Migration = (
         detail: "Import key or destination is invalid.",
       });
     }
-    // Validate and reconcile before any schema initialization can mutate a
-    // missing or older destination.
-    const before = readDestination(command.destinationPath);
-    if (!before.ok) return before;
-    const now = safeNow(dependencies.clock);
-    if (!now.ok) return now;
-    const preflight = buildPlan(
-      command.snapshotBytes,
-      before.value,
-      now.value.toISOString(),
-    );
-    if (!preflight.ok) return preflight;
-    const initialized = dependencies.initializeDestination(command.destinationPath);
-    if (!initialized.ok) return initialized;
-    let database: Database | null = null;
+    const lock = acquireDatabaseLock(command.destinationPath);
+    if (!lock.ok) {
+      return err({
+        kind: "destinationUnreadable",
+        detail: "Destination database is in use or could not be locked.",
+      });
+    }
     try {
-      database = new Database(command.destinationPath, { strict: true });
-      database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-      const sourceDigest = snapshotDigest(command.snapshotBytes);
-      const stored = readStored(database, importKey, sourceDigest);
-      if (!stored.ok) return stored;
-      if (stored.value !== null) return ok(stored.value);
-      const storedSource = readStoredSource(database, sourceDigest);
-      if (!storedSource.ok) return storedSource;
-      if (storedSource.value !== null) return ok(storedSource.value);
-      const destination = readDestination(command.destinationPath);
-      if (!destination.ok) return destination;
-      const planned = buildPlan(
+      // Validate and reconcile before any schema initialization can mutate a
+      // missing or older destination.
+      const before = readDestination(command.destinationPath);
+      if (!before.ok) return before;
+      const now = safeNow(dependencies.clock);
+      if (!now.ok) return now;
+      const preflight = buildPlan(
         command.snapshotBytes,
-        destination.value,
+        before.value,
         now.value.toISOString(),
       );
-      if (!planned.ok) return planned;
-      const preferences = planned.value.reconciliation.preferences;
-      const timeZone = preferences.timeZone ?? "UTC";
-      let finalReport: MigrationReconciliation | null = null;
-      const commit = database.transaction(() => {
-        const actualItems: MigrationItem[] = [];
-        for (const item of planned.value.items) {
-          let cardId = item.report.cardId;
-          if (
-            item.card !== null &&
-            item.canonicalClaim !== null &&
-            item.sourceClaim !== null
-          ) {
-            const sourceExisting = database
-              ?.query(
-                "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
-              )
-              .get(item.sourceClaim.authority, item.sourceClaim.claimKey) as {
-              card_id: string;
-            } | null;
-            const canonicalExisting = database
-              ?.query(
-                "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
-              )
-              .get(item.canonicalClaim.authority, item.canonicalClaim.claimKey) as {
-              card_id: string;
-            } | null;
+      if (!preflight.ok) return preflight;
+      const initialized = dependencies.initializeDestination(command.destinationPath);
+      if (!initialized.ok) return initialized;
+      let database: Database | null = null;
+      try {
+        database = new Database(command.destinationPath, { strict: true });
+        database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+        const sourceDigest = snapshotDigest(command.snapshotBytes);
+        const stored = readStored(database, importKey, sourceDigest);
+        if (!stored.ok) return stored;
+        if (stored.value !== null) return ok(stored.value);
+        const storedSource = readStoredSource(database, sourceDigest);
+        if (!storedSource.ok) return storedSource;
+        if (storedSource.value !== null) return ok(storedSource.value);
+        const destination = readDestination(command.destinationPath);
+        if (!destination.ok) return destination;
+        const planned = buildPlan(
+          command.snapshotBytes,
+          destination.value,
+          now.value.toISOString(),
+        );
+        if (!planned.ok) return planned;
+        const preferences = planned.value.reconciliation.preferences;
+        const timeZone = preferences.timeZone ?? "UTC";
+        let finalReport: MigrationReconciliation | null = null;
+        const commit = database.transaction(() => {
+          const actualItems: MigrationItem[] = [];
+          for (const item of planned.value.items) {
+            let cardId = item.report.cardId;
             if (
-              sourceExisting !== null &&
-              canonicalExisting !== null &&
-              sourceExisting.card_id !== canonicalExisting.card_id
+              item.card !== null &&
+              item.canonicalClaim !== null &&
+              item.sourceClaim !== null
             ) {
-              throw new Error("Identity claims changed incompatibly during import.");
-            }
-            cardId = sourceExisting?.card_id ?? canonicalExisting?.card_id ?? null;
-            if (cardId === null) {
-              cardId = dependencies.nextId();
-              const canonical = canonicalizeCard(item.card);
-              if (!canonical.ok)
-                throw new Error("Planned Card no longer canonicalizes.");
-              database
+              const sourceExisting = database
                 ?.query(
-                  `INSERT INTO card(
-                     id, type, content_json, searchable_text, staged_at, staging_priority
-                   ) VALUES (?, ?, ?, ?, ?, 0)`,
+                  "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
                 )
-                .run(
-                  cardId,
-                  item.card.type,
-                  JSON.stringify(canonical.value.content),
-                  canonical.value.searchableText,
-                  planned.value.snapshot.capturedAt,
-                );
-              database
+                .get(item.sourceClaim.authority, item.sourceClaim.claimKey) as {
+                card_id: string;
+              } | null;
+              const canonicalExisting = database
                 ?.query(
-                  "INSERT INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+                  "SELECT card_id FROM identity_claim WHERE authority = ? AND claim_key = ?",
                 )
-                .run(
-                  item.canonicalClaim.authority,
-                  item.canonicalClaim.claimKey,
-                  cardId,
-                );
-              insertProgress(
-                database as Database,
-                cardId,
-                item,
-                planned.value.snapshot.capturedAt,
-                timeZone,
-              );
-            } else {
-              const existing = database
-                ?.query("SELECT state FROM card_progress WHERE card_id = ?")
-                .get(cardId) as { state: CardState };
+                .get(item.canonicalClaim.authority, item.canonicalClaim.claimKey) as {
+                card_id: string;
+              } | null;
               if (
-                item.desiredState === "known" &&
-                (existing.state === "staged" || existing.state === "active")
+                sourceExisting !== null &&
+                canonicalExisting !== null &&
+                sourceExisting.card_id !== canonicalExisting.card_id
               ) {
+                throw new Error("Identity claims changed incompatibly during import.");
+              }
+              cardId = sourceExisting?.card_id ?? canonicalExisting?.card_id ?? null;
+              if (cardId === null) {
+                cardId = dependencies.nextId();
+                const canonical = canonicalizeCard(item.card);
+                if (!canonical.ok)
+                  throw new Error("Planned Card no longer canonicalizes.");
                 database
                   ?.query(
-                    `UPDATE card_progress
+                    `INSERT INTO card(
+                     id, type, content_json, searchable_text, staged_at, staging_priority
+                   ) VALUES (?, ?, ?, ?, ?, 0)`,
+                  )
+                  .run(
+                    cardId,
+                    item.card.type,
+                    JSON.stringify(canonical.value.content),
+                    canonical.value.searchableText,
+                    planned.value.snapshot.capturedAt,
+                  );
+                database
+                  ?.query(
+                    "INSERT INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+                  )
+                  .run(
+                    item.canonicalClaim.authority,
+                    item.canonicalClaim.claimKey,
+                    cardId,
+                  );
+                insertProgress(
+                  database as Database,
+                  cardId,
+                  item,
+                  planned.value.snapshot.capturedAt,
+                  timeZone,
+                );
+              } else {
+                const existing = database
+                  ?.query("SELECT state FROM card_progress WHERE card_id = ?")
+                  .get(cardId) as { state: CardState };
+                if (
+                  item.desiredState === "known" &&
+                  (existing.state === "staged" || existing.state === "active")
+                ) {
+                  database
+                    ?.query(
+                      `UPDATE card_progress
                      SET state = 'known', known_return_state = state,
                          support_ready_at = coalesce(support_ready_at, ?)
                      WHERE card_id = ?`,
-                  )
-                  .run(item.supportReadyAt ?? now.value.toISOString(), cardId);
+                    )
+                    .run(item.supportReadyAt ?? now.value.toISOString(), cardId);
+                }
               }
+              database
+                ?.query(
+                  "INSERT OR IGNORE INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+                )
+                .run(item.sourceClaim.authority, item.sourceClaim.claimKey, cardId);
             }
+            actualItems.push({
+              ...item.report,
+              cardId,
+              disposition:
+                item.report.disposition === "mapped" && cardId === item.report.cardId
+                  ? "mapped"
+                  : item.report.disposition === "quarantined"
+                    ? "quarantined"
+                    : cardId === null
+                      ? item.report.disposition
+                      : item.report.cardId === null
+                        ? "mapped"
+                        : "merged",
+            });
+          }
+          const preferenceApplied =
+            preferences.reason === "ready" &&
+            preferences.newCardsPerDay !== null &&
+            preferences.timeZone !== null;
+          if (preferenceApplied) {
             database
               ?.query(
-                "INSERT OR IGNORE INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
+                `UPDATE study_preferences
+               SET new_cards_per_day = ?, time_zone = ? WHERE singleton = 1`,
               )
-              .run(item.sourceClaim.authority, item.sourceClaim.claimKey, cardId);
+              .run(preferences.newCardsPerDay, preferences.timeZone);
           }
-          actualItems.push({
-            ...item.report,
-            cardId,
-            disposition:
-              item.report.disposition === "mapped" && cardId === item.report.cardId
-                ? "mapped"
-                : item.report.disposition === "quarantined"
-                  ? "quarantined"
-                  : cardId === null
-                    ? item.report.disposition
-                    : item.report.cardId === null
-                      ? "mapped"
-                      : "merged",
-          });
-        }
-        const preferenceApplied =
-          preferences.reason === "ready" &&
-          preferences.newCardsPerDay !== null &&
-          preferences.timeZone !== null;
-        if (preferenceApplied) {
+          finalReport = {
+            ...planned.value.reconciliation,
+            destinationSchemaVersion: STUDY_SCHEMA_VERSION,
+            applied: true,
+            preferences: { ...preferences, applied: preferenceApplied },
+            counts: counts(actualItems),
+            items: actualItems,
+          };
           database
             ?.query(
-              `UPDATE study_preferences
-               SET new_cards_per_day = ?, time_zone = ? WHERE singleton = 1`,
-            )
-            .run(preferences.newCardsPerDay, preferences.timeZone);
-        }
-        finalReport = {
-          ...planned.value.reconciliation,
-          destinationSchemaVersion: STUDY_SCHEMA_VERSION,
-          applied: true,
-          preferences: { ...preferences, applied: preferenceApplied },
-          counts: counts(actualItems),
-          items: actualItems,
-        };
-        database
-          ?.query(
-            `INSERT INTO legacy_import(
+              `INSERT INTO legacy_import(
                import_key, source_digest, source_contract, report_json, applied_at
              ) VALUES (?, ?, ?, ?, ?)`,
-          )
-          .run(
-            importKey,
-            sourceDigest,
-            V1_SNAPSHOT_VERSION,
-            JSON.stringify(finalReport),
-            now.value.toISOString(),
-          );
-        const addItem = database?.query(
-          `INSERT INTO legacy_import_item(
+            )
+            .run(
+              importKey,
+              sourceDigest,
+              V1_SNAPSHOT_VERSION,
+              JSON.stringify(finalReport),
+              now.value.toISOString(),
+            );
+          const addItem = database?.query(
+            `INSERT INTO legacy_import_item(
              import_key, source_id, record_digest, kind, disposition, reason, card_id
            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        );
-        const quarantine = database?.query(
-          `INSERT INTO legacy_quarantine(
+          );
+          const quarantine = database?.query(
+            `INSERT INTO legacy_quarantine(
              import_key, source_id, record_digest, reason, created_at
            ) VALUES (?, ?, ?, ?, ?)`,
-        );
-        for (const item of actualItems) {
-          addItem?.run(
-            importKey,
-            item.sourceId,
-            item.recordDigest,
-            item.kind,
-            item.disposition,
-            item.reason,
-            item.cardId,
           );
-          if (item.disposition === "quarantined") {
-            quarantine?.run(
+          for (const item of actualItems) {
+            addItem?.run(
               importKey,
               item.sourceId,
               item.recordDigest,
+              item.kind,
+              item.disposition,
               item.reason,
-              now.value.toISOString(),
+              item.cardId,
             );
+            if (item.disposition === "quarantined") {
+              quarantine?.run(
+                importKey,
+                item.sourceId,
+                item.recordDigest,
+                item.reason,
+                now.value.toISOString(),
+              );
+            }
           }
-        }
-      });
-      commit.immediate();
-      if (finalReport === null) throw new Error("Import produced no receipt.");
-      dependencies.logger?.write("info", {
-        event: "migration.apply.completed",
-        fields: {
-          sourceDigestPrefix: sourceDigest.slice(0, 12),
-          counts: (finalReport as MigrationReconciliation).counts,
-        },
-      });
-      return ok(finalReport as MigrationReconciliation);
-    } catch (cause) {
-      dependencies.logger?.write("error", {
-        event: "migration.apply.failed",
-        fields: { failureKind: "applyFailed" },
-      });
-      return err({
-        kind: "applyFailed",
-        detail: cause instanceof Error ? cause.message : String(cause),
-      });
+        });
+        commit.immediate();
+        if (finalReport === null) throw new Error("Import produced no receipt.");
+        dependencies.logger?.write("info", {
+          event: "migration.apply.completed",
+          fields: {
+            sourceDigestPrefix: sourceDigest.slice(0, 12),
+            counts: (finalReport as MigrationReconciliation).counts,
+          },
+        });
+        return ok(finalReport as MigrationReconciliation);
+      } catch (cause) {
+        dependencies.logger?.write("error", {
+          event: "migration.apply.failed",
+          fields: { failureKind: "applyFailed" },
+        });
+        return err({
+          kind: "applyFailed",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        });
+      } finally {
+        database?.close();
+      }
     } finally {
-      database?.close();
+      lock.value.release();
     }
   };
 

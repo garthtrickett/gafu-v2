@@ -34,18 +34,27 @@ export const createProviderKeyCustody = (
   verifier: ProviderKeyVerifier,
 ): ProviderKeyCustody => {
   let apiKey: string | null = null;
+  let revision = 0;
   return {
     replace: async (candidate, signal) => {
+      const operationRevision = ++revision;
       const trimmed = candidate.trim();
       if (trimmed === "") {
         return err({ kind: "authentication", detail: "API key is empty" });
       }
       const verified = await verifier.verify(trimmed, signal);
       if (!verified.ok) return verified;
+      if (operationRevision !== revision) {
+        return err({
+          kind: "cancelled",
+          detail: "A newer key change superseded this one",
+        });
+      }
       apiKey = trimmed;
       return ok(undefined);
     },
     remove: () => {
+      revision += 1;
       apiKey = null;
     },
     isConfigured: () => apiKey !== null,

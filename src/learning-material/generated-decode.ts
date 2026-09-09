@@ -111,7 +111,13 @@ export const decodeGeneratedMaterial = (
 
 export const parseBroadPartOfSpeech = (value: string): BroadPartOfSpeech | null => {
   const normalized = value.normalize("NFKC").trim().toLocaleLowerCase();
+  const exact = broadParts.find((part) => normalized === part);
+  if (exact !== undefined) return exact;
+  // Prefer the most specific label when a provider includes explanatory text.
+  // In particular, "adverb" contains "verb".
   return (
-    broadParts.find((part) => normalized === part || normalized.includes(part)) ?? null
+    [...broadParts]
+      .sort((left, right) => right.length - left.length)
+      .find((part) => normalized.includes(part)) ?? null
   );
 };

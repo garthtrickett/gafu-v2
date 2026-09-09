@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireDatabaseLock, databaseLockIsActive } from "./database-lock.ts";
@@ -41,6 +41,25 @@ describe("database process lock", () => {
         ok: false,
         error: "databaseInUse",
       });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("prunes dead directory owners before acquiring", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-lock-"));
+    try {
+      const databasePath = join(directory, "gafu.sqlite");
+      const lockDirectory = `${databasePath}.lock`;
+      mkdirSync(lockDirectory);
+      writeFileSync(
+        join(lockDirectory, "dead.json"),
+        JSON.stringify({ pid: 2_147_483_647, token: "dead" }),
+      );
+      expect(databaseLockIsActive(databasePath)).toBe(false);
+      const acquired = acquireDatabaseLock(databasePath);
+      expect(acquired.ok).toBe(true);
+      if (acquired.ok) acquired.value.release();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -298,6 +298,15 @@ export const migrateStudyDatabase = (
         supported: STUDY_SCHEMA_VERSION,
       });
     }
+    const applied = database
+      .query("SELECT version FROM schema_migration ORDER BY version")
+      .all() as { version: number }[];
+    if (!applied.every(({ version }, index) => version === index + 1)) {
+      return err({
+        kind: "migrationFailed",
+        detail: "Study migration history is not contiguous.",
+      });
+    }
     for (const migration of migrations) {
       if (migration.version <= row.version) continue;
       const apply = database.transaction(() => {

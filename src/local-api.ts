@@ -50,7 +50,11 @@ export const readBoundedBody = async (
       if (chunk.done) break;
       received += chunk.value.byteLength;
       if (received > maximumBytes) {
-        await reader.cancel();
+        try {
+          await reader.cancel();
+        } catch {
+          // The deterministic size failure remains authoritative.
+        }
         return err({ kind: "bodyTooLarge", maximumBytes });
       }
       chunks.push(chunk.value);

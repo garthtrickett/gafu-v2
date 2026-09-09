@@ -391,7 +391,7 @@ export const validateCompleteEvidence = (
       }
       for (const grammar of cue.grammarEvidence) {
         for (const span of grammar.spans) {
-          const key = `grammar\0${cue.cueId}\0${span.start}\0${span.end}`;
+          const key = `grammar\0${cue.cueId}\0${span.start}\0${span.end}\0${grammar.canonicalForm}`;
           expected.set(key, grammar.canonicalForm);
         }
       }
@@ -401,7 +401,7 @@ export const validateCompleteEvidence = (
   for (const batch of snapshot.batches) {
     if (batch.state !== "completed") continue;
     for (const candidate of batch.response.candidates) {
-      const key = `${candidate.kind}\0${candidate.cueId}\0${candidate.span.start}\0${candidate.span.end}`;
+      const key = `${candidate.kind}\0${candidate.cueId}\0${candidate.span.start}\0${candidate.span.end}${candidate.kind === "grammar" ? `\0${candidate.canonicalKey}` : ""}`;
       if (observed.has(key)) {
         return err({
           kind: "incompleteEvidence",

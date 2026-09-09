@@ -15,3 +15,9 @@ test("the declared detector covers every frozen grammar construction", () => {
     }
   }
 });
+
+test("morphologically ambiguous spans retain both distinct grammar identities", () => {
+  const detected = declaredGrammarDetector.detect("これはされる。");
+  expect(detected.map((evidence) => evidence.canonicalForm)).toContain("受身形");
+  expect(detected.map((evidence) => evidence.canonicalForm)).toContain("可能形");
+});

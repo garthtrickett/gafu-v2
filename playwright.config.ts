@@ -29,8 +29,11 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "GAFU_DATABASE_PATH=:memory: GAFU_FAKE_AI=1 bun run dev",
+    command:
+      "GAFU_DATABASE_PATH=:memory: GAFU_FAKE_AI=1 GAFU_VITE_MODE=preview bun run dev",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env["CI"],
+    // Never attach destructive browser journeys to an arbitrary developer
+    // server: these tests create, review, and delete durable learner data.
+    reuseExistingServer: false,
   },
 });

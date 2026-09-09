@@ -40,6 +40,40 @@ describe("server-side provider key custody spike", () => {
     expect(custody.readForServerAdapter()).toBe("good");
   });
 
+  test("a slower key change cannot overwrite a newer replacement or removal", async () => {
+    let release = (): void => {};
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const custody = createProviderKeyCustody({
+      verify: async (candidate) => {
+        if (candidate === "older") await slow;
+        return ok(undefined);
+      },
+    });
+    const older = custody.replace("older");
+    expect((await custody.replace("newer")).ok).toBe(true);
+    release();
+    expect(await older).toMatchObject({ ok: false, error: { kind: "cancelled" } });
+    expect(custody.readForServerAdapter()).toBe("newer");
+
+    let releaseRemoval = (): void => {};
+    const removalWait = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    const removing = createProviderKeyCustody({
+      verify: async () => {
+        await removalWait;
+        return ok(undefined);
+      },
+    });
+    const pending = removing.replace("secret");
+    removing.remove();
+    releaseRemoval();
+    expect(await pending).toMatchObject({ ok: false, error: { kind: "cancelled" } });
+    expect(removing.readForServerAdapter()).toBeNull();
+  });
+
   test.each([
     [401, "authentication"],
     [403, "permission"],

@@ -10,7 +10,7 @@ import type {
 import { asPlanId, planDraftDigest } from "../preparation-plan-contracts.ts";
 import { err, ok, type Result } from "../result.ts";
 import type { CardContent, StudyFailure, StudyPreferences } from "./contracts.ts";
-import { canonicalizeCard } from "./identity.ts";
+import { canonicalizeCard, normalizeVocabularyReading } from "./identity.ts";
 import { localDayKey } from "./time.ts";
 
 type Dependencies = Readonly<{
@@ -108,6 +108,45 @@ const validateDraft = (
     findingKeys.add(item.findingKey);
     const canonical = canonicalizeCard(item.proposedCard);
     if (!canonical.ok) return canonical;
+    const sourceClaimValid = (() => {
+      if (item.proposedCard.type === "grammar") {
+        if (!("canonicalForm" in canonical.value.content)) return false;
+        return (
+          item.identityClaim.claimKey ===
+          `grammar:${canonical.value.content.canonicalForm}`
+        );
+      }
+      if (!("lemma" in canonical.value.content)) return false;
+      if (!item.identityClaim.claimKey.startsWith("vocabulary:")) return false;
+      try {
+        const fields = JSON.parse(
+          item.identityClaim.claimKey.slice("vocabulary:".length),
+        ) as unknown;
+        return (
+          Array.isArray(fields) &&
+          fields.length === 4 &&
+          fields[0] === canonical.value.content.lemma &&
+          typeof fields[1] === "string" &&
+          normalizeVocabularyReading(fields[1].normalize("NFKC").trim()) ===
+            canonical.value.content.reading &&
+          fields[2] ===
+            canonical.value.content.partOfSpeech
+              .normalize("NFKC")
+              .trim()
+              .toLocaleLowerCase("en") &&
+          typeof fields[3] === "string" &&
+          fields[3].trim() !== ""
+        );
+      } catch {
+        return false;
+      }
+    })();
+    if (!sourceClaimValid) {
+      return err({
+        kind: "invalidPlanDraft",
+        detail: "Plan member identity does not match its proposed Card.",
+      });
+    }
     values.push({ item, canonical: canonical.value });
   }
   return ok(values);
@@ -367,7 +406,7 @@ export const createPlanOperations = (
         if (existingPlan !== null) {
           database
             .query(
-              "DELETE FROM staging_source WHERE source_kind = 'plan' AND source_key = ?",
+              "UPDATE staging_source SET active = 0 WHERE source_kind = 'plan' AND source_key = ?",
             )
             .run(committedId);
           database
@@ -419,6 +458,16 @@ export const createPlanOperations = (
               .get(value.canonical.claimAuthority, value.canonical.claimKey) as {
               card_id: string;
             } | null;
+            if (
+              sourceClaim !== null &&
+              manualClaim !== null &&
+              sourceClaim.card_id !== manualClaim.card_id
+            ) {
+              throw new PlanCommitFailure({
+                kind: "identityConflict",
+                existingCardId: sourceClaim.card_id,
+              });
+            }
             cardId = sourceClaim?.card_id ?? manualClaim?.card_id ?? null;
           }
           if (cardId === null) {
@@ -540,7 +589,10 @@ export const createPlanOperations = (
         );
         const addSource = database.query(
           `INSERT INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
-           VALUES (?, 'plan', ?, ?, ?, ?)`,
+           VALUES (?, 'plan', ?, ?, ?, ?)
+           ON CONFLICT(card_id, source_kind, source_key) DO UPDATE SET
+             priority = excluded.priority,
+             active = excluded.active`,
         );
         for (const value of resolved) {
           addMember.run(
@@ -680,7 +732,7 @@ export const createPlanOperations = (
       const remove = database.transaction(() => {
         database
           .query(
-            "DELETE FROM staging_source WHERE source_kind = 'plan' AND source_key = ?",
+            "UPDATE staging_source SET active = 0 WHERE source_kind = 'plan' AND source_key = ?",
           )
           .run(id);
         const changed = database

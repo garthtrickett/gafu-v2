@@ -143,10 +143,14 @@ export const parseSrt = (
     }
     const startMs = milliseconds(match, 1);
     const endMs = milliseconds(match, 5);
-    if (endMs <= startMs) {
+    if (
+      !Number.isSafeInteger(startMs) ||
+      !Number.isSafeInteger(endMs) ||
+      endMs <= startMs
+    ) {
       return err({
         reason: "malformedSrt",
-        detail: `Cue end must follow its start near line ${sourceLine}.`,
+        detail: `Cue timestamps must be safe integers and end after their start near line ${sourceLine}.`,
       });
     }
     const textLines = lines.slice(timingIndex + 1);

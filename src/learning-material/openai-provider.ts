@@ -1,3 +1,4 @@
+import { readBoundedBody } from "../local-api.ts";
 import { err, ok } from "../result.ts";
 import type {
   MaterialProvider,
@@ -18,6 +19,8 @@ type Options = Readonly<{
   timeoutMs: number;
   fetch?: OpenAiMaterialFetch;
 }>;
+
+const maximumProviderResponseBytes = 2 * 1024 * 1024;
 
 const textSpanSchema = {
   type: "object",
@@ -244,9 +247,22 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
           signal: controller.signal,
         });
         if (!response.ok) return err(httpFailure(response.status));
+        const responseBody = await readBoundedBody(
+          response,
+          maximumProviderResponseBytes,
+        );
+        if (!responseBody.ok) {
+          return err({
+            kind: "malformedResponse",
+            detail:
+              responseBody.error.kind === "bodyTooLarge"
+                ? "OpenAI response body was too large"
+                : "OpenAI response body could not be read",
+          });
+        }
         let decoded: unknown;
         try {
-          decoded = await response.json();
+          decoded = JSON.parse(new TextDecoder().decode(responseBody.value));
         } catch {
           return err({
             kind: "malformedResponse",

@@ -48,7 +48,8 @@ export type RecoveryFailure =
   | { readonly kind: "clockFailed" }
   | { readonly kind: "copyFailed"; readonly operation: "temporary" | "safety" }
   | { readonly kind: "replacementFailed"; readonly safetyCopyPath: string | null }
-  | { readonly kind: "postRestoreFailed"; readonly safetyCopyPath: string | null };
+  | { readonly kind: "postRestoreFailed"; readonly safetyCopyPath: string | null }
+  | { readonly kind: "rollbackFailed"; readonly safetyCopyPath: string | null };
 
 export type RestoreBackup = Readonly<{
   sourcePath: string;

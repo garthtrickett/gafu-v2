@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { MAXIMUM_BACKUP_BYTES } from "../recovery/contracts.ts";
 import { err, ok, type Result } from "../result.ts";
 import type {
   AnswerCard,
@@ -27,7 +28,11 @@ import type {
   SubtitleVocabularyCapture,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
-import { canonicalizeCard, canonicalizeUpdatedContent } from "./identity.ts";
+import {
+  canonicalizeCard,
+  canonicalizeUpdatedContent,
+  normalizeVocabularyReading,
+} from "./identity.ts";
 import { migrateStudyDatabase, STUDY_SCHEMA_VERSION } from "./migrations.ts";
 import { createPlanOperations } from "./plans.ts";
 import {
@@ -137,17 +142,21 @@ const applySeed = (
       const effectiveVersion = seed.version ?? "unavailable";
       if (current?.version === effectiveVersion) return;
       if (seed.availability === "available" && seed.version !== null) {
+        const disabled = new Set(
+          (
+            database
+              .query(
+                "SELECT seed_key FROM known_word WHERE seed_id = ? AND enabled = 0",
+              )
+              .all(seed.id) as { seed_key: string }[]
+          ).map(({ seed_key }) => seed_key),
+        );
+        database.query("DELETE FROM known_word WHERE seed_id = ?").run(seed.id);
         const insert = database.query(
           `INSERT INTO known_word(
              seed_id, seed_key, seed_version, lemma, reading, meaning,
              part_of_speech, enabled
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-           ON CONFLICT(seed_id, seed_key) DO UPDATE SET
-             seed_version = excluded.seed_version,
-             lemma = excluded.lemma,
-             reading = excluded.reading,
-             meaning = excluded.meaning,
-             part_of_speech = excluded.part_of_speech`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const entry of seed.entries) {
           insert.run(
@@ -158,6 +167,7 @@ const applySeed = (
             entry.reading,
             entry.meaning,
             entry.partOfSpeech,
+            disabled.has(entry.key) ? 0 : 1,
           );
         }
       }
@@ -505,6 +515,25 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     const cueKey = command.evidence.cueKey.normalize("NFKC").trim();
     const selectedSurface = command.evidence.selectedSurface.normalize("NFKC");
     const claimKey = command.identityClaim.claimKey.normalize("NFKC").trim();
+    let claimedIdentity: unknown = null;
+    try {
+      claimedIdentity = claimKey.startsWith("vocabulary:")
+        ? JSON.parse(claimKey.slice("vocabulary:".length))
+        : null;
+    } catch {
+      claimedIdentity = null;
+    }
+    if (!("lemma" in canonical.value.content)) {
+      return err({ kind: "invalidCapture", detail: "Capture Card is not vocabulary." });
+    }
+    const expectedIdentity = [
+      canonical.value.content.lemma,
+      canonical.value.content.reading,
+      canonical.value.content.partOfSpeech
+        .normalize("NFKC")
+        .trim()
+        .toLocaleLowerCase("en"),
+    ];
     const { start, end } = command.evidence.span;
     if (
       operationKey === "" ||
@@ -517,6 +546,18 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       selectedSurface.length > 100 ||
       claimKey === "" ||
       claimKey.length > 500 ||
+      !Array.isArray(claimedIdentity) ||
+      claimedIdentity.length !== 4 ||
+      expectedIdentity.some((field, index) => {
+        const claimed = claimedIdentity[index];
+        return index === 1 && typeof claimed === "string"
+          ? normalizeVocabularyReading(claimed.normalize("NFKC").trim()) !== field
+          : index === 2 && typeof claimed === "string"
+            ? claimed.normalize("NFKC").trim().toLocaleLowerCase("en") !== field
+            : claimed !== field;
+      }) ||
+      typeof claimedIdentity[3] !== "string" ||
+      claimedIdentity[3].trim() === "" ||
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
       start < 0 ||
@@ -1020,6 +1061,23 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
            ORDER BY i.card_id, i.authority, i.claim_key`,
         )
         .all() as { card_id: string; claim_key: string }[];
+      const vocabularyIdentityByCard = new Map(
+        vocabularyCards.map((row) => {
+          const content = JSON.parse(row.content_json) as {
+            lemma: string;
+            reading: string;
+            partOfSpeech: string;
+          };
+          return [
+            row.id,
+            [
+              content.lemma,
+              content.reading,
+              content.partOfSpeech.normalize("NFKC").trim().toLocaleLowerCase("en"),
+            ],
+          ] as const;
+        }),
+      );
       const senseIdsByCard = new Map<string, string[]>();
       for (const claim of vocabularySenseClaims) {
         if (!claim.claim_key.startsWith("vocabulary:")) continue;
@@ -1027,8 +1085,25 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           const fields = JSON.parse(claim.claim_key.slice("vocabulary:".length)) as
             | unknown[]
             | null;
+          const expected = vocabularyIdentityByCard.get(claim.card_id);
           const senseId = Array.isArray(fields) ? fields[3] : null;
-          if (typeof senseId !== "string" || senseId.trim() === "") continue;
+          if (
+            expected === undefined ||
+            !Array.isArray(fields) ||
+            fields.length !== 4 ||
+            expected.some((field, index) => {
+              const claimed = fields[index];
+              return index === 1 && typeof claimed === "string"
+                ? normalizeVocabularyReading(claimed.normalize("NFKC").trim()) !== field
+                : index === 2 && typeof claimed === "string"
+                  ? claimed.normalize("NFKC").trim().toLocaleLowerCase("en") !== field
+                  : claimed !== field;
+            }) ||
+            typeof senseId !== "string" ||
+            senseId.trim() === ""
+          ) {
+            continue;
+          }
           const values = senseIdsByCard.get(claim.card_id) ?? [];
           if (!values.includes(senseId)) values.push(senseId);
           senseIdsByCard.set(claim.card_id, values);
@@ -1134,6 +1209,12 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           "SELECT authority, claim_key, card_id FROM identity_claim ORDER BY card_id, authority, claim_key",
         )
         .all() as { authority: string; claim_key: string; card_id: string }[];
+      const claimsByCard = new Map<string, { authority: string; claimKey: string }[]>();
+      for (const claim of claims) {
+        const values = claimsByCard.get(claim.card_id) ?? [];
+        values.push({ authority: claim.authority, claimKey: claim.claim_key });
+        claimsByCard.set(claim.card_id, values);
+      }
       const value = {
         vocabulary: knowledge.value.vocabulary,
         grammar: knowledge.value.grammar,
@@ -1143,12 +1224,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           state: card.state,
           supportReady: card.supportReadyAt !== null,
           content: card.content,
-          identityClaims: claims
-            .filter((claim) => claim.card_id === card.id)
-            .map((claim) => ({
-              authority: claim.authority,
-              claimKey: claim.claim_key,
-            })),
+          identityClaims: claimsByCard.get(card.id) ?? [],
         })),
       };
       const digest = createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -1163,6 +1239,18 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     if (!now.ok) return now;
     try {
       database.exec("PRAGMA wal_checkpoint(FULL)");
+      const pageCount = (
+        database.query("PRAGMA page_count").get() as { page_count: number }
+      ).page_count;
+      const pageSize = (
+        database.query("PRAGMA page_size").get() as { page_size: number }
+      ).page_size;
+      if (pageCount * pageSize > MAXIMUM_BACKUP_BYTES) {
+        return err({
+          kind: "backupFailed",
+          detail: `Database exceeds the ${MAXIMUM_BACKUP_BYTES}-byte restore limit.`,
+        });
+      }
       const createdAt = now.value.toISOString();
       return ok({
         bytes: new Uint8Array(database.serialize()),

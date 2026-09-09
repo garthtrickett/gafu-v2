@@ -12,6 +12,7 @@ import type {
   GeneratedMaterial,
   MaterialProviderRequest,
 } from "./generated-contracts.ts";
+import { parseBroadPartOfSpeech } from "./generated-decode.ts";
 import { createGeneratedMaterialValidator } from "./generated-validator.ts";
 import { deterministicMaterialResult } from "./scripted-provider.ts";
 
@@ -68,6 +69,11 @@ const validate = createGeneratedMaterialValidator({
   grammar: declaredGrammarDetector,
   senses: { resolve: () => [] },
   policy: { transparentPartOfSpeech },
+});
+
+test("provider part-of-speech decoding does not collapse adverbs into verbs", () => {
+  expect(parseBroadPartOfSpeech("adverb")).toBe("adverb");
+  expect(parseBroadPartOfSpeech("adverb (fukushi)")).toBe("adverb");
 });
 const generated = deterministicMaterialResult(request);
 if (!generated.ok || generated.value.candidates[0] === undefined) {

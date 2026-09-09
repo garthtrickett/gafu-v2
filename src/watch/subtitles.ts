@@ -112,8 +112,15 @@ export const parseWatchSrt = async (
     }
     const startMs = ms(match, 1);
     const endMs = ms(match, 5);
-    if (endMs <= startMs) {
-      return err({ kind: "subtitleInvalid", detail: "Cue end must follow its start." });
+    if (
+      !Number.isSafeInteger(startMs) ||
+      !Number.isSafeInteger(endMs) ||
+      endMs <= startMs
+    ) {
+      return err({
+        kind: "subtitleInvalid",
+        detail: "Cue timestamps must be safe integers and end after their start.",
+      });
     }
     bare.push({ startMs, endMs, text });
   }
@@ -124,10 +131,10 @@ export const parseWatchSrt = async (
   ) {
     return err({ kind: "subtitleInvalid", detail: "No Japanese text was found." });
   }
+  bare.sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
   const episodeKey = `episode-v1:sha256:${await hash(bare.map((cue) => cue.text))}`;
   const occurrences = new Map<string, number>();
-  const cues: WatchCue[] = [];
-  for (const [index, cue] of bare.entries()) {
+  const identities = bare.map((cue, index) => {
     const neighbourhood = JSON.stringify([
       bare[index - 1]?.text ?? "",
       cue.text,
@@ -135,16 +142,57 @@ export const parseWatchSrt = async (
     ]);
     const ordinal = (occurrences.get(neighbourhood) ?? 0) + 1;
     occurrences.set(neighbourhood, ordinal);
-    cues.push({
-      ...cue,
-      cueKey: `cue-v1:sha256:${await hash([episodeKey, neighbourhood, ordinal])}`,
-    });
-  }
+    return { cue, neighbourhood, ordinal };
+  });
+  const cueKeys = await Promise.all(
+    identities.map(({ neighbourhood, ordinal }) =>
+      hash([episodeKey, neighbourhood, ordinal]),
+    ),
+  );
+  const cues = identities.map(({ cue }, index) => ({
+    ...cue,
+    cueKey: `cue-v1:sha256:${cueKeys[index]}`,
+  }));
   return ok({ episodeKey, cues });
+};
+
+type CueIndex = Readonly<{ prefixMaximumEnd: readonly number[] }>;
+const cueIndexes = new WeakMap<readonly WatchCue[], CueIndex>();
+
+const indexFor = (cues: readonly WatchCue[]): CueIndex => {
+  const existing = cueIndexes.get(cues);
+  if (existing !== undefined) return existing;
+  let maximumEnd = Number.NEGATIVE_INFINITY;
+  const created = {
+    prefixMaximumEnd: cues.map((cue) => {
+      maximumEnd = Math.max(maximumEnd, cue.endMs);
+      return maximumEnd;
+    }),
+  };
+  cueIndexes.set(cues, created);
+  return created;
 };
 
 export const activeWatchCues = (
   cues: readonly WatchCue[],
   timeMs: number,
-): readonly WatchCue[] =>
-  cues.filter((cue) => cue.startMs <= timeMs && cue.endMs >= timeMs);
+): readonly WatchCue[] => {
+  let low = 0;
+  let high = cues.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if ((cues[middle]?.startMs ?? Number.POSITIVE_INFINITY) <= timeMs) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  const { prefixMaximumEnd } = indexFor(cues);
+  const active: WatchCue[] = [];
+  for (let index = low - 1; index >= 0; index -= 1) {
+    if ((prefixMaximumEnd[index] ?? Number.NEGATIVE_INFINITY) < timeMs) break;
+    const cue = cues[index];
+    if (cue !== undefined && cue.endMs >= timeMs) active.push(cue);
+  }
+  return active.reverse();
+};

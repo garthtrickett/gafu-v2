@@ -367,6 +367,46 @@ describe("Preparation deep module", () => {
     context.study.close();
   }, 15_000);
 
+  test("invalid complete evidence is discarded so a fresh preflight can retry", async () => {
+    const base = createDeterministicPreparationProvider();
+    let corrupt = true;
+    const provider: TestProvider = {
+      identity: base.identity,
+      submissions: base.submissions,
+      submit: async (batch, key, signal) => {
+        const result = await base.submit(batch, key, signal);
+        return result.ok && corrupt
+          ? { ...result, value: { ...result.value, candidates: [] } }
+          : result;
+      },
+      retrieve: base.retrieve,
+    };
+    const context = setup(provider);
+    const set = await commit(context.preparation, direct, "invalid-retry");
+    const study = context.study.preparationSnapshot();
+    if (!study.ok) throw new Error(study.error.kind);
+    const first = await context.preparation.preflight(set.id, study.value);
+    if (!first.ok) throw new Error(first.error.kind);
+    const failed = await context.preparation.analyze({
+      preflightToken: first.value.token,
+    });
+    expect(failed.ok && failed.value.state).toBe("failed");
+    expect(
+      await context.preparation.analyze({ preflightToken: first.value.token }),
+    ).toEqual({ ok: false, error: { kind: "stalePreflight" } });
+
+    corrupt = false;
+    const retry = await context.preparation.preflight(set.id, study.value);
+    if (!retry.ok) throw new Error(retry.error.kind);
+    expect(retry.value.completedRequests).toBe(0);
+    const completed = await context.preparation.analyze({
+      preflightToken: retry.value.token,
+    });
+    expect(completed.ok && completed.value.state).toBe("complete");
+    context.preparation.close();
+    context.study.close();
+  }, 15_000);
+
   test("corrections persist and deletion cannot remove Study Cards", async () => {
     const context = setup();
     const card = context.study.createCard({

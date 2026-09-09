@@ -130,6 +130,15 @@ const migrate = (
     if (current.version > PREPARATION_SCHEMA_VERSION) {
       return err({ kind: "unsupportedSchema", found: current.version });
     }
+    const applied = database
+      .query("SELECT version FROM preparation_migration ORDER BY version")
+      .all() as { version: number }[];
+    if (!applied.every(({ version }, index) => version === index + 1)) {
+      return err({
+        kind: "migrationFailed",
+        detail: "Preparation migration history is not contiguous.",
+      });
+    }
     if (current.version >= 1) return ok(undefined);
     const apply = database.transaction(() => {
       database.exec(`
@@ -337,6 +346,21 @@ export const openPreparation = (
   }
   const pendingImports = new Map<string, PendingImport>();
   const preflights = new Map<string, PendingPreflight>();
+  const prunePending = (nowMs: number): void => {
+    for (const [token, pending] of pendingImports) {
+      if (pending.expiresAt < nowMs) pendingImports.delete(token);
+    }
+    for (const [token, pending] of preflights) {
+      if (pending.expiresAt < nowMs) preflights.delete(token);
+    }
+  };
+  const makeRoom = <Value>(values: Map<string, Value>, maximum: number): void => {
+    while (values.size >= maximum) {
+      const oldest = values.keys().next().value;
+      if (oldest === undefined) return;
+      values.delete(oldest);
+    }
+  };
   const batching = createPreparationBatching({
     provider: dependencies.provider,
     store: createSqliteCheckpointStore(database, dependencies.clock),
@@ -458,9 +482,11 @@ export const openPreparation = (
     inspectImport: async (input) => {
       const now = safeNow(dependencies.clock);
       if (!now.ok) return now;
+      prunePending(now.value.getTime());
       const token = dependencies.nextToken();
       const inspected = await dependencies.inspector.inspect(input, token, now.value);
       if (!inspected.ok) return inspected;
+      makeRoom(pendingImports, 8);
       pendingImports.set(token, {
         report: inspected.value.report,
         episodes: inspected.value.episodes,
@@ -587,6 +613,7 @@ export const openPreparation = (
     preflight: async (id, study) => {
       const now = safeNow(dependencies.clock);
       if (!now.ok) return now;
+      prunePending(now.value.getTime());
       const set = readSet(database, id);
       if (!set.ok) return set;
       let cues: readonly CueRow[];
@@ -661,6 +688,7 @@ export const openPreparation = (
           "Gafu requests store=false; the provider's retention policy still applies.",
         ],
       };
+      makeRoom(preflights, 8);
       preflights.set(token, { value, manifest, study, expiresAt });
       return ok(value);
     },
@@ -679,6 +707,10 @@ export const openPreparation = (
       if (currentSet.value.sourceRevision !== pending.value.sourceRevision) {
         return err({ kind: "stalePreflight" });
       }
+      // A preflight is a one-shot capability. Removing it before the first
+      // awaited provider call prevents concurrent reuse while a fresh
+      // preflight can still resume durable checkpoints after interruption.
+      preflights.delete(command.preflightToken);
       try {
         const existing = database
           .query("SELECT run_id FROM preparation_run WHERE run_id = ?")
@@ -742,19 +774,33 @@ export const openPreparation = (
           }
         : analyzed.failure;
       try {
-        database
-          .query(
-            `UPDATE preparation_run
-             SET state = ?, failure_json = ?, merged_json = ?, updated_at = ?
-             WHERE run_id = ?`,
-          )
-          .run(
-            finalState,
-            finalFailure === null ? null : JSON.stringify(finalFailure),
-            finalState === "complete" ? JSON.stringify(analyzed.merged) : null,
-            dependencies.clock().toISOString(),
-            pending.manifest.runId,
-          );
+        const finalize = database.transaction(() => {
+          if (!evidenceValidation.ok) {
+            // Invalid complete output is safe to charge but not safe to cache:
+            // make every affected batch requestable on the next preflight.
+            database
+              .query(
+                `UPDATE preparation_batch
+                 SET state = 'pending', request_key = NULL, response_json = NULL
+                 WHERE run_id = ?`,
+              )
+              .run(pending.manifest.runId);
+          }
+          database
+            .query(
+              `UPDATE preparation_run
+               SET state = ?, failure_json = ?, merged_json = ?, updated_at = ?
+               WHERE run_id = ?`,
+            )
+            .run(
+              finalState,
+              finalFailure === null ? null : JSON.stringify(finalFailure),
+              finalState === "complete" ? JSON.stringify(analyzed.merged) : null,
+              dependencies.clock().toISOString(),
+              pending.manifest.runId,
+            );
+        });
+        finalize.immediate();
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
       }

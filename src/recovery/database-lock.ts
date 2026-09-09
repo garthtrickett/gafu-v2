@@ -1,11 +1,16 @@
 import {
   closeSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { join } from "node:path";
 import { err, ok, type Result } from "../result.ts";
 
 type LockRecord = Readonly<{ pid: number; token: string }>;
@@ -40,67 +45,124 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
+const records = (
+  directory: string,
+): readonly Readonly<{ path: string; record: LockRecord | null }>[] =>
+  readdirSync(directory).map((name) => {
+    const path = join(directory, name);
+    return { path, record: readLock(path) };
+  });
+
+const prepareDirectory = (
+  path: string,
+): Result<void, "databaseInUse" | "lockFailed"> => {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+    return ok(undefined);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "EEXIST") return err("lockFailed");
+  }
+  try {
+    if (lstatSync(path).isDirectory()) return ok(undefined);
+  } catch {
+    return err("lockFailed");
+  }
+  // Upgrade the old single-file lock format. Replacing the stale file with a
+  // directory makes concurrent takeovers safe: unlink cannot remove a rival's
+  // newly-created directory.
+  const legacy = readLock(path);
+  if (legacy === null || processIsAlive(legacy.pid)) return err("databaseInUse");
+  try {
+    unlinkSync(path);
+    mkdirSync(path, { mode: 0o700 });
+    return ok(undefined);
+  } catch (cause) {
+    if (
+      (cause as NodeJS.ErrnoException).code === "EEXIST" &&
+      lstatSync(path).isDirectory()
+    ) {
+      return ok(undefined);
+    }
+    return err("lockFailed");
+  }
+};
+
 export const databaseLockIsActive = (databasePath: string): boolean => {
   const path = lockPath(databasePath);
   if (!existsSync(path)) return false;
-  const record = readLock(path);
-  // An unreadable lock can be a second process between its exclusive create and
-  // record write. Treat it as active rather than opening the database through
-  // that race. A genuinely corrupt lock must be removed deliberately.
-  return record === null || processIsAlive(record.pid);
+  try {
+    if (!lstatSync(path).isDirectory()) {
+      const record = readLock(path);
+      return record === null || processIsAlive(record.pid);
+    }
+    return records(path).some(
+      ({ record }) => record === null || processIsAlive(record.pid),
+    );
+  } catch {
+    return true;
+  }
 };
 
 export const acquireDatabaseLock = (
   databasePath: string,
 ): Result<DatabaseLock, "databaseInUse" | "lockFailed"> => {
   const path = lockPath(databasePath);
-  let descriptor: number | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      descriptor = openSync(path, "wx", 0o600);
-      break;
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
-        return err("lockFailed");
-      }
-      const existing = readLock(path);
-      if (existing === null || processIsAlive(existing.pid)) {
+  const prepared = prepareDirectory(path);
+  if (!prepared.ok) return prepared;
+  try {
+    for (const candidate of records(path)) {
+      if (candidate.record === null || processIsAlive(candidate.record.pid)) {
         return err("databaseInUse");
       }
-      try {
-        unlinkSync(path);
-      } catch {
-        return err("lockFailed");
-      }
+      unlinkSync(candidate.path);
     }
+  } catch {
+    return err("lockFailed");
   }
-  if (descriptor === null) return err("lockFailed");
+
   const token = crypto.randomUUID();
+  const candidatePath = join(path, `${token}.json`);
+  let descriptor: number | null = null;
   try {
+    descriptor = openSync(candidatePath, "wx", 0o600);
     writeFileSync(descriptor, JSON.stringify({ pid: process.pid, token }));
     closeSync(descriptor);
     descriptor = null;
+    // Simultaneous contenders create distinct files. Exactly one may observe
+    // itself alone; everyone observing a rival withdraws instead of guessing.
+    const candidates = records(path);
+    if (
+      candidates.length !== 1 ||
+      candidates[0]?.record?.token !== token ||
+      candidates[0]?.record?.pid !== process.pid
+    ) {
+      unlinkSync(candidatePath);
+      return err("databaseInUse");
+    }
   } catch {
     if (descriptor !== null) closeSync(descriptor);
     try {
-      unlinkSync(path);
+      if (existsSync(candidatePath)) unlinkSync(candidatePath);
     } catch {
-      // The original write failure remains authoritative.
+      // The acquisition failure remains authoritative.
     }
     return err("lockFailed");
   }
+
   let released = false;
   return ok({
     path,
     release: () => {
       if (released) return;
       released = true;
-      const current = readLock(path);
-      if (current?.token !== token) return;
+      const current = readLock(candidatePath);
+      if (current?.token !== token || current.pid !== process.pid) return;
       try {
-        unlinkSync(path);
+        unlinkSync(candidatePath);
+        rmdirSync(path);
       } catch {
-        // Process exit will leave an identifiable stale lock, never a false live lock.
+        // A surviving directory/candidate is conservative: it can never create
+        // a false unlocked state and dead owners are pruned next acquisition.
       }
     },
   });

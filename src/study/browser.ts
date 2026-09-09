@@ -328,6 +328,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
 
   const answer = (grade: AnswerGrade): void => {
+    if (model.busy) return;
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
     void run(async () => {
@@ -426,7 +427,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                               ? html`<div class="grades" aria-label="Recall grade">
                                   ${(["again", "hard", "good", "easy"] as const).map(
                                     (grade) =>
-                                      html`<button type="button" class="secondary" @click=${() => answer(grade)}>${grade}</button>`,
+                                      html`<button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(grade)}>${grade}</button>`,
                                   )}
                                 </div>`
                               : ""
