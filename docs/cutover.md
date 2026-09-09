@@ -180,6 +180,7 @@ the implementation may be complete but replacement is not:
 - [ ] A real multi-day prepare → study → watch → capture journey passed.
 - [ ] A resulting full V2 backup restored and reopened successfully.
 - [ ] Rollback to untouched V1 and the pre-restore safety-copy path were understood.
-- [ ] The repository licence, Kaishi source, sense authority, grammar envelope,
-      and paid-provider smoke gates were resolved or explicitly accepted as limits.
+- [ ] The repository licence, private Kaishi installation, sense authority,
+      grammar envelope, and paid-provider smoke gates were resolved or explicitly
+      accepted as limits.
 - [ ] The owner approved V1 maintenance-only status and `jp-player` archival.

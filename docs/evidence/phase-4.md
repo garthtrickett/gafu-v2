@@ -83,8 +83,8 @@ clean whitespace check.
 
 ## Known limitations and external gates
 
-1. Production Kaishi content remains unavailable pending an owner-approved
-   licensed source.
+1. The owner-approved private Kaishi import path is available; its content is
+   deliberately absent from the repository.
 2. Preparation sense IDs remain provider/learner claims rather than trusted
    dictionary attestation.
 3. Grammar discovery remains the declared 22-form envelope.

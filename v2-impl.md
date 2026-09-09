@@ -1,6 +1,6 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 6 implementation complete; owner cutover and external provider, Kaishi, sense, grammar, and licence gates pending · 2.0
+**Status:** Phase 6 implementation complete; private Kaishi path resolved; owner cutover plus provider, sense, grammar, and licence gates pending · 2.1
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
@@ -291,11 +291,12 @@ time-zone-safe admission allowance, preferences, baseline corrections, and
 backup. The integrated injected-clock journey and browser management journey
 pass through the same Study seam used by the application.
 
-Phase 1 has one explicit closure gate: the official Kaishi project does not
-publish an explicit content licence, so its 1.5k entries are not copied into
-this repository. The versioned production seed seam reports `unavailable`
-instead of silently treating an empty bank as Kaishi; synthetic conformance
-proves the seed behavior. See [`docs/evidence/phase-1.md`](docs/evidence/phase-1.md).
+The official Kaishi project does not publish an explicit content licence, so its
+1.5k entries are not copied into this repository. The owner approved a private,
+gitignored import path on 2026-09-09; it compiles the learner-owned compact pool
+into the production seed identity and leaves ambiguous entries unresolved. This
+clears the product baseline gate without redistributing third-party content. See
+[`docs/evidence/phase-1.md`](docs/evidence/phase-1.md).
 
 Phase 2 must preserve these facts:
 
@@ -363,8 +364,9 @@ answers. The full deterministic and browser gates pass.
 
 The paid provider smoke remains pending because this environment has no API
 key. The declared 22-form grammar envelope, lack of dictionary-grade sense
-attestation, production Kaishi source, and repository licence remain explicit
-gates or limitations. See [`docs/evidence/phase-2.md`](docs/evidence/phase-2.md).
+attestation, and repository licence remain explicit gates or limitations. The
+private Kaishi import path is now available without committing its content. See
+[`docs/evidence/phase-2.md`](docs/evidence/phase-2.md).
 
 Phase 3 must preserve these facts:
 
@@ -436,8 +438,9 @@ an accepted-but-lost batch without resubmission. The full local and browser
 gates pass.
 
 The paid provider smoke remains pending because this environment has no API
-key. IPADIC sense limits, the declared 22-form grammar envelope, production
-Kaishi source, and repository licence remain explicit gates or limitations. See
+key. IPADIC sense limits, the declared 22-form grammar envelope, and repository
+licence remain explicit gates or limitations. The private Kaishi import path is
+now available without committing its content. See
 [`docs/evidence/phase-3.md`](docs/evidence/phase-3.md).
 
 Phase 4 must preserve these facts:

@@ -1,8 +1,18 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, extname, join, normalize } from "node:path";
+import {
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from "node:path";
 import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
 import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
 import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
+import { createPrivateAccess } from "../deployment/private-access.ts";
 import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
 import type {
   LearningMaterial,
@@ -484,7 +494,35 @@ const staticResponse = async (request: Request): Promise<Response> => {
   });
 };
 
-const databasePath = process.env["GAFU_DATABASE_PATH"] ?? "data/gafu-v2.sqlite";
+const publicDeployment = process.env["GAFU_PUBLIC_DEPLOYMENT"] === "1";
+const configuredDatabasePath = process.env["GAFU_DATABASE_PATH"];
+const databasePath = configuredDatabasePath ?? "data/gafu-v2.sqlite";
+const volumeMountPath = process.env["RAILWAY_VOLUME_MOUNT_PATH"];
+const insideVolume = (path: string): boolean => {
+  if (volumeMountPath === undefined || !isAbsolute(path)) return false;
+  const relation = relative(resolve(volumeMountPath), resolve(path));
+  return relation !== "" && !relation.startsWith("..") && !isAbsolute(relation);
+};
+if (
+  publicDeployment &&
+  (configuredDatabasePath === undefined || !insideVolume(configuredDatabasePath))
+) {
+  throw new Error(
+    "Public deployment requires GAFU_DATABASE_PATH inside the attached Railway volume.",
+  );
+}
+const privateAccess = (() => {
+  if (!publicDeployment) return null;
+  const created = createPrivateAccess({
+    password: process.env["GAFU_ACCESS_PASSWORD"] ?? "",
+    clock: () => new Date(),
+    nextToken: () => randomBytes(32).toString("base64url"),
+  });
+  if (!created.ok) {
+    throw new Error(`Private deployment access failed: ${created.error.detail}`);
+  }
+  return created.value;
+})();
 if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
 const databaseLock =
   databasePath === ":memory:" ? null : acquireDatabaseLock(databasePath);
@@ -502,6 +540,7 @@ const keyCustody = createProviderKeyCustody(
   fakeAi
     ? { verify: async () => ok(undefined) }
     : createOpenAiKeyVerifier({ timeoutMs: 10_000, model: openAiModel }),
+  process.env["OPENAI_API_KEY"] ?? null,
 );
 const materialProvider = fakeAi
   ? createDeterministicMaterialProvider()
@@ -516,6 +555,11 @@ const analyzer = createKuromojiAnalyzer(() =>
 );
 const configuredKaishiPath = process.env["GAFU_KAISHI_SEED_PATH"];
 const kaishiPath = configuredKaishiPath ?? DEFAULT_KAISHI_SEED_PATH;
+if (publicDeployment && !insideVolume(kaishiPath)) {
+  throw new Error(
+    "Public deployment requires GAFU_KAISHI_SEED_PATH inside the attached Railway volume.",
+  );
+}
 const knownWordSeed = (() => {
   if (kaishiPath === "") return unavailableKaishiSeed;
   if (!existsSync(kaishiPath)) {
@@ -600,12 +644,29 @@ if (!openedPreparation.ok) {
   throw new Error(`Preparation failed to open: ${openedPreparation.error.kind}`);
 }
 
-const port = Number(process.env["GAFU_SERVER_PORT"] ?? 42070);
+const port = Number(
+  publicDeployment
+    ? (process.env["PORT"] ?? process.env["GAFU_SERVER_PORT"] ?? 42070)
+    : (process.env["GAFU_SERVER_PORT"] ?? 42070),
+);
+if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+  throw new Error("Gafu server port is invalid.");
+}
 const server = Bun.serve({
-  hostname: "127.0.0.1",
+  hostname: publicDeployment ? "0.0.0.0" : "127.0.0.1",
   port,
   fetch: async (request) => {
-    if (!new URL(request.url).pathname.startsWith("/api/")) {
+    const path = new URL(request.url).pathname;
+    if (path === "/healthz") {
+      return request.method === "GET" || request.method === "HEAD"
+        ? Response.json({ status: "ok" })
+        : new Response(null, { status: 405 });
+    }
+    if (privateAccess !== null) {
+      const access = await privateAccess.intercept(request);
+      if (access.kind === "respond") return access.response;
+    }
+    if (!path.startsWith("/api/")) {
       return staticResponse(request);
     }
     if (!authorizeLocalMutation(request).ok) {

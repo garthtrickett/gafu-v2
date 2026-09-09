@@ -80,8 +80,9 @@ and a clean whitespace check.
    and the local sense label therefore require learner confirmation.
 3. Watch captures Vocabulary Cards only; Grammar Card capture and passive
    encounter credit remain out of scope.
-4. The production Kaishi source, paid-provider smoke, broader grammar envelope,
-   and repository licence remain external gates inherited from earlier phases.
+4. Paid-provider smoke, the broader grammar envelope, and repository licence
+   remain external gates inherited from earlier phases. The private Kaishi path
+   was resolved after this phase without committing its content.
 
 ## Phase 6 handoff
 

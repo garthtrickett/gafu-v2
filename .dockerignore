@@ -1,0 +1,10 @@
+.git
+.github
+data
+dist
+node_modules
+playwright-report
+test-results
+*.sqlite
+*.sqlite-*
+v1-*.json

@@ -7,6 +7,17 @@ import {
 } from "./provider-key-custody.ts";
 
 describe("server-side provider key custody spike", () => {
+  test("may start from a server-held deployment secret without exposing it", () => {
+    const custody = createProviderKeyCustody(
+      { verify: async () => ok(undefined) },
+      "  sk-deployed  ",
+    );
+    expect(custody.isConfigured()).toBe(true);
+    expect(custody.readForServerAdapter()).toBe("sk-deployed");
+    custody.remove();
+    expect(custody.isConfigured()).toBe(false);
+  });
+
   test("enters, verifies, replaces, and removes a key without exposing it in status", async () => {
     const observed: string[] = [];
     const custody = createProviderKeyCustody({
