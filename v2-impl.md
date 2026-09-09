@@ -1,6 +1,9 @@
 # Gafu V2 Implementation Plan
 
-**Status:** Phase 6 implementation complete; private Kaishi path resolved; owner cutover plus provider, sense, grammar, and licence gates pending · 2.1
+**Status:** Phase 6 implementation complete; private Kaishi path resolved; V1
+grammar inventory fully detectable (296/296, see
+`docs/evidence/grammar-envelope-v1.md`); owner cutover plus provider, sense,
+licence, alias-unification, and onboarding gates pending · 2.1
 **Product source:** `V2.md`
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08

@@ -3,7 +3,7 @@ import { holdoutFixtures } from "../../tests/fixtures/japanese/corpus.ts";
 import { declaredGrammarDetector, declaredGrammarForms } from "./declared-grammar.ts";
 
 test("the declared detector covers every frozen grammar construction", () => {
-  expect(new Set(declaredGrammarForms).size).toBe(22);
+  expect(new Set(declaredGrammarForms).size).toBe(315);
   for (const fixture of holdoutFixtures) {
     const observed = declaredGrammarDetector
       .detect(fixture.expectedNormalized)
