@@ -1,7 +1,7 @@
 # Phase 1 evidence — Card and SRS core
 
-**Result:** Implementation complete; production Kaishi data is an explicit
-closure gate.
+**Result:** Implementation complete; the private Kaishi path was resolved by
+owner approval on 2026-09-09 without redistributing its content.
 **Branch:** `codex/phase1-card-srs-core`
 **Runtime:** Bun 1.3.2
 **Date:** 2026-09-08
@@ -126,6 +126,12 @@ seed and enable/disable correction path pass against a synthetic manifest.
 Closure requires either written permission/a redistributable Kaishi word
 manifest or an owner-approved import path that does not copy third-party content
 into Gafu. No Kaishi sentence, audio, image, or deck payload is committed.
+
+The owner approved that private import path on 2026-09-09. PR #19 added a
+validated compiler for the learner-owned compact pool and automatic loading from
+a gitignored manifest; it did not add Kaishi content to the repository. The
+production baseline gate is therefore resolved for this private deployment,
+while public redistribution remains prohibited absent a content licence.
 
 Other deliberate limitations:
 

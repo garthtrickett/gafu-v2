@@ -32,8 +32,10 @@ export type KeyVerificationFetch = (
 
 export const createProviderKeyCustody = (
   verifier: ProviderKeyVerifier,
+  initialCandidate: string | null = null,
 ): ProviderKeyCustody => {
-  let apiKey: string | null = null;
+  const initialKey = initialCandidate?.trim() ?? "";
+  let apiKey: string | null = initialKey === "" ? null : initialKey;
   let revision = 0;
   return {
     replace: async (candidate, signal) => {

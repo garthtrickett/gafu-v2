@@ -61,6 +61,11 @@ bun run build
 bun run start
 ```
 
+For the private Railway deployment, use the parallel-service and persistent
+volume runbook in [`docs/railway-deployment.md`](docs/railway-deployment.md).
+The public server refuses to start without its private-access password and
+volume-backed database/Kaishi paths.
+
 ## Migration and recovery
 
 The one-way V1 bridge fetches through V1's authenticated API; it does not

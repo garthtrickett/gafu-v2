@@ -83,5 +83,6 @@ the rollback product and neither legacy repository should be archived until the
 owner checklist in [`../cutover.md`](../cutover.md) passes.
 
 Inherited external gates also remain open: repository licence selection,
-official Kaishi data availability, dictionary-grade sense authority, broader
-grammar validation, and the paid-provider smoke run.
+dictionary-grade sense authority, broader grammar validation, and the
+paid-provider smoke run. The owner-approved private Kaishi importer resolved the
+deployment baseline on 2026-09-09 without redistributing the source content.
