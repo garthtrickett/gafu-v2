@@ -35,6 +35,25 @@ Run the local Gafu server and Vite client with `bun run dev`, then open
 be backed up from the Study screen. Study links to Prepare and Watch; the Phase
 0 diagnostic remains available from the link in the app.
 
+## Private Kaishi baseline
+
+Kaishi deck content is not redistributed by this repository. If you have an
+owner-approved compact Kaishi JSON string array, compile it locally into the
+gitignored Known Word Bank manifest:
+
+```bash
+bun run kaishi:install -- \
+  --source ../gafu/src/lib/client/stores/kaishiPool.json
+```
+
+The command refuses to overwrite an existing manifest. It uses Gafu's Japanese
+analyzer to convert unambiguous single-token entries into the same normalized
+lemma, reading, and part-of-speech identities used during preparation. Duplicate,
+transparent, and multi-token deck rows are reported rather than guessed. Restart
+Gafu after installation; it automatically reads
+`data/kaishi-1.5k.local.json`. Set `GAFU_KAISHI_SEED_PATH` to use a different
+private manifest, or to an empty value to disable local seed loading.
+
 Build the browser and serve the production-style local app with:
 
 ```bash
