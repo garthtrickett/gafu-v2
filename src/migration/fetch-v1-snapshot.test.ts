@@ -34,6 +34,24 @@ describe("V1 Snapshot fetch", () => {
     expect(parseV1Snapshot(result.value)).toMatchObject({ ok: true });
   });
 
+  test("accepts a V1 full pull that omits an unchanged user preference", async () => {
+    const result = await fetchV1Snapshot("https://example.com", "private", {
+      fetch: async () =>
+        Response.json({
+          knowledgePoints: [],
+          grammarPoints: [],
+          srsUpdates: [],
+        }),
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.kind);
+    const decoded = JSON.parse(new TextDecoder().decode(result.value));
+    expect(decoded.sync.userPreference).toBeNull();
+    expect(parseV1Snapshot(result.value)).toMatchObject({ ok: true });
+  });
+
   test("rejects unsafe origins and authentication failures", async () => {
     const dependencies = {
       clock: () => new Date("2026-09-08T10:00:00.000Z"),

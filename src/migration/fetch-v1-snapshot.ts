@@ -120,7 +120,11 @@ export const fetchV1Snapshot = async (
     !Array.isArray(sync["knowledgePoints"]) ||
     !Array.isArray(sync["grammarPoints"]) ||
     !Array.isArray(sync["srsUpdates"]) ||
-    !(sync["userPreference"] === null || record(sync["userPreference"]))
+    !(
+      sync["userPreference"] === undefined ||
+      sync["userPreference"] === null ||
+      record(sync["userPreference"])
+    )
   ) {
     return err({
       kind: "remoteInvalid",
@@ -136,12 +140,18 @@ export const fetchV1Snapshot = async (
         knowledgePoints: sync["knowledgePoints"],
         grammarPoints: sync["grammarPoints"],
         srsUpdates: sync["srsUpdates"],
-        userPreference: sync["userPreference"],
+        userPreference: sync["userPreference"] ?? null,
       },
     }),
   );
   const parsed = parseV1Snapshot(bytes);
   return parsed.ok
     ? ok(bytes)
-    : err({ kind: "remoteInvalid", detail: parsed.error.kind });
+    : err({
+        kind: "remoteInvalid",
+        detail:
+          parsed.error.kind === "snapshotInvalid"
+            ? parsed.error.detail
+            : parsed.error.kind,
+      });
 };
