@@ -53,6 +53,55 @@ describe("V1 migration", () => {
     expect(existsSync(context.destination)).toBe(false);
   });
 
+  test("maps an explicitly unintroduced legacy grammar point as staged", () => {
+    const context = setup();
+    const snapshot = JSON.parse(new TextDecoder().decode(v1Snapshot())) as {
+      sync: {
+        knowledgePoints: Record<string, unknown>[];
+        grammarPoints: Record<string, unknown>[];
+        srsUpdates: Record<string, unknown>[];
+      };
+    };
+    snapshot.sync.knowledgePoints = [];
+    snapshot.sync.grammarPoints = [
+      { id: "legacy-new", formal_name: "〜ても", base_meaning: "even if" },
+    ];
+    snapshot.sync.srsUpdates = [
+      {
+        grammarPointId: "legacy-new",
+        repetitions: 0,
+        intervalDays: 0,
+        nextReview: null,
+        difficulty: null,
+        stability: 0,
+        lastReviewedAt: null,
+        participationStatus: "active",
+        learningState: "unintroduced",
+        introducedAt: null,
+      },
+    ];
+
+    expect(
+      context.migration.inspect(
+        new TextEncoder().encode(JSON.stringify(snapshot)),
+        context.destination,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        counts: { input: 1, mapped: 1, quarantined: 0 },
+        items: [
+          {
+            sourceId: "legacy-new",
+            kind: "grammar",
+            desiredState: "staged",
+            reason: "newCard",
+          },
+        ],
+      },
+    });
+  });
+
   test("rejects an invalid apply before creating or migrating a destination", () => {
     const context = setup();
     expect(

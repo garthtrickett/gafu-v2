@@ -52,6 +52,53 @@ describe("V1 Snapshot fetch", () => {
     expect(parseV1Snapshot(result.value)).toMatchObject({ ok: true });
   });
 
+  test("adapts the grammar-only V1 contract into complete unintroduced progress", async () => {
+    const result = await fetchV1Snapshot("https://example.com", "private", {
+      fetch: async () =>
+        Response.json({
+          grammarPoints: [
+            { id: "grammar-new", formal_name: "〜ても", base_meaning: "even if" },
+            { id: "grammar-known", formal_name: "〜ながら", base_meaning: "while" },
+          ],
+          srsUpdates: [
+            {
+              grammarPointId: "grammar-known",
+              repetitions: 8,
+              intervalDays: 30,
+              nextReview: "2026-10-01T00:00:00.000Z",
+              difficulty: 4,
+              stability: 21,
+              lastReviewedAt: "2026-09-01T00:00:00.000Z",
+            },
+          ],
+          userPreference: null,
+        }),
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.kind);
+    const parsed = parseV1Snapshot(result.value);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        knowledgePoints: { length: 2 },
+        progress: [
+          {
+            knowledgePointId: "grammar-known",
+            learningState: "stable",
+            participationStatus: "active",
+          },
+          {
+            knowledgePointId: "grammar-new",
+            learningState: "unintroduced",
+            repetitions: 0,
+          },
+        ],
+      },
+    });
+  });
+
   test("rejects unsafe origins and authentication failures", async () => {
     const dependencies = {
       clock: () => new Date("2026-09-08T10:00:00.000Z"),

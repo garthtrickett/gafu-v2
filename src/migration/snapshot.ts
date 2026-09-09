@@ -57,6 +57,7 @@ const progress = (value: unknown): V1Progress => {
     knowledgePointId: text(
       item["knowledgePointId"] ??
         item["knowledge_point_id"] ??
+        item["grammarPointId"] ??
         item["grammar_point_id"],
     ),
     repetitions: number(item["repetitions"]),
