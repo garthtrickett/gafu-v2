@@ -1,0 +1,21 @@
+name: Railway Production Inspect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - name: Install pinned Railway CLI
+        run: npm install --global @railway/cli@5.41.2
+      - name: Confirm token scope
+        run: railway status --json
