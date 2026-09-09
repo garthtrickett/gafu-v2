@@ -19,6 +19,12 @@ type JsonRecord = Record<string, unknown>;
 const record = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const safeShape = (value: unknown): string => {
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+};
+
 const validatedOrigin = (value: string): Result<URL, FetchV1SnapshotFailure> => {
   try {
     const origin = new URL(value);
@@ -128,7 +134,13 @@ export const fetchV1Snapshot = async (
   ) {
     return err({
       kind: "remoteInvalid",
-      detail: "V1 sync response is missing required collections.",
+      detail: [
+        "V1 sync response has invalid collection fields:",
+        `knowledgePoints=${safeShape(sync["knowledgePoints"])},`,
+        `grammarPoints=${safeShape(sync["grammarPoints"])},`,
+        `srsUpdates=${safeShape(sync["srsUpdates"])},`,
+        `userPreference=${safeShape(sync["userPreference"])}.`,
+      ].join(" "),
     });
   }
   const bytes = new TextEncoder().encode(

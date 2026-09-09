@@ -95,9 +95,13 @@ describe("V1 Snapshot fetch", () => {
       fetch: async () => Response.json({ userPreference: null }),
       clock: () => new Date("2026-09-08T10:00:00.000Z"),
     });
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       ok: false,
-      error: { kind: "remoteInvalid" },
+      error: {
+        kind: "remoteInvalid",
+        detail:
+          "V1 sync response has invalid collection fields: knowledgePoints=undefined, grammarPoints=undefined, srsUpdates=undefined, userPreference=null.",
+      },
     });
   });
 
