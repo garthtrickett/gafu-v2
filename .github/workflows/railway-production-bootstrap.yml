@@ -16,11 +16,12 @@ jobs:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       EXPECTED_PROJECT_ID: 480aadb5-09cc-4cdc-a463-cfd42ee888e4
       EXPECTED_ENVIRONMENT_ID: 99c4c48f-bd71-401e-9390-4e2134fa2660
+      EXPECTED_V2_SERVICE_ID: 8936ec29-1110-4fd6-beec-6afb7e3c68e5
     steps:
       - name: Install pinned Railway CLI
         run: npm install --global @railway/cli@5.41.2
 
-      - name: Guard the exact target and absence of V2
+      - name: Guard the exact empty V2 service
         run: |
           set -euo pipefail
           status="$(railway status --json)"
@@ -31,20 +32,44 @@ jobs:
           ' <<<"$status" >/dev/null
           jq -e 'any(.services.edges[]; .node.name == "gafu")' <<<"$status" >/dev/null
 
-          if jq -e 'any(.services.edges[]; .node.name == "gafu-v2")' <<<"$status" >/dev/null; then
-            echo "Refusing to create a duplicate gafu-v2 service." >&2
-            exit 1
-          fi
+          jq -e --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+            [.services.edges[] | select(.node.name == "gafu-v2")] as $services
+            | ($services | length) == 1
+              and $services[0].node.id == $service_id
+          ' <<<"$status" >/dev/null
 
-      - name: Create the stopped V2 storage boundary
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+            [
+              .environments.edges[].node
+              | select(.id == $environment_id)
+              | .serviceInstances.edges[].node
+              | select(.serviceId == $service_id)
+            ] as $instances
+            | ($instances | length) == 1
+              and $instances[0].source.repo == null
+              and $instances[0].source.image == null
+              and $instances[0].latestDeployment == null
+              and ($instances[0].activeDeployments | length) == 0
+          ' <<<"$status" >/dev/null
+
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+            [
+              .environments.edges[].node
+              | select(.id == $environment_id)
+              | .volumeInstances.edges[].node
+              | select(.serviceId == $service_id)
+            ]
+            | length == 0
+          ' <<<"$status" >/dev/null
+
+      - name: Complete the stopped V2 storage boundary
         run: |
           set -euo pipefail
           railway link \
             --project "$EXPECTED_PROJECT_ID" \
             --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
             --json
-          railway add --service gafu-v2 --json
-          railway service link gafu-v2
           railway volume add --mount-path /data --json
           railway variable set \
             GAFU_PUBLIC_DEPLOYMENT=1 \
