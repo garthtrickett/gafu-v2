@@ -73,6 +73,24 @@ inspection.
 
 ## 3. Seed the stopped volume
 
+The repository's guarded `Railway Production Cutover` workflow automates this
+section for the provisioned owner deployment. It first reproduces the accepted
+V1 reconciliation, builds and verifies both private files on an ephemeral
+runner, and only then changes Railway. Because Railway volume-file access needs
+a running deployment, the workflow briefly enables `GAFU_BOOTSTRAP_ONLY=1`.
+That mode serves `GET /healthz` but returns `503` for every document and API;
+it never opens the database or seed. The workflow uploads exactly two files,
+sets bootstrap mode back to `0`, waits for a healthy real deployment, creates a
+separate V2 domain, and verifies private login and counts. V1 is read-only
+throughout and retains its existing domain.
+
+The workflow requires the `RAILWAY_TOKEN`, `GAFU_V1_BEARER_TOKEN`,
+`GAFU_ACCESS_PASSWORD`, and `OPENAI_API_KEY` secrets in the GitHub `production`
+environment. Its confirmation text is `STAGE_GAFU_V2_WITH_PRIVATE_DATA`. The V1
+token is used only to read a fresh snapshot; private snapshots, reports, the
+SQLite database, and the Kaishi manifest remain in the ephemeral runner and are
+never uploaded as GitHub artifacts.
+
 Before the first successful V2 start, stop its active deployment or leave the
 initial failed deployment stopped. Target the exact Railway project,
 environment, service, and volume; do not rely on an unrelated CLI link.
