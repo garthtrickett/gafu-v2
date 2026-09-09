@@ -91,6 +91,42 @@ describe("Phase 2 generated study lifecycle", () => {
     if (!created.ok) throw new Error(created.error.kind);
     const queue = app.study.studyQueue();
     if (!queue.ok || queue.value.due[0] === undefined) throw new Error("missing queue");
+    // The deterministic provider's sentences use background particles the
+    // learner is expected to know. Declare them after the queue is computed so
+    // due[0] stays the 鳥 card while knowledge reflects a real learner.
+    for (const canonicalForm of [
+      "か",
+      "な",
+      "かな",
+      "で",
+      "も",
+      "だ",
+      "よ",
+      "ね",
+      "〜て",
+      "って",
+      "だけ",
+      "でも",
+      "〜ても・〜でも",
+      "だって / んだって",
+    ]) {
+      const background = app.study.createCard({
+        type: "grammar",
+        content: {
+          canonicalForm,
+          meaning: `background ${canonicalForm}`,
+          formation: canonicalForm,
+          usageNotes: "",
+        },
+      });
+      if (!background.ok || background.value.outcome !== "created")
+        throw new Error(`background ${canonicalForm} setup`);
+      const known = app.study.setCardState({
+        cardId: background.value.card.id,
+        action: "markKnown",
+      });
+      if (!known.ok) throw new Error(`background ${canonicalForm} known`);
+    }
     const knowledge = app.study.knowledgeSnapshot();
     if (!knowledge.ok) throw new Error(knowledge.error.kind);
 
@@ -217,6 +253,38 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!grammar.ok) throw new Error(grammar.error.kind);
+    // The deterministic かもしれない sentence ends in かな, contains も,
+    // ない, and もし, and also fires the verbatim twin かもしれない
+    // alongside the 〜-prefixed target. Alias unification (knowing either
+    // twin satisfies both) is recorded as follow-up; until then both must
+    // be known.
+    for (const canonicalForm of [
+      "か",
+      "な",
+      "かな",
+      "も",
+      "もし",
+      "かもしれない",
+      "〜ない (る-Verb Negative)",
+      "〜ない (う-Verb Negative)",
+    ]) {
+      const background = app.study.createCard({
+        type: "grammar",
+        content: {
+          canonicalForm,
+          meaning: `background ${canonicalForm}`,
+          formation: canonicalForm,
+          usageNotes: "",
+        },
+      });
+      if (!background.ok || background.value.outcome !== "created")
+        throw new Error(`background ${canonicalForm} setup`);
+      const backgroundKnown = app.study.setCardState({
+        cardId: background.value.card.id,
+        action: "markKnown",
+      });
+      if (!backgroundKnown.ok) throw new Error(`background ${canonicalForm} known`);
+    }
     const queue = app.study.studyQueue();
     const knowledge = app.study.knowledgeSnapshot();
     if (!queue.ok || queue.value.due[0] === undefined || !knowledge.ok)

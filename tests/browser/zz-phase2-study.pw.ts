@@ -25,6 +25,37 @@ test("configures a key and teaches before the first generated review", async ({
   await vocabulary.getByLabel("Usage notes").fill("A general word for a bird.");
   await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
 
+  // The deterministic teach/review sentences use background particles the
+  // learner is expected to know. A real learner marks them known first; the
+  // journey does the same through the public card bank. 鳥 stays due first
+  // because it was created before these background cards.
+  const grammar = page.getByTestId("grammar-form");
+  for (const form of [
+    "か",
+    "な",
+    "かな",
+    "で",
+    "も",
+    "だ",
+    "よ",
+    "ね",
+    "〜て",
+    "って",
+    "だけ",
+    "でも",
+  ]) {
+    await grammar.getByLabel("Canonical form").fill(form);
+    await grammar.getByLabel("Meaning or function").fill(`background ${form}`);
+    await grammar.getByLabel("Formation").fill(form);
+    await grammar.getByRole("button", { name: "Create Grammar Card" }).click();
+    await expect(page.getByRole("status")).toContainText("Grammar Card created");
+    // :text-is matches the card title exactly; substring hasText would confuse
+    // か with かな, だ with だけ, and も with でも.
+    const background = page.locator(`.bank-card:has(h3:text-is("${form}"))`);
+    await background.getByRole("button", { name: "Mark known" }).click();
+    await expect(background).toContainText("support-ready");
+  }
+
   const review = page.getByTestId("review-panel");
   await review.getByRole("button", { name: "Start next Card" }).click();
   await expect(review.getByText("teach", { exact: true })).toBeVisible({

@@ -37,7 +37,15 @@ const card: CardSummary = {
 
 const knowledge: KnowledgeSnapshot = {
   vocabulary: [],
-  grammar: [],
+  // The deterministic teach fixture ("鳥かな。") is only valid for a learner
+  // who already knows か, な, and かな. Background knowledge is declared
+  // explicitly so the growing detector cannot silently widen or narrow these
+  // boundaries.
+  grammar: [
+    { cardId: asCardId("background-ka"), canonicalForm: "か" },
+    { cardId: asCardId("background-na"), canonicalForm: "な" },
+    { cardId: asCardId("background-kana"), canonicalForm: "かな" },
+  ],
   baseline: {
     id: "none",
     version: null,
@@ -110,6 +118,12 @@ describe("generated material validation boundary", () => {
         card,
         knowledge: {
           ...knowledge,
+          grammar: [
+            { cardId: asCardId("background-ka"), canonicalForm: "か" },
+            { cardId: asCardId("background-na"), canonicalForm: "な" },
+            { cardId: asCardId("background-kana"), canonicalForm: "かな" },
+            { cardId: asCardId("background-to"), canonicalForm: "と" },
+          ],
           vocabulary: [
             {
               key: "card:cat",

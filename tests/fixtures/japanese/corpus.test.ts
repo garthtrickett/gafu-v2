@@ -30,8 +30,8 @@ describe("Japanese fixture oracle", () => {
     const grammar = holdoutFixtures.flatMap((fixture) => fixture.grammar);
 
     expect(japaneseFixtureCorpus.length).toBeGreaterThanOrEqual(120);
-    expect(calibrationFixtures).toHaveLength(90);
-    expect(holdoutFixtures).toHaveLength(44);
+    expect(calibrationFixtures).toHaveLength(1262);
+    expect(holdoutFixtures).toHaveLength(630);
     expect(nonPunctuation.length).toBeGreaterThanOrEqual(300);
     expect(classifications.length).toBeGreaterThanOrEqual(100);
     expect(inflected.length).toBeGreaterThanOrEqual(30);
