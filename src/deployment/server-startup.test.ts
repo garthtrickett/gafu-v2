@@ -66,7 +66,7 @@ describe("public deployment composition", () => {
     delete environment["GAFU_DATABASE_PATH"];
     delete environment["GAFU_KAISHI_SEED_PATH"];
     delete environment["RAILWAY_VOLUME_MOUNT_PATH"];
-    const child = Bun.spawn([process.execPath, "run", "src/study/server.ts"], {
+    const child = Bun.spawn([process.execPath, "run", "scripts/start.ts"], {
       cwd: process.cwd(),
       env: environment,
       stdout: "pipe",
@@ -80,6 +80,48 @@ describe("public deployment composition", () => {
     );
   });
 
+  test("starts a data-blind bootstrap boundary before private files exist", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-bootstrap-"));
+    temporaryDirectories.push(directory);
+    const port = availablePort();
+    const child = Bun.spawn([process.execPath, "run", "scripts/start.ts"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        GAFU_PUBLIC_DEPLOYMENT: "1",
+        GAFU_BOOTSTRAP_ONLY: "1",
+        GAFU_ACCESS_PASSWORD: "a-secure-deployment-password",
+        GAFU_DATABASE_PATH: join(directory, "missing.sqlite"),
+        GAFU_KAISHI_SEED_PATH: join(directory, "missing-kaishi.json"),
+        PORT: String(port),
+        RAILWAY_VOLUME_MOUNT_PATH: directory,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    try {
+      const origin = `http://127.0.0.1:${port}`;
+      const deadline = Date.now() + 5_000;
+      let health: Response | null = null;
+      while (Date.now() < deadline && child.exitCode === null) {
+        try {
+          health = await fetch(`${origin}/healthz`);
+          break;
+        } catch {
+          await Bun.sleep(25);
+        }
+      }
+      expect(health?.status).toBe(200);
+      expect(await health?.json()).toEqual({ status: "bootstrap" });
+      expect((await fetch(`${origin}/`)).status).toBe(503);
+      expect((await fetch(`${origin}/api/study`)).status).toBe(503);
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+    }
+  });
+
   test("starts only with volume-backed data and protects the real Study route", async () => {
     const directory = mkdtempSync(join(tmpdir(), "gafu-v2-deployment-"));
     temporaryDirectories.push(directory);
@@ -89,7 +131,7 @@ describe("public deployment composition", () => {
     const databasePath = join(directory, "gafu.sqlite");
     writeFileSync(seedPath, JSON.stringify(seed.value.manifest));
     const port = availablePort();
-    const child = Bun.spawn([process.execPath, "run", "src/study/server.ts"], {
+    const child = Bun.spawn([process.execPath, "run", "scripts/start.ts"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

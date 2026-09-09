@@ -1,0 +1,459 @@
+name: Railway Production Cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type STAGE_GAFU_V2_WITH_PRIVATE_DATA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cutover:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'STAGE_GAFU_V2_WITH_PRIVATE_DATA'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      EXPECTED_PROJECT_ID: 480aadb5-09cc-4cdc-a463-cfd42ee888e4
+      EXPECTED_ENVIRONMENT_ID: 99c4c48f-bd71-401e-9390-4e2134fa2660
+      EXPECTED_V1_SERVICE_ID: 1d3e6245-5395-4fa1-97e6-f1e7883dac34
+      EXPECTED_V2_SERVICE_ID: 8936ec29-1110-4fd6-beec-6afb7e3c68e5
+      EXPECTED_V2_VOLUME_ID: 22cfeb13-64d2-44a9-bbae-5e8447a8d704
+      ACCEPTED_RECONCILIATION_SHA256: b1e6a5ce110ed3c6f9819e36ddbc333ba93534d09a35d7771784f9bc0fb5204e
+      IMPORT_KEY: v1-production-cutover-2026-09-09
+    steps:
+      - name: Check out V2
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out the pinned private-baseline source
+        uses: actions/checkout@v4
+        with:
+          repository: garthtrickett/gafu
+          ref: def80a2ffebf47c71c20454933e5bf593814facc
+          path: v1-source
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.2
+
+      - name: Install pinned tools
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          npm install --global @railway/cli@5.41.2
+
+      - name: Validate the private inputs without printing them
+        env:
+          GAFU_V1_BEARER_TOKEN: ${{ secrets.GAFU_V1_BEARER_TOKEN }}
+          GAFU_ACCESS_PASSWORD: ${{ secrets.GAFU_ACCESS_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${RAILWAY_TOKEN:-}"
+          test -n "${GAFU_V1_BEARER_TOKEN:-}"
+          test -n "${OPENAI_API_KEY:-}"
+          test "$(printf %s "$GAFU_ACCESS_PASSWORD" | wc -c)" -ge 16
+          test "$(printf %s "$GAFU_ACCESS_PASSWORD" | wc -c)" -le 512
+
+      - name: Reconcile a fresh read-only V1 snapshot
+        env:
+          GAFU_V1_BEARER_TOKEN: ${{ secrets.GAFU_V1_BEARER_TOKEN }}
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/v1-production-snapshot.json"
+          report="$RUNNER_TEMP/v1-production-dry-run.json"
+          bun run migration:v1:fetch -- \
+            --origin https://gafu-production.up.railway.app \
+            --output "$snapshot"
+          bun run migration:v1 -- \
+            --source "$snapshot" \
+            --database "$RUNNER_TEMP/private-volume/gafu-v2.sqlite" \
+            --dry-run \
+            --report "$report"
+
+          fingerprint="$({
+            jq -Sc '{
+              contractVersion,
+              counts,
+              preferences: {
+                newCardsPerDay: .preferences.newCardsPerDay,
+                timeZone: .preferences.timeZone,
+                reason: .preferences.reason
+              },
+              items: (
+                .items
+                | map({
+                    sourceId,
+                    kind,
+                    disposition,
+                    reason,
+                    desiredState,
+                    schedule,
+                    recordDigest
+                  })
+                | sort_by(.sourceId)
+              )
+            }' "$report"
+          } | sha256sum | cut -d ' ' -f 1)"
+          if [ "$fingerprint" != "$ACCEPTED_RECONCILIATION_SHA256" ]; then
+            echo "::error::Fresh V1 reconciliation differs from the owner-accepted report. No Railway state was changed."
+            jq '{
+              counts,
+              preferences: {
+                newCardsPerDay: .preferences.newCardsPerDay,
+                timeZone: .preferences.timeZone,
+                reason: .preferences.reason
+              },
+              reasons: (.items | group_by(.reason) | map({reason: .[0].reason, count: length}))
+            }' "$report"
+            echo "Observed reconciliation fingerprint: $fingerprint"
+            exit 1
+          fi
+          jq -e '
+            .counts == {input: 299, mapped: 280, merged: 0, skipped: 0, quarantined: 19}
+            and .preferences.newCardsPerDay == 5
+            and .preferences.timeZone == "Australia/Sydney"
+          ' "$report" >/dev/null
+          echo "Fresh V1 reconciliation matches the accepted 299-row projection."
+
+      - name: Build and verify the private V2 data files
+        env:
+          GAFU_ACCESS_PASSWORD: ${{ secrets.GAFU_ACCESS_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          private_root="$RUNNER_TEMP/private-volume"
+          database="$private_root/gafu-v2.sqlite"
+          seed="$private_root/kaishi-1.5k.local.json"
+          snapshot="$RUNNER_TEMP/v1-production-snapshot.json"
+          applied_report="$RUNNER_TEMP/v1-production-applied.json"
+          known_receipt="$RUNNER_TEMP/v1-production-known.json"
+          mkdir -m 700 -p "$private_root"
+
+          test "$(sha256sum v1-source/src/lib/client/stores/kaishiPool.json | cut -d ' ' -f 1)" = \
+            "51f02ad7a1785653313dc74a06ad55a3b0b7b77a2394ab6fa21a8d7c7efbab21"
+          bun run kaishi:install -- \
+            --source v1-source/src/lib/client/stores/kaishiPool.json \
+            --output "$seed"
+          jq -e '
+            .schema == "gafu-known-word-seed-v1"
+            and .id == "kaishi-1.5k"
+            and .version == "sha256:82799c36282b21a9828e62756ebb36b365d1d64a346f8fba9edf0f0597332d25"
+            and .sourceEntryCount == 1500
+            and (.entries | length) == 1437
+          ' "$seed" >/dev/null
+
+          bun run migration:v1 -- \
+            --source "$snapshot" \
+            --database "$database" \
+            --apply \
+            --import-key "$IMPORT_KEY" \
+            --report "$applied_report"
+          bun run migration:v1:mark-known -- \
+            --database "$database" \
+            --import-key "$IMPORT_KEY" \
+            --confirm-imported-known > "$known_receipt"
+          jq -e '
+            .sourceItems == 299
+            and .uniqueCards == 299
+            and .knownCardsAfter == 299
+            and .statesBefore == {staged: 0, active: 1, known: 279, suspended: 19}
+            and .schedulesPreserved >= 0
+            and .reviewsPreserved == 0
+            and .quarantinesPreserved == 19
+          ' "$known_receipt" >/dev/null
+
+          server_log="$RUNNER_TEMP/local-production-startup.log"
+          GAFU_PUBLIC_DEPLOYMENT=1 \
+          GAFU_BOOTSTRAP_ONLY=0 \
+          GAFU_DATABASE_PATH="$database" \
+          GAFU_KAISHI_SEED_PATH="$seed" \
+          GAFU_OPENAI_MODEL=gpt-5.6-luna \
+          RAILWAY_VOLUME_MOUNT_PATH="$private_root" \
+          PORT=42070 \
+            bun run start > "$server_log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill -TERM "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          healthy=0
+          for _ in $(seq 1 120); do
+            if curl --silent --fail --max-time 2 http://127.0.0.1:42070/healthz >/dev/null; then
+              healthy=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$healthy" != 1 ]; then
+            sed -n '1,120p' "$server_log"
+            exit 1
+          fi
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:42070/)" = 303
+          GAFU_VERIFY_ORIGIN=http://127.0.0.1:42070 bun -e '
+            const login = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/auth/login`, {
+              method: "POST",
+              redirect: "manual",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ password: process.env.GAFU_ACCESS_PASSWORD ?? "" })
+            });
+            if (login.status !== 303) throw new Error("private login failed");
+            const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
+            const response = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/api/study`, { headers: { cookie } });
+            const study = await response.json();
+            if (response.status !== 200 || study.status?.knownCount !== 299 || study.knowledge?.baseline?.enabledCount !== 1437) {
+              throw new Error("private Study verification failed");
+            }
+          '
+          cleanup
+          trap - EXIT
+
+          bun run backup:inspect -- "$database" > "$RUNNER_TEMP/v2-backup-inspection.json"
+          bun run health -- "$database" > "$RUNNER_TEMP/v2-health.json"
+          jq -e '
+            .status == "healthy"
+            and .studySchemaVersion == 6
+            and .preparationSchemaVersion == 1
+            and .integrity == "ok"
+            and .foreignKeys == "ok"
+            and .cards == {
+              grammar: 296,
+              vocabulary: 3,
+              staged: 0,
+              active: 0,
+              known: 299,
+              suspended: 0
+            }
+          ' "$RUNNER_TEMP/v2-health.json" >/dev/null
+          chmod 600 "$database" "$seed"
+          echo "Private V2 data passed migration, baseline, startup, backup, and health checks."
+
+      - name: Guard the exact untouched Railway boundary
+        run: |
+          set -euo pipefail
+          status="$(railway status --json)"
+          test "$(jq -r '.id' <<<"$status")" = "$EXPECTED_PROJECT_ID"
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" '
+            any(.environments.edges[]; .node.id == $environment_id and .node.name == "production" and .node.canAccess)
+          ' <<<"$status" >/dev/null
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V1_SERVICE_ID" '
+            [
+              .environments.edges[].node
+              | select(.id == $environment_id)
+              | .serviceInstances.edges[].node
+              | select(.serviceId == $service_id)
+            ] as $instances
+            | ($instances | length) == 1
+              and $instances[0].source.repo == "garthtrickett/gafu"
+          ' <<<"$status" >/dev/null
+          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+            [
+              .environments.edges[].node
+              | select(.id == $environment_id)
+              | .serviceInstances.edges[].node
+              | select(.serviceId == $service_id)
+            ] as $instances
+            | ($instances | length) == 1
+              and $instances[0].source.repo == null
+              and $instances[0].source.image == null
+              and $instances[0].latestDeployment == null
+              and ($instances[0].activeDeployments | length) == 0
+          ' <<<"$status" >/dev/null
+
+          volumes="$(railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            list --json)"
+          jq -e --arg volume_id "$EXPECTED_V2_VOLUME_ID" '
+            [.volumes[] | select(.serviceName == "gafu-v2")] as $volumes
+            | ($volumes | length) == 1
+              and $volumes[0].id == $volume_id
+              and $volumes[0].mountPath == "/data"
+              and $volumes[0].status == "Ready"
+          ' <<<"$volumes" >/dev/null
+          test "$(railway domain list \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            --json | jq '.domains | length')" = 0
+          echo "Exact empty V2 boundary confirmed; V1 remains the active service."
+
+      - name: Start the inaccessible bootstrap deployment
+        env:
+          GAFU_ACCESS_PASSWORD: ${{ secrets.GAFU_ACCESS_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          printf %s "$GAFU_ACCESS_PASSWORD" | railway variable set GAFU_ACCESS_PASSWORD \
+            --stdin --skip-deploys --json \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" >/dev/null
+          printf %s "$OPENAI_API_KEY" | railway variable set OPENAI_API_KEY \
+            --stdin --skip-deploys --json \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" >/dev/null
+          railway variable set \
+            GAFU_PUBLIC_DEPLOYMENT=1 \
+            GAFU_BOOTSTRAP_ONLY=1 \
+            GAFU_DATABASE_PATH=/data/gafu-v2.sqlite \
+            GAFU_KAISHI_SEED_PATH=/data/kaishi-1.5k.local.json \
+            GAFU_OPENAI_MODEL=gpt-5.6-luna \
+            --skip-deploys --json \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" >/dev/null
+
+          railway api \
+            'mutation ConfigureGafuV2($serviceId: String!, $environmentId: String, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }' \
+            --raw-var serviceId="$EXPECTED_V2_SERVICE_ID" \
+            --raw-var environmentId="$EXPECTED_ENVIRONMENT_ID" \
+            --var 'input={"healthcheckPath":"/healthz","healthcheckTimeout":300,"numReplicas":1,"restartPolicyType":"ON_FAILURE","restartPolicyMaxRetries":3}' \
+            --compact | jq -e '.data | has("serviceInstanceUpdate")' >/dev/null
+          railway service source connect \
+            --repo garthtrickett/gafu-v2 \
+            --branch main \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            --json >/dev/null
+
+          for _ in $(seq 1 120); do
+            deployment="$(railway service status \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" --json)"
+            deployment_id="$(jq -r '.deploymentId // empty' <<<"$deployment")"
+            deployment_status="$(jq -r '.status // empty' <<<"$deployment")"
+            if [ "$deployment_status" = SUCCESS ] && [ "$(jq -r '.stopped' <<<"$deployment")" = false ]; then
+              echo "BOOTSTRAP_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+              echo "Bootstrap-only deployment is active."
+              exit 0
+            fi
+            if [ "$deployment_status" = FAILED ] || [ "$deployment_status" = CRASHED ]; then
+              echo "::error::Bootstrap deployment failed: $deployment_id $deployment_status"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Bootstrap deployment did not become active within ten minutes."
+          exit 1
+
+      - name: Verify the empty volume and upload only the private data files
+        run: |
+          set -euo pipefail
+          private_root="$RUNNER_TEMP/private-volume"
+          listing="$(railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            files --volume "$EXPECTED_V2_VOLUME_ID" list / --json)"
+          jq -e '.files | length == 0' <<<"$listing" >/dev/null
+
+          railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            files --volume "$EXPECTED_V2_VOLUME_ID" \
+            upload "$private_root/gafu-v2.sqlite" /gafu-v2.sqlite --json >/dev/null
+          railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            files --volume "$EXPECTED_V2_VOLUME_ID" \
+            upload "$private_root/kaishi-1.5k.local.json" /kaishi-1.5k.local.json --json >/dev/null
+
+          listing="$(railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            files --volume "$EXPECTED_V2_VOLUME_ID" list / --json)"
+          database_size="$(stat -c %s "$private_root/gafu-v2.sqlite")"
+          seed_size="$(stat -c %s "$private_root/kaishi-1.5k.local.json")"
+          jq -e --argjson database_size "$database_size" --argjson seed_size "$seed_size" '
+            (.files | length) == 2
+            and any(.files[]; .name == "gafu-v2.sqlite" and .type == "file" and .size == $database_size)
+            and any(.files[]; .name == "kaishi-1.5k.local.json" and .type == "file" and .size == $seed_size)
+          ' <<<"$listing" >/dev/null
+          echo "The stopped V2 boundary now contains exactly the verified database and Kaishi manifest."
+
+      - name: Activate and verify the private V2 service
+        env:
+          GAFU_ACCESS_PASSWORD: ${{ secrets.GAFU_ACCESS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          railway variable set GAFU_BOOTSTRAP_ONLY=0 \
+            --json \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" >/dev/null
+
+          final_deployment_id=""
+          for _ in $(seq 1 120); do
+            deployment="$(railway service status \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" --json)"
+            deployment_id="$(jq -r '.deploymentId // empty' <<<"$deployment")"
+            deployment_status="$(jq -r '.status // empty' <<<"$deployment")"
+            if [ "$deployment_id" != "$BOOTSTRAP_DEPLOYMENT_ID" ] && \
+               [ "$deployment_status" = SUCCESS ] && \
+               [ "$(jq -r '.stopped' <<<"$deployment")" = false ]; then
+              final_deployment_id="$deployment_id"
+              break
+            fi
+            if [ "$deployment_id" != "$BOOTSTRAP_DEPLOYMENT_ID" ] && \
+               { [ "$deployment_status" = FAILED ] || [ "$deployment_status" = CRASHED ]; }; then
+              echo "::error::Final V2 deployment failed: $deployment_id $deployment_status"
+              exit 1
+            fi
+            sleep 5
+          done
+          test -n "$final_deployment_id"
+
+          domain_json="$(railway domain \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" --json)"
+          v2_origin="$(jq -r '.domain // .domains[0] // empty' <<<"$domain_json")"
+          test "${v2_origin#https://}" != "$v2_origin"
+          test "$(curl --silent --fail --output /dev/null --write-out '%{http_code}' --retry 20 --retry-all-errors --retry-delay 3 "$v2_origin/healthz")" = 200
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 5 "$v2_origin/")" = 303
+          GAFU_VERIFY_ORIGIN="$v2_origin" bun -e '
+            const login = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/auth/login`, {
+              method: "POST",
+              redirect: "manual",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ password: process.env.GAFU_ACCESS_PASSWORD ?? "" })
+            });
+            if (login.status !== 303) throw new Error("deployed private login failed");
+            const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0];
+            const response = await fetch(`${process.env.GAFU_VERIFY_ORIGIN}/api/study`, { headers: { cookie } });
+            const study = await response.json();
+            if (response.status !== 200 || study.status?.knownCount !== 299 || study.knowledge?.baseline?.enabledCount !== 1437) {
+              throw new Error("deployed private Study verification failed");
+            }
+          '
+
+          {
+            echo "### Private Gafu V2 is ready for owner acceptance"
+            echo
+            echo "- URL: $v2_origin"
+            echo "- Deployment: $final_deployment_id"
+            echo "- Imported Cards known: 299"
+            echo "- Kaishi baseline entries: 1437"
+            echo "- Existing V1 domain: unchanged"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Private Gafu V2 is active at $v2_origin; V1 remains unchanged."

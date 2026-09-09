@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run scripts/dev.ts",
-    "start": "bun run src/study/server.ts",
+    "start": "bun run scripts/start.ts",
     "check": "biome check . && tsc --noEmit",
     "format": "biome format --write .",
     "test": "bun test",
