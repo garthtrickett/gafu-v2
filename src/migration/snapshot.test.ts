@@ -36,4 +36,31 @@ describe("V1 Snapshot", () => {
       error: { kind: "snapshotTooLarge", maximumBytes: MAX_V1_SNAPSHOT_BYTES },
     });
   });
+
+  test("rejects missing, mistyped, and unknown snapshot collections", () => {
+    const missing = JSON.parse(new TextDecoder().decode(v1Snapshot())) as {
+      sync: Record<string, unknown>;
+    };
+    delete missing.sync["knowledgePoints"];
+    expect(
+      parseV1Snapshot(new TextEncoder().encode(JSON.stringify(missing))),
+    ).toMatchObject({ ok: false, error: { kind: "snapshotInvalid" } });
+
+    const mistyped = JSON.parse(new TextDecoder().decode(v1Snapshot())) as {
+      sync: Record<string, unknown>;
+    };
+    mistyped.sync["srsUpdates"] = {};
+    expect(
+      parseV1Snapshot(new TextEncoder().encode(JSON.stringify(mistyped))),
+    ).toMatchObject({ ok: false, error: { kind: "snapshotInvalid" } });
+
+    const unknown = JSON.parse(new TextDecoder().decode(v1Snapshot())) as Record<
+      string,
+      unknown
+    >;
+    unknown["unexpected"] = [];
+    expect(
+      parseV1Snapshot(new TextEncoder().encode(JSON.stringify(unknown))),
+    ).toMatchObject({ ok: false, error: { kind: "snapshotInvalid" } });
+  });
 });

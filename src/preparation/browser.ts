@@ -1,4 +1,5 @@
 import { html, render, type TemplateResult } from "lit-html";
+import { mutationHeaders } from "../local-api.ts";
 import type {
   PlanDraft,
   PlanSnapshot,
@@ -27,6 +28,7 @@ type DraftEpisode = Readonly<{
 
 type Model = {
   sets: readonly SubtitleSetSnapshot[];
+  plans: readonly PlanSummary[];
   report: ImportReport | null;
   draftEpisodes: DraftEpisode[];
   currentSet: SubtitleSetSnapshot | null;
@@ -47,7 +49,10 @@ type Model = {
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    headers: mutationHeaders(init?.headers),
+  });
   const value = (await response.json()) as
     | Value
     | { error?: { kind?: string; detail?: string } };
@@ -102,6 +107,7 @@ const findingTitle = (finding: PreparationFinding): string =>
 export const mountPreparationApp = (root: HTMLElement): void => {
   const model: Model = {
     sets: [],
+    plans: [],
     report: null,
     draftEpisodes: [],
     currentSet: null,
@@ -121,22 +127,37 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     messageKind: "neutral",
   };
 
-  const refreshSets = async (): Promise<void> => {
-    model.sets = await requestJson<readonly SubtitleSetSnapshot[]>("/api/preparation");
+  const refreshLists = async (): Promise<void> => {
+    const [sets, plans] = await Promise.all([
+      requestJson<readonly SubtitleSetSnapshot[]>("/api/preparation"),
+      requestJson<readonly PlanSummary[]>("/api/study/plans"),
+    ]);
+    model.sets = sets;
+    model.plans = plans;
   };
 
-  const run = async (operation: () => Promise<string>): Promise<void> => {
+  let operationVersion = 0;
+  const run = async (
+    operation: (isCurrent: () => boolean) => Promise<string>,
+  ): Promise<void> => {
+    const version = ++operationVersion;
+    const isCurrent = () => version === operationVersion;
     model.busy = true;
     draw();
     try {
-      model.message = await operation();
+      const message = await operation(isCurrent);
+      if (!isCurrent()) return;
+      model.message = message;
       model.messageKind = "success";
     } catch (cause) {
+      if (!isCurrent()) return;
       model.message = cause instanceof Error ? cause.message : String(cause);
       model.messageKind = "error";
     } finally {
-      model.busy = false;
-      draw();
+      if (isCurrent()) {
+        model.busy = false;
+        draw();
+      }
     }
   };
 
@@ -208,19 +229,14 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       );
       model.report = null;
       model.draftEpisodes = [];
-      await refreshSets();
+      await refreshLists();
       return "Subtitle Set saved locally. No provider request has been made.";
     });
   };
 
   const openSet = (set: SubtitleSetSnapshot): void => {
-    void run(async () => {
-      model.currentSet = set;
-      model.report = null;
-      model.preflight = null;
-      model.evidence = null;
-      model.draft = null;
-      model.result =
+    void run(async (isCurrent) => {
+      const result =
         set.analysis?.state === "complete"
           ? await requestJson<PreparationSnapshot>(
               `/api/preparation/sets/${encodeURIComponent(set.id)}/recompare`,
@@ -229,15 +245,39 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           : null;
       const plans = await requestJson<readonly PlanSummary[]>("/api/study/plans");
       const matchingPlan = plans.find((plan) => plan.sourceKey === set.id);
-      model.plan =
+      const plan =
         matchingPlan === undefined
           ? null
           : await requestJson<PlanSnapshot>(
               `/api/study/plans/${encodeURIComponent(matchingPlan.id)}`,
             );
-      return model.result === null
+      if (!isCurrent()) return "";
+      model.currentSet = set;
+      model.report = null;
+      model.preflight = null;
+      model.evidence = null;
+      model.draft = null;
+      model.result = result;
+      model.plans = plans;
+      model.plan = plan;
+      return result === null
         ? "Subtitle Set opened. Review the scope before analysis."
         : "Saved analysis opened and re-compared locally with current Study state.";
+    });
+  };
+
+  const openPlan = (summary: PlanSummary): void => {
+    void run(async (isCurrent) => {
+      const plan = await requestJson<PlanSnapshot>(
+        `/api/study/plans/${encodeURIComponent(summary.id)}`,
+      );
+      if (!isCurrent()) return "";
+      model.plan = plan;
+      model.draft = null;
+      model.currentSet = model.sets.find((set) => set.id === summary.sourceKey) ?? null;
+      model.result = null;
+      model.preflight = null;
+      return "Preparation Plan opened. Its controls remain available without source media.";
     });
   };
 
@@ -266,7 +306,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         }),
       );
       model.draft = null;
-      await refreshSets();
+      await refreshLists();
       return model.result.state === "complete"
         ? `Preparation Gap complete: ${model.result.counts.gap} missing, ${model.result.counts.existing} already in Study, ${model.result.counts.known} known.`
         : `Analysis ${model.result.state}: ${model.result.completedBatches}/${model.result.totalBatches} batches complete.`;
@@ -329,10 +369,11 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       model.preflight = null;
       model.result = null;
       model.draft = null;
-      model.plan = null;
       model.evidence = null;
-      await refreshSets();
-      return "Subtitle Set and Preparation analysis deleted. Study data was kept.";
+      await refreshLists();
+      return model.plan === null
+        ? "Subtitle Set and Preparation analysis deleted. Study data was kept."
+        : "Subtitle Set deleted. Its independent Preparation Plan remains manageable below.";
     });
   };
 
@@ -361,6 +402,8 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           draftDigest: draft.digest,
         }),
       );
+      model.draft = null;
+      await refreshLists();
       return `Plan started atomically: ${model.plan.createdCards} Card(s) created and ${model.plan.reusedCards} reused.`;
     });
   };
@@ -392,6 +435,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         jsonRequest("DELETE", { confirmation: "delete" }),
       );
       model.plan = null;
+      await refreshLists();
       return "Plan deleted. Its Cards and learning progress were kept.";
     });
   };
@@ -627,6 +671,29 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   const planView = (): TemplateResult | string => {
     const draft = model.draft;
     const plan = model.plan;
+    if (draft !== null) {
+      return html`<section class="panel" data-testid="plan-draft">
+        <p class="eyebrow">Review before Study writes</p>
+        <h2>${plan === null ? "Preparation Plan Draft" : "Replace Preparation Plan"}</h2>
+        <p>${draft.selection.required} required · ${draft.selection.helpful} helpful · ${draft.selection.grammar} grammar · ${draft.selection.vocabulary} vocabulary</p>
+        ${
+          draft.blockers.length === 0
+            ? html`<p>All ${draft.items.length} selected targets have Card identity and source evidence.</p>`
+            : html`<div class="notice notice--error"><strong>Correct these in the gap first</strong><ul>${draft.blockers.map((blocker) => html`<li>${blocker.label}: ${blocker.reason}</li>`)}</ul></div>`
+        }
+        <div class="button-row">
+          <button type="button" @click=${startPlan} ?disabled=${model.busy || draft.blockers.length > 0 || draft.items.length === 0}>${plan === null ? "Start plan" : "Replace plan"}</button>
+          ${
+            plan === null
+              ? ""
+              : html`<button type="button" class="secondary" @click=${() => {
+                  model.draft = null;
+                  draw();
+                }}>Cancel replacement</button>`
+          }
+        </div>
+      </section>`;
+    }
     if (plan !== null) {
       return html`<section class="panel" data-testid="plan-readiness">
         <div class="finding-heading">
@@ -655,18 +722,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         </div>
       </section>`;
     }
-    if (draft === null) return "";
-    return html`<section class="panel" data-testid="plan-draft">
-      <p class="eyebrow">Review before Study writes</p>
-      <h2>Preparation Plan Draft</h2>
-      <p>${draft.selection.required} required · ${draft.selection.helpful} helpful · ${draft.selection.grammar} grammar · ${draft.selection.vocabulary} vocabulary</p>
-      ${
-        draft.blockers.length === 0
-          ? html`<p>All ${draft.items.length} selected targets have Card identity and source evidence.</p>`
-          : html`<div class="notice notice--error"><strong>Correct these in the gap first</strong><ul>${draft.blockers.map((blocker) => html`<li>${blocker.label}: ${blocker.reason}</li>`)}</ul></div>`
-      }
-      <button type="button" @click=${startPlan} ?disabled=${model.busy || draft.blockers.length > 0 || draft.items.length === 0}>Start plan</button>
-    </section>`;
+    return "";
   };
 
   const draw = (): void => {
@@ -702,7 +758,10 @@ export const mountPreparationApp = (root: HTMLElement): void => {
             ${planView()}
           </div>
           <aside class="panel set-list"><p class="eyebrow">Saved sets</p><h2>Subtitle Sets</h2>
-            ${model.sets.length === 0 ? html`<p>No saved sets yet.</p>` : model.sets.map((set) => html`<button type="button" class="set-button" @click=${() => openSet(set)}><strong>${set.title}</strong><span>${set.episodes.length} episode(s) · ${set.analysis?.state ?? "not analyzed"}</span></button>`)}
+            ${model.sets.length === 0 ? html`<p>No saved sets yet.</p>` : model.sets.map((set) => html`<button type="button" class="set-button" ?disabled=${model.busy} @click=${() => openSet(set)}><strong>${set.title}</strong><span>${set.episodes.length} episode(s) · ${set.analysis?.state ?? "not analyzed"}</span></button>`)}
+            <hr />
+            <p class="eyebrow">Durable plans</p><h2>Preparation Plans</h2>
+            ${model.plans.length === 0 ? html`<p>No active plans.</p>` : model.plans.map((plan) => html`<button type="button" class="set-button" ?disabled=${model.busy} @click=${() => openPlan(plan)}><strong>${plan.title}</strong><span>${plan.state} · ${plan.memberCount} Cards</span></button>`)}
           </aside>
         </section>
       </main>`,
@@ -712,7 +771,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
 
   draw();
   void run(async () => {
-    await refreshSets();
+    await refreshLists();
     return "Choose Japanese subtitles or reopen a saved Subtitle Set.";
   });
 };

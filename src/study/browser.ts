@@ -3,6 +3,7 @@ import type {
   PreparedMaterial,
   ProviderStatus,
 } from "../learning-material/generated-contracts.ts";
+import { mutationHeaders } from "../local-api.ts";
 import type {
   AnswerGrade,
   CardContent,
@@ -38,7 +39,7 @@ const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Valu
     ...init,
     headers: {
       ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...init?.headers,
+      ...Object.fromEntries(mutationHeaders(init?.headers)),
     },
   });
   const body = (await response.json()) as Value | { error?: { kind?: string } };

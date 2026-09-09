@@ -33,14 +33,29 @@ test("a complete gap starts one durable plan and reports episode readiness", asy
   await expect(readiness).toContainText("Phase 4 browser plan");
   await expect(readiness).toContainText("Episode 1");
   await expect(page.getByRole("status")).toContainText("Plan started atomically");
+
+  await page.getByRole("button", { name: "Review preparation plan" }).click();
+  await expect(page.getByTestId("plan-draft")).toContainText(
+    "Replace Preparation Plan",
+  );
+  await expect(page.getByRole("button", { name: "Replace plan" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel replacement" }).click();
+  await expect(readiness).toBeVisible();
+
   await readiness.getByRole("button", { name: "Pause staging" }).click();
+  await expect(readiness).toContainText("paused");
+
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete local media data" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "independent Preparation Plan remains manageable",
+  );
   await expect(readiness).toContainText("paused");
 
   await page.reload();
   await page.getByRole("button", { name: /Phase 4 browser plan/u }).click();
   await expect(page.getByTestId("plan-readiness")).toContainText("paused");
 
-  page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete plan" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Cards and learning progress were kept",

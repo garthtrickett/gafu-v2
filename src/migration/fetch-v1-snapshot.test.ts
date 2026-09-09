@@ -71,4 +71,36 @@ describe("V1 Snapshot fetch", () => {
       error: { kind: "remoteInvalid", detail: "Snapshot clock is invalid." },
     });
   });
+
+  test("rejects a successful but incomplete V1 projection", async () => {
+    const result = await fetchV1Snapshot("https://example.com", "private", {
+      fetch: async () => Response.json({ userPreference: null }),
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "remoteInvalid" },
+    });
+  });
+
+  test("stops reading a streaming response at the snapshot limit", async () => {
+    let cancelled = false;
+    const result = await fetchV1Snapshot("https://example.com", "private", {
+      fetch: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(20 * 1024 * 1024));
+              controller.enqueue(new Uint8Array(20 * 1024 * 1024));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        ),
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+    });
+    expect(result).toMatchObject({ ok: false, error: { kind: "remoteInvalid" } });
+    expect(cancelled).toBe(true);
+  });
 });

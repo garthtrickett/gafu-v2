@@ -1,3 +1,4 @@
+import { readBoundedBody } from "../local-api.ts";
 import { err, ok, type Result } from "../result.ts";
 import { MAX_V1_SNAPSHOT_BYTES, V1_SNAPSHOT_VERSION } from "./contracts.ts";
 import { parseV1Snapshot } from "./snapshot.ts";
@@ -46,14 +47,17 @@ const responseJson = async (
     return err({ kind: "remoteUnavailable", status: response.status });
   }
   try {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_V1_SNAPSHOT_BYTES) {
+    const body = await readBoundedBody(response, MAX_V1_SNAPSHOT_BYTES);
+    if (!body.ok) {
       return err({
         kind: "remoteInvalid",
-        detail: "V1 sync response exceeds the snapshot limit.",
+        detail:
+          body.error.kind === "bodyTooLarge"
+            ? "V1 sync response exceeds the snapshot limit."
+            : "V1 sync response could not be read.",
       });
     }
-    return ok(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+    return ok(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.value)));
   } catch {
     return err({ kind: "remoteInvalid", detail: "V1 returned invalid JSON." });
   }
@@ -112,20 +116,27 @@ export const fetchV1Snapshot = async (
   if (!Number.isFinite(now.getTime())) {
     return err({ kind: "remoteInvalid", detail: "Snapshot clock is invalid." });
   }
+  if (
+    !Array.isArray(sync["knowledgePoints"]) ||
+    !Array.isArray(sync["grammarPoints"]) ||
+    !Array.isArray(sync["srsUpdates"]) ||
+    !(sync["userPreference"] === null || record(sync["userPreference"]))
+  ) {
+    return err({
+      kind: "remoteInvalid",
+      detail: "V1 sync response is missing required collections.",
+    });
+  }
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       contractVersion: V1_SNAPSHOT_VERSION,
       capturedAt: now.toISOString(),
       sourceOrigin: origin.value.origin,
       sync: {
-        knowledgePoints: Array.isArray(sync["knowledgePoints"])
-          ? sync["knowledgePoints"]
-          : [],
-        grammarPoints: Array.isArray(sync["grammarPoints"])
-          ? sync["grammarPoints"]
-          : [],
-        srsUpdates: Array.isArray(sync["srsUpdates"]) ? sync["srsUpdates"] : [],
-        userPreference: record(sync["userPreference"]) ? sync["userPreference"] : null,
+        knowledgePoints: sync["knowledgePoints"],
+        grammarPoints: sync["grammarPoints"],
+        srsUpdates: sync["srsUpdates"],
+        userPreference: sync["userPreference"],
       },
     }),
   );

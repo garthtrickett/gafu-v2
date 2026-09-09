@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CreateCard } from "./study/contracts.ts";
 
 declare const planIdBrand: unique symbol;
@@ -56,6 +57,11 @@ export type PlanDraft = Readonly<{
   blockers: readonly PlanDraftBlocker[];
   items: readonly PlanDraftItem[];
 }>;
+
+export const planDraftDigest = (draft: Omit<PlanDraft, "digest">): string =>
+  `plan-draft-v1:sha256:${createHash("sha256")
+    .update(JSON.stringify(draft))
+    .digest("hex")}`;
 
 export type StartPlan = Readonly<{
   operationKey: string;

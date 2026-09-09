@@ -1,3 +1,4 @@
+import { decodePathSegment, readBoundedJson } from "../local-api.ts";
 import type { PlanSnapshot } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
 import type { Study, StudyFailure } from "../study/contracts.ts";
@@ -90,11 +91,18 @@ const planResultResponse = (result: Result<PlanSnapshot, StudyFailure>): Respons
 };
 
 const json = async (request: Request): Promise<unknown | Response> => {
-  try {
-    return await request.json();
-  } catch {
-    return invalid("Request body must be valid JSON.");
-  }
+  const parsed = await readBoundedJson(request);
+  if (parsed.ok) return parsed.value;
+  return parsed.error.kind === "bodyTooLarge"
+    ? Response.json(
+        { error: { kind: "requestTooLarge", maximumBytes: parsed.error.maximumBytes } },
+        { status: 413 },
+      )
+    : invalid(
+        parsed.error.kind === "contentTypeInvalid"
+          ? "Request body must use application/json."
+          : "Request body must be valid JSON.",
+      );
 };
 
 const decodeCommit = (value: unknown): CommitImport | null => {
@@ -275,7 +283,9 @@ export const handlePreparationApi = async (
   if (match !== null) {
     const rawId = match[1];
     if (rawId === undefined) return invalid("Subtitle Set ID is missing.");
-    const id = asSubtitleSetId(decodeURIComponent(rawId));
+    const decodedId = decodePathSegment(rawId);
+    if (!decodedId.ok) return invalid("Subtitle Set ID encoding is invalid.");
+    const id = asSubtitleSetId(decodedId.value);
     const operation = match[2];
     if (request.method === "GET" && operation === undefined) {
       return resultResponse(preparation.getSubtitleSet(id));

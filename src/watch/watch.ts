@@ -58,9 +58,9 @@ export const createWatch = (dependencies: WatchDependencies): Watch => {
       const value = dependencies.clock();
       return Number.isFinite(value.getTime())
         ? ok(new Date(value.getTime()))
-        : err({ kind: "invalidCaptureSelection", detail: "Clock is invalid." });
+        : err({ kind: "clockFailed" });
     } catch {
-      return err({ kind: "invalidCaptureSelection", detail: "Clock is invalid." });
+      return err({ kind: "clockFailed" });
     }
   };
 
@@ -87,10 +87,12 @@ export const createWatch = (dependencies: WatchDependencies): Watch => {
       }
       const time = now();
       if (!time.ok) return time;
-      const analyzed = await dependencies.analyzer.analyze(
-        command.cueKey,
-        command.cueText,
-      );
+      let analyzed: Awaited<ReturnType<WatchDependencies["analyzer"]["analyze"]>>;
+      try {
+        analyzed = await dependencies.analyzer.analyze(command.cueKey, command.cueText);
+      } catch {
+        return err({ kind: "analyzerUnavailable" });
+      }
       if (!analyzed.ok) return err({ kind: "analyzerUnavailable" });
       const candidates = analyzed.value.tokens
         .filter(
@@ -125,7 +127,13 @@ export const createWatch = (dependencies: WatchDependencies): Watch => {
         });
       if (candidates.length === 0) return err({ kind: "noContentCandidate" });
       prune(time.value.getTime());
-      const token = dependencies.nextToken();
+      let token: string;
+      try {
+        token = dependencies.nextToken();
+      } catch {
+        return err({ kind: "tokenFailed" });
+      }
+      if (clean(token) === "") return err({ kind: "tokenFailed" });
       const expiresAt = time.value.getTime() + dependencies.pendingTtlMs;
       pending.set(token, {
         command,
@@ -205,7 +213,7 @@ export const createWatch = (dependencies: WatchDependencies): Watch => {
         },
       });
       if (!captured.ok) {
-        return err({ kind: "studyFailure", failure: captured.error.kind });
+        return err({ kind: "studyFailure", failure: captured.error });
       }
       const outcome = {
         outcome: captured.value.outcome,

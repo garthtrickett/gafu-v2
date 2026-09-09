@@ -6,6 +6,7 @@ export type BackupInspection = Readonly<{
   byteSize: number;
   studySchemaVersion: number;
   preparationSchemaVersion: number;
+  learningMaterialSchemaVersion: number;
   cardCount: number;
   subtitleSetCount: number;
   integrity: "ok";
@@ -35,6 +36,11 @@ export type RecoveryFailure =
     }
   | {
       readonly kind: "unsupportedPreparationSchema";
+      readonly found: number | null;
+      readonly supported: number;
+    }
+  | {
+      readonly kind: "unsupportedLearningMaterialSchema";
       readonly found: number | null;
       readonly supported: number;
     }

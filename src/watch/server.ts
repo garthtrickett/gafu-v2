@@ -1,3 +1,5 @@
+import { readBoundedJson } from "../local-api.ts";
+import type { StudyFailure } from "../study/contracts.ts";
 import type { Watch, WatchFailure } from "./contracts.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -5,13 +7,55 @@ const record = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const body = async (request: Request): Promise<unknown | Response> => {
-  try {
-    return await request.json();
-  } catch {
-    return Response.json(
-      { error: { kind: "invalidRequest", detail: "Body must be JSON." } },
-      { status: 400 },
-    );
+  const parsed = await readBoundedJson(request);
+  if (parsed.ok) return parsed.value;
+  return Response.json(
+    parsed.error.kind === "bodyTooLarge"
+      ? { error: { kind: "requestTooLarge", maximumBytes: parsed.error.maximumBytes } }
+      : {
+          error: {
+            kind: "invalidRequest",
+            detail:
+              parsed.error.kind === "contentTypeInvalid"
+                ? "Body must use application/json."
+                : "Body must be valid JSON.",
+          },
+        },
+    { status: parsed.error.kind === "bodyTooLarge" ? 413 : 400 },
+  );
+};
+
+const studyStatus = (failure: StudyFailure): number => {
+  switch (failure.kind) {
+    case "cardNotFound":
+    case "planNotFound":
+      return 404;
+    case "invalidCard":
+    case "invalidPreference":
+    case "presentationMissing":
+    case "presentationInvalid":
+    case "presentationExpired":
+    case "presentationForWrongCard":
+    case "invalidPlanDraft":
+    case "invalidCapture":
+      return 422;
+    case "invalidStateTransition":
+    case "identityConflict":
+    case "presentationAlreadyUsed":
+    case "cardNotAnswerable":
+    case "unsupportedSchema":
+    case "planOperationConflict":
+    case "invalidPlanTransition":
+    case "captureOperationConflict":
+      return 409;
+    case "openFailed":
+    case "migrationFailed":
+    case "readFailed":
+    case "writeFailed":
+    case "backupFailed":
+    case "schedulerFailed":
+    case "clockFailed":
+      return 500;
   }
 };
 
@@ -23,6 +67,9 @@ const status = (failure: WatchFailure): number => {
     case "analyzerUnavailable":
       return 503;
     case "studyFailure":
+      return studyStatus(failure.failure);
+    case "clockFailed":
+    case "tokenFailed":
       return 500;
     case "invalidCaptureSelection":
     case "noContentCandidate":

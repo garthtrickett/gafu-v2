@@ -9,7 +9,11 @@ import {
   testPermitVerifier,
   testSeed,
 } from "../../tests/support/study.ts";
-import type { PlanDraft, PlanDraftItem } from "../preparation-plan-contracts.ts";
+import {
+  type PlanDraft,
+  type PlanDraftItem,
+  planDraftDigest,
+} from "../preparation-plan-contracts.ts";
 import { openStudy } from "./study.ts";
 
 const directories: string[] = [];
@@ -82,27 +86,30 @@ const vocabulary = (
   },
 });
 
-const draft = (items: readonly PlanDraftItem[], digest = "one"): PlanDraft => ({
-  version: "plan-draft-v1",
-  digest: `plan-draft-v1:sha256:${digest}`,
-  sourceKey: "subtitle-set-one",
-  sourceRevision: "source-one",
-  analysisRunId: "run-one",
-  studyDigest: "study-one",
-  title: "Fixture series",
-  episodes: [
-    { episodeKey: "episode-one", order: 1, title: "Episode 1" },
-    { episodeKey: "episode-two", order: 2, title: "Episode 2" },
-  ],
-  selection: {
-    required: items.length,
-    helpful: 0,
-    grammar: items.filter((item) => item.proposedCard.type === "grammar").length,
-    vocabulary: items.filter((item) => item.proposedCard.type === "vocabulary").length,
-  },
-  blockers: [],
-  items,
-});
+const draft = (items: readonly PlanDraftItem[]): PlanDraft => {
+  const payload = {
+    version: "plan-draft-v1" as const,
+    sourceKey: "subtitle-set-one",
+    sourceRevision: "source-one",
+    analysisRunId: "run-one",
+    studyDigest: "study-one",
+    title: "Fixture series",
+    episodes: [
+      { episodeKey: "episode-one", order: 1, title: "Episode 1" },
+      { episodeKey: "episode-two", order: 2, title: "Episode 2" },
+    ],
+    selection: {
+      required: items.length,
+      helpful: 0,
+      grammar: items.filter((item) => item.proposedCard.type === "grammar").length,
+      vocabulary: items.filter((item) => item.proposedCard.type === "vocabulary")
+        .length,
+    },
+    blockers: [],
+    items,
+  };
+  return { ...payload, digest: planDraftDigest(payload) };
+};
 
 const setup = () => {
   const directory = mkdtempSync(join(tmpdir(), "gafu-v2-plan-"));
@@ -164,10 +171,12 @@ describe("Phase 4 Preparation Plans", () => {
       value: { id: started.ok ? started.value.id : "", revision: 1 },
     });
     expect(context.study.listCards()).toMatchObject({ ok: true, value: { length: 3 } });
+    const { digest: _digest, ...changedPayload } = value;
+    const changedDraft = { ...changedPayload, title: "Changed title" };
     expect(
       context.study.startPlan({
         operationKey: "start-one",
-        draft: { ...value, digest: "plan-draft-v1:sha256:different" },
+        draft: { ...changedDraft, digest: planDraftDigest(changedDraft) },
       }),
     ).toEqual({ ok: false, error: { kind: "planOperationConflict" } });
     context.study.close();
@@ -187,6 +196,13 @@ describe("Phase 4 Preparation Plans", () => {
     expect(result).toMatchObject({ ok: false, error: { kind: "invalidPlanDraft" } });
     expect(context.study.listCards()).toEqual(before);
     expect(context.study.listPlans()).toEqual({ ok: true, value: [] });
+    const valid = draft([grammar("valid", "〜てから", "episode-one", 1, 2)]);
+    expect(
+      context.study.startPlan({
+        operationKey: "tampered",
+        draft: { ...valid, title: "Changed after signing" },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalidPlanDraft" } });
     context.study.close();
   });
 
@@ -282,6 +298,20 @@ describe("Phase 4 Preparation Plans", () => {
       value: { length: rowsBefore.count },
     });
     expect(context.study.listPlans()).toEqual({ ok: true, value: [] });
+    const operations = new Database(context.databasePath, { readonly: true });
+    expect(
+      operations.query("SELECT count(*) AS count FROM plan_start_operation").get(),
+    ).toEqual({ count: 1 });
+    expect(
+      operations.query("SELECT deleted_at FROM preparation_plan").get(),
+    ).toMatchObject({ deleted_at: expect.any(String) });
+    operations.close();
+    expect(
+      context.study.startPlan({
+        operationKey: "lifecycle",
+        draft: draft([vocabulary("one", "珈琲", "episode-one", 1, 100)]),
+      }),
+    ).toMatchObject({ ok: true, value: { id: started.value.id } });
     context.study.close();
   });
 });

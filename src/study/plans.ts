@@ -7,7 +7,7 @@ import type {
   PlanSummary,
   StartPlan,
 } from "../preparation-plan-contracts.ts";
-import { asPlanId } from "../preparation-plan-contracts.ts";
+import { asPlanId, planDraftDigest } from "../preparation-plan-contracts.ts";
 import { err, ok, type Result } from "../result.ts";
 import type { CardContent, StudyFailure, StudyPreferences } from "./contracts.ts";
 import { canonicalizeCard } from "./identity.ts";
@@ -75,9 +75,10 @@ const validateDraft = (
   }>[],
   StudyFailure
 > => {
+  const { digest, ...payload } = draft;
   if (
     draft.version !== "plan-draft-v1" ||
-    !draft.digest.startsWith("plan-draft-v1:sha256:") ||
+    digest !== planDraftDigest(payload) ||
     draft.sourceKey.trim() === "" ||
     draft.sourceRevision.trim() === "" ||
     draft.analysisRunId.trim() === "" ||
@@ -338,15 +339,20 @@ export const createPlanOperations = (
       const commit = database.transaction(() => {
         const existingPlan = database
           .query(
-            "SELECT id, state, draft_digest, revision FROM preparation_plan WHERE source_key = ?",
+            `SELECT id, state, draft_digest, revision, deleted_at
+             FROM preparation_plan WHERE source_key = ?`,
           )
           .get(command.draft.sourceKey) as {
           id: string;
           state: "active" | "paused";
           draft_digest: string;
           revision: number;
+          deleted_at: string | null;
         } | null;
-        if (existingPlan?.draft_digest === command.draft.digest) {
+        if (
+          existingPlan?.draft_digest === command.draft.digest &&
+          existingPlan.deleted_at === null
+        ) {
           committedId = existingPlan.id;
           database
             .query(
@@ -357,7 +363,7 @@ export const createPlanOperations = (
           return;
         }
         committedId = existingPlan?.id ?? dependencies.nextId();
-        const state = existingPlan?.state ?? "active";
+        const state = existingPlan?.deleted_at === null ? existingPlan.state : "active";
         if (existingPlan !== null) {
           database
             .query(
@@ -501,12 +507,14 @@ export const createPlanOperations = (
         } else {
           database
             .query(
-              `UPDATE preparation_plan SET title = ?, draft_digest = ?, source_revision = ?,
+              `UPDATE preparation_plan SET title = ?, state = ?, deleted_at = NULL,
+                 draft_digest = ?, source_revision = ?,
                  analysis_run_id = ?, study_digest = ?, revision = ?, episodes_json = ?,
                  created_cards = ?, reused_cards = ?, updated_at = ? WHERE id = ?`,
             )
             .run(
               command.draft.title,
+              state,
               command.draft.digest,
               command.draft.sourceRevision,
               command.draft.analysisRunId,
@@ -583,7 +591,10 @@ export const createPlanOperations = (
   const listPlans = (): Result<readonly PlanSummary[], StudyFailure> => {
     try {
       const ids = database
-        .query("SELECT id FROM preparation_plan ORDER BY updated_at DESC, id")
+        .query(
+          `SELECT id FROM preparation_plan
+           WHERE deleted_at IS NULL ORDER BY updated_at DESC, id`,
+        )
         .all() as { id: string }[];
       const values: PlanSummary[] = [];
       for (const row of ids) {
@@ -622,7 +633,10 @@ export const createPlanOperations = (
     try {
       const update = database.transaction(() => {
         const changed = database
-          .query("UPDATE preparation_plan SET state = ?, updated_at = ? WHERE id = ?")
+          .query(
+            `UPDATE preparation_plan SET state = ?, updated_at = ?
+             WHERE id = ? AND deleted_at IS NULL`,
+          )
           .run(desired, now.toISOString(), command.planId);
         if (changed.changes === 0) {
           throw new PlanCommitFailure({
@@ -655,6 +669,13 @@ export const createPlanOperations = (
         detail: "Plan deletion requires explicit confirmation.",
       });
     }
+    let now: Date;
+    try {
+      now = dependencies.clock();
+      if (!Number.isFinite(now.getTime())) throw new Error("invalid clock");
+    } catch (cause) {
+      return err({ kind: "clockFailed", detail: detail(cause) });
+    }
     try {
       const remove = database.transaction(() => {
         database
@@ -663,8 +684,12 @@ export const createPlanOperations = (
           )
           .run(id);
         const changed = database
-          .query("DELETE FROM preparation_plan WHERE id = ?")
-          .run(id);
+          .query(
+            `UPDATE preparation_plan
+             SET state = 'paused', deleted_at = coalesce(deleted_at, ?), updated_at = ?
+             WHERE id = ?`,
+          )
+          .run(now.toISOString(), now.toISOString(), id);
         // Confirmed deletion is idempotent so a lost success response is safe to retry.
         void changed;
       });

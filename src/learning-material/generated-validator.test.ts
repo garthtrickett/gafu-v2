@@ -82,6 +82,48 @@ describe("generated material validation boundary", () => {
     ).toMatchObject({ ok: true });
   });
 
+  test("does not widen one known Card sense into every homograph sense", async () => {
+    const senseAware = createGeneratedMaterialValidator({
+      analyzer,
+      grammar: declaredGrammarDetector,
+      senses: {
+        resolve: (token) => (token.lemma === "猫" ? ["dictionary:cat:figurative"] : []),
+      },
+      policy: { transparentPartOfSpeech },
+    });
+    const japanese = "鳥と猫かな。";
+    const withHomograph = {
+      ...valid,
+      japanese,
+      readingSegments: [{ written: japanese, reading: "" }],
+    };
+    expect(
+      await senseAware({
+        value: withHomograph,
+        mode: "teach",
+        card,
+        knowledge: {
+          ...knowledge,
+          vocabulary: [
+            {
+              key: "card:cat",
+              baselineKey: null,
+              lemma: "猫",
+              reading: "ねこ",
+              partOfSpeech: "noun",
+              meaning: "cat",
+              source: "card",
+              senseIds: ["dictionary:cat:animal"],
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "validationRejected", reasons: ["unknownVocabulary"] },
+    });
+  });
+
   test.each([
     ["malformed", { japanese: 7 }],
     [
