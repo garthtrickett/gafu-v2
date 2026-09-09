@@ -116,6 +116,32 @@ describe("safe Subtitle Set import inspection", () => {
     expect(result.value.episodes).toHaveLength(1);
   });
 
+  test("rejects timestamps outside JavaScript's safe integer range", async () => {
+    const result = await inspect.inspect(
+      {
+        mode: "direct",
+        files: [
+          { name: "valid.srt", bytes: encode(episodeOne) },
+          {
+            name: "unsafe.srt",
+            bytes: encode(
+              "1\n9999999999:00:00,000 --> 10000000000:00:00,000\n日本語\n",
+            ),
+          },
+        ],
+      },
+      "unsafe-time",
+      new Date(),
+    );
+    if (!result.ok) throw new Error(result.error.kind);
+    expect(
+      result.value.report.entries.find((entry) => entry.displayName === "unsafe.srt"),
+    ).toMatchObject({
+      outcome: "rejected",
+      reason: "malformedSrt",
+    });
+  });
+
   test("rejects corrupt and encrypted archive entries independently", async () => {
     const result = await inspect.inspect(
       {

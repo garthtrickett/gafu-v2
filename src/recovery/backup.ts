@@ -25,7 +25,7 @@ import type {
   RestoreReceipt,
 } from "./contracts.ts";
 import { MAXIMUM_BACKUP_BYTES } from "./contracts.ts";
-import { databaseLockIsActive } from "./database-lock.ts";
+import { acquireDatabaseLock } from "./database-lock.ts";
 
 export type BackupRecoveryDependencies = Readonly<{
   clock: () => Date;
@@ -78,6 +78,66 @@ const tableCount = (database: Database, table: string): number => {
       count: number;
     }
   ).count;
+};
+
+const requiredTables = [
+  "schema_migration",
+  "card",
+  "identity_claim",
+  "card_progress",
+  "schedule",
+  "admission_event",
+  "admission_window",
+  "review_event",
+  "study_preferences",
+  "time_zone_change",
+  "known_word",
+  "seed_ledger",
+  "staging_source",
+  "preparation_plan",
+  "plan_start_operation",
+  "preparation_plan_member",
+  "preparation_plan_evidence",
+  "capture_operation",
+  "subtitle_capture_evidence",
+  "legacy_import",
+  "legacy_import_item",
+  "legacy_quarantine",
+  "preparation_migration",
+  "subtitle_set",
+  "subtitle_episode",
+  "subtitle_cue",
+  "preparation_run",
+  "preparation_batch",
+  "preparation_correction",
+  "learning_material_migration",
+  "validated_presentation",
+  "teaching_acknowledgement",
+] as const;
+
+const hasCompleteSchema = (database: Database): boolean => {
+  const names = new Set(
+    (
+      database.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+        name: string;
+      }[]
+    ).map(({ name }) => name),
+  );
+  if (!requiredTables.every((table) => names.has(table))) return false;
+  const sequences = [
+    ["schema_migration", STUDY_SCHEMA_VERSION],
+    ["preparation_migration", PREPARATION_SCHEMA_VERSION],
+    ["learning_material_migration", MATERIAL_SCHEMA_VERSION],
+  ] as const;
+  return sequences.every(([table, current]) => {
+    const versions = database
+      .query(`SELECT version FROM ${table} ORDER BY version`)
+      .all() as { version: number }[];
+    return (
+      versions.length === current &&
+      versions.every(({ version }, index) => version === index + 1)
+    );
+  });
 };
 
 const hasSqliteHeader = (path: string): boolean => {
@@ -144,6 +204,7 @@ export const inspectBackup = (
         supported: MATERIAL_SCHEMA_VERSION,
       });
     }
+    if (!hasCompleteSchema(database)) return err({ kind: "invalidSqlite" });
     return ok({
       byteSize: file.value.size,
       studySchemaVersion: study,
@@ -164,10 +225,8 @@ export const inspectBackup = (
 const safeToken = (value: string): string =>
   value.replace(/[^A-Za-z0-9_-]/gu, "").slice(0, 64) || "operation";
 
-const stopped = (destinationPath: string): boolean =>
-  !databaseLockIsActive(destinationPath) &&
-  !existsSync(`${destinationPath}-wal`) &&
-  !existsSync(`${destinationPath}-shm`);
+const hasLiveSidecars = (destinationPath: string): boolean =>
+  existsSync(`${destinationPath}-wal`) || existsSync(`${destinationPath}-shm`);
 
 const reopenedReadOnly = (path: string): boolean => {
   let database: Database | null = null;
@@ -222,7 +281,9 @@ export const createBackupRecovery = (
     ) {
       return err({ kind: "sameFile" });
     }
-    if (!stopped(command.destinationPath)) return err({ kind: "destinationInUse" });
+    if (hasLiveSidecars(command.destinationPath)) {
+      return err({ kind: "destinationInUse" });
+    }
     const inspection = inspectBackup(command.sourcePath);
     if (!inspection.ok) return inspection;
     let now: Date;
@@ -238,62 +299,88 @@ export const createBackupRecovery = (
     } catch {
       return err({ kind: "copyFailed", operation: "temporary" });
     }
-    let token: string;
+    const lock = acquireDatabaseLock(command.destinationPath);
+    if (!lock.ok) return err({ kind: "destinationInUse" });
     try {
-      token = safeToken(dependencies.nextToken());
-    } catch {
-      return err({ kind: "copyFailed", operation: "temporary" });
-    }
-    const temporaryPath = `${destinationDirectory}/.${basename(command.destinationPath)}.restore-${token}.tmp`;
-    const stamp = now.toISOString().replace(/[:.]/gu, "-");
-    const safetyCopyPath = destinationExists
-      ? `${command.destinationPath}.pre-restore-${stamp}-${token}.sqlite`
-      : null;
-    if (existsSync(temporaryPath)) {
-      return err({ kind: "copyFailed", operation: "temporary" });
-    }
-    try {
-      copyFileSync(command.sourcePath, temporaryPath, constants.COPYFILE_EXCL);
-      chmodSync(temporaryPath, 0o600);
-    } catch {
-      removeTemporary(temporaryPath);
-      return err({ kind: "copyFailed", operation: "temporary" });
-    }
-    const copied = inspectBackup(temporaryPath);
-    if (!copied.ok) {
-      removeTemporary(temporaryPath);
-      return copied;
-    }
-    if (safetyCopyPath !== null) {
+      if (hasLiveSidecars(command.destinationPath)) {
+        return err({ kind: "destinationInUse" });
+      }
+      let token: string;
       try {
-        copyFileSync(command.destinationPath, safetyCopyPath, constants.COPYFILE_EXCL);
-        chmodSync(safetyCopyPath, 0o600);
+        token = safeToken(dependencies.nextToken());
+      } catch {
+        return err({ kind: "copyFailed", operation: "temporary" });
+      }
+      const temporaryPath = `${destinationDirectory}/.${basename(command.destinationPath)}.restore-${token}.tmp`;
+      const rollbackPath = `${temporaryPath}.rollback`;
+      const stamp = now.toISOString().replace(/[:.]/gu, "-");
+      const safetyCopyPath = destinationExists
+        ? `${command.destinationPath}.pre-restore-${stamp}-${token}.sqlite`
+        : null;
+      if (existsSync(temporaryPath) || existsSync(rollbackPath)) {
+        return err({ kind: "copyFailed", operation: "temporary" });
+      }
+      try {
+        copyFileSync(command.sourcePath, temporaryPath, constants.COPYFILE_EXCL);
+        chmodSync(temporaryPath, 0o600);
       } catch {
         removeTemporary(temporaryPath);
-        return err({ kind: "copyFailed", operation: "safety" });
+        return err({ kind: "copyFailed", operation: "temporary" });
       }
+      const copied = inspectBackup(temporaryPath);
+      if (!copied.ok) {
+        removeTemporary(temporaryPath);
+        return copied;
+      }
+      if (safetyCopyPath !== null) {
+        try {
+          copyFileSync(
+            command.destinationPath,
+            safetyCopyPath,
+            constants.COPYFILE_EXCL,
+          );
+          chmodSync(safetyCopyPath, 0o600);
+        } catch {
+          removeTemporary(temporaryPath);
+          return err({ kind: "copyFailed", operation: "safety" });
+        }
+      }
+      try {
+        renameSync(temporaryPath, command.destinationPath);
+      } catch {
+        removeTemporary(temporaryPath);
+        return err({ kind: "replacementFailed", safetyCopyPath });
+      }
+      const finalInspection = inspectBackup(command.destinationPath);
+      const verify = dependencies.postRestoreVerify ?? reopenedReadOnly;
+      let verified = false;
+      try {
+        verified = finalInspection.ok && verify(command.destinationPath);
+      } catch {
+        verified = false;
+      }
+      if (!finalInspection.ok || !verified) {
+        try {
+          if (safetyCopyPath === null) {
+            rmSync(command.destinationPath);
+          } else {
+            copyFileSync(safetyCopyPath, rollbackPath, constants.COPYFILE_EXCL);
+            chmodSync(rollbackPath, 0o600);
+            renameSync(rollbackPath, command.destinationPath);
+          }
+        } catch {
+          removeTemporary(rollbackPath);
+          return err({ kind: "rollbackFailed", safetyCopyPath });
+        }
+        return err({ kind: "postRestoreFailed", safetyCopyPath });
+      }
+      return ok({
+        inspection: finalInspection.value,
+        restoredAt: now.toISOString(),
+        safetyCopyPath,
+      });
+    } finally {
+      lock.value.release();
     }
-    try {
-      renameSync(temporaryPath, command.destinationPath);
-    } catch {
-      removeTemporary(temporaryPath);
-      return err({ kind: "replacementFailed", safetyCopyPath });
-    }
-    const finalInspection = inspectBackup(command.destinationPath);
-    const verify = dependencies.postRestoreVerify ?? reopenedReadOnly;
-    let verified = false;
-    try {
-      verified = finalInspection.ok && verify(command.destinationPath);
-    } catch {
-      verified = false;
-    }
-    if (!finalInspection.ok || !verified) {
-      return err({ kind: "postRestoreFailed", safetyCopyPath });
-    }
-    return ok({
-      inspection: finalInspection.value,
-      restoredAt: now.toISOString(),
-      safetyCopyPath,
-    });
   },
 });

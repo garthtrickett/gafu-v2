@@ -155,7 +155,10 @@ export const createKuromojiAnalyzer = (
 ): JapaneseAnalyzer => {
   let tokenizerPromise: Promise<Tokenizer> | undefined;
   const tokenizer = (): Promise<Tokenizer> => {
-    tokenizerPromise ??= load();
+    tokenizerPromise ??= load().catch((cause) => {
+      tokenizerPromise = undefined;
+      throw cause;
+    });
     return tokenizerPromise;
   };
 

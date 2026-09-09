@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readBoundedBody } from "../local-api.ts";
 import { err, ok } from "../result.ts";
 import type {
   BatchProvider,
@@ -19,6 +20,8 @@ type OpenAiProviderOptions = Readonly<{
   timeoutMs: number;
   fetch?: OpenAiFetch;
 }>;
+
+const maximumProviderResponseBytes = 4 * 1024 * 1024;
 
 const candidateSchema = {
   type: "object",
@@ -62,8 +65,8 @@ const candidateSchema = {
 const detail = (value: unknown): string =>
   value instanceof Error ? value.message : String(value);
 
-const httpFailure = (status: number, body: string): ProviderFailure => {
-  const safeDetail = `OpenAI request failed with HTTP ${status}${body === "" ? "" : " (response body omitted)"}`;
+const httpFailure = (status: number): ProviderFailure => {
+  const safeDetail = `OpenAI request failed with HTTP ${status}; response body omitted`;
   if (status === 401) return { kind: "authentication", detail: safeDetail };
   if (status === 403) return { kind: "permission", detail: safeDetail };
   if (status === 429) return { kind: "rateLimit", detail: safeDetail };
@@ -265,11 +268,23 @@ export const createOpenAiBatchProvider = (
           }),
           signal: controller.signal,
         });
-        if (!response.ok)
-          return err(httpFailure(response.status, await response.text()));
+        if (!response.ok) return err(httpFailure(response.status));
+        const responseBody = await readBoundedBody(
+          response,
+          maximumProviderResponseBytes,
+        );
+        if (!responseBody.ok) {
+          return err({
+            kind: "malformedStructure",
+            detail:
+              responseBody.error.kind === "bodyTooLarge"
+                ? "OpenAI response body is too large"
+                : "OpenAI response body could not be read",
+          });
+        }
         let value: unknown;
         try {
-          value = await response.json();
+          value = JSON.parse(new TextDecoder().decode(responseBody.value));
         } catch {
           return err({
             kind: "malformedStructure",

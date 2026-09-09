@@ -133,3 +133,35 @@ test("a late capture response cannot replace newly loaded subtitles", async ({
   await expect(page.locator("[data-cue-key]")).toContainText("新しい字幕を読む");
   await expect(page.getByTestId("capture-panel")).toHaveCount(0);
 });
+
+test("switching an ambiguous capture candidate clears the previous meaning", async ({
+  page,
+}) => {
+  await page.goto("/?view=watch");
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "ambiguous.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(subtitles),
+  });
+  const subtitle = page.locator("[data-cue-key]");
+  await subtitle.evaluate((element) => {
+    const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+    if (node === null) throw new Error("subtitle node missing");
+    const text = node.textContent ?? "";
+    const start = text.indexOf("泳いだ猫");
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + "泳いだ猫".length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.press("Control+Shift+G");
+  const panel = page.getByTestId("capture-panel");
+  const choices = panel.getByRole("radio");
+  await expect(choices).toHaveCount(2);
+  const meaning = panel.getByLabel("Meaning you intend to learn");
+  await meaning.fill("meaning for the first candidate");
+  await choices.last().check();
+  await expect(meaning).toHaveValue("");
+});

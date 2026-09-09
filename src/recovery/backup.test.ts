@@ -271,6 +271,35 @@ describe("backup recovery", () => {
     }
   });
 
+  test("rejects a database that claims current migrations but lacks required tables", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-schema-recovery-"));
+    try {
+      const source = join(directory, "incomplete.sqlite");
+      const database = new Database(source);
+      for (const [table, version] of [
+        ["schema_migration", 6],
+        ["preparation_migration", 1],
+        ["learning_material_migration", 1],
+      ] as const) {
+        database.exec(
+          `CREATE TABLE ${table}(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
+        );
+        for (let current = 1; current <= version; current += 1) {
+          database
+            .query(`INSERT INTO ${table}(version, applied_at) VALUES (?, ?)`)
+            .run(current, now.toISOString());
+        }
+      }
+      database.close();
+      expect(inspectBackup(source)).toEqual({
+        ok: false,
+        error: { kind: "invalidSqlite" },
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("rejects aliases, symlinks, live sidecars, and temporary-copy collisions", () => {
     const directory = mkdtempSync(join(tmpdir(), "gafu-v2-path-recovery-"));
     try {
@@ -284,6 +313,7 @@ describe("backup recovery", () => {
         destination,
         completeBackup(join(directory, "old-working.sqlite"), "card-old"),
       );
+      const before = readFileSync(destination);
       const recovery = createBackupRecovery({
         clock: () => now,
         nextToken: () => "collision",
@@ -322,7 +352,6 @@ describe("backup recovery", () => {
       lock.value.release();
       const temporary = join(directory, ".destination.sqlite.restore-collision.tmp");
       writeFileSync(temporary, "collision");
-      const before = readFileSync(destination);
       expect(
         recovery.restore({
           sourcePath: source,
@@ -350,6 +379,7 @@ describe("backup recovery", () => {
         destination,
         completeBackup(join(directory, "old-working.sqlite"), "card-old"),
       );
+      const before = readFileSync(destination);
       const recovery = createBackupRecovery({
         clock: () => now,
         nextToken: () => "post-failure",
@@ -371,6 +401,37 @@ describe("backup recovery", () => {
       expect(inspectBackup(result.error.safetyCopyPath ?? "")).toMatchObject({
         ok: true,
       });
+      expect(readFileSync(destination)).toEqual(before);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("removes a failed restore from a previously clean destination", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-clean-rollback-"));
+    try {
+      const source = join(directory, "source.sqlite");
+      const destination = join(directory, "destination.sqlite");
+      writeFileSync(
+        source,
+        completeBackup(join(directory, "working.sqlite"), "card-a"),
+      );
+      const recovery = createBackupRecovery({
+        clock: () => now,
+        nextToken: () => "clean-post-failure",
+        postRestoreVerify: () => false,
+      });
+      expect(
+        recovery.restore({
+          sourcePath: source,
+          destinationPath: destination,
+          confirmation: "replace",
+        }),
+      ).toEqual({
+        ok: false,
+        error: { kind: "postRestoreFailed", safetyCopyPath: null },
+      });
+      expect(() => readFileSync(destination)).toThrow();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

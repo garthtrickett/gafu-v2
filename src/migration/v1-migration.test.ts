@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { v1Snapshot } from "../../tests/fixtures/migration/v1.ts";
 import type { LogRecord } from "../log.ts";
+import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import { err } from "../result.ts";
 import { asCardId } from "../study/contracts.ts";
 import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
@@ -62,6 +63,27 @@ describe("V1 migration", () => {
       }),
     ).toMatchObject({ ok: false, error: { kind: "snapshotInvalid" } });
     expect(existsSync(context.destination)).toBe(false);
+  });
+
+  test("does not inspect or mutate a destination owned by the running server", () => {
+    const context = setup();
+    const lock = acquireDatabaseLock(context.destination);
+    if (!lock.ok) throw new Error(lock.error);
+    expect(
+      context.migration.apply({
+        importKey: "locked-destination",
+        snapshotBytes: v1Snapshot(),
+        destinationPath: context.destination,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: "destinationUnreadable",
+        detail: "Destination database is in use or could not be locked.",
+      },
+    });
+    expect(existsSync(context.destination)).toBe(false);
+    lock.value.release();
   });
 
   test("skips progress attached to an inactive catalogue point", () => {

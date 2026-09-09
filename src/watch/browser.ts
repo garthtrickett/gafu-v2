@@ -1,4 +1,5 @@
 import { html, render } from "lit-html";
+import { live } from "lit-html/directives/live.js";
 import { mutationHeaders } from "../local-api.ts";
 import type {
   CaptureCandidate,
@@ -247,6 +248,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     model.capture = {
       ...model.capture,
       candidateKey: candidate.key,
+      meaning: "",
       senseId: candidate.suggestedSenseId,
     };
     draw();
@@ -456,11 +458,21 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                 <form @submit=${commitCapture}>
                   <label>
                     Meaning you intend to learn
-                    <input name="meaning" required maxlength="500" .value=${capture.meaning} />
+                    <input
+                      name="meaning"
+                      required
+                      maxlength="500"
+                      .value=${live(capture.meaning)}
+                    />
                   </label>
                   <label>
                     Local sense label
-                    <input name="senseId" required maxlength="200" .value=${capture.senseId} />
+                    <input
+                      name="senseId"
+                      required
+                      maxlength="200"
+                      .value=${live(capture.senseId)}
+                    />
                   </label>
                   <div class="button-row">
                     <button type="submit" ?disabled=${model.busy}>Add to SRS</button>

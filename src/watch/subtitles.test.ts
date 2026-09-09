@@ -35,5 +35,28 @@ describe("Watch subtitles", () => {
         new TextEncoder().encode("1\n00:00:01,000 --> 00:00:02,000\nhello\n"),
       ),
     ).toMatchObject({ ok: false, error: { kind: "subtitleInvalid" } });
+    expect(
+      await parseWatchSrt(
+        new TextEncoder().encode(
+          "1\n9999999999:00:00,000 --> 10000000000:00:00,000\n日本語\n",
+        ),
+      ),
+    ).toMatchObject({ ok: false, error: { kind: "subtitleInvalid" } });
+  });
+
+  test("finds overlapping cues through the indexed playback query", async () => {
+    const parsed = await parseWatchSrt(
+      new TextEncoder().encode(
+        "1\n00:00:01,000 --> 00:00:10,000\n長い字幕\n\n2\n00:00:05,000 --> 00:00:06,000\n短い字幕\n",
+      ),
+    );
+    if (!parsed.ok) throw new Error(parsed.error.detail);
+    expect(activeWatchCues(parsed.value.cues, 5_500).map((cue) => cue.text)).toEqual([
+      "長い字幕",
+      "短い字幕",
+    ]);
+    expect(activeWatchCues(parsed.value.cues, 9_000).map((cue) => cue.text)).toEqual([
+      "長い字幕",
+    ]);
   });
 });

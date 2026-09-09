@@ -163,6 +163,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
 
   const inspect = (event: SubmitEvent): void => {
     event.preventDefault();
+    if (model.busy) return;
     const form = event.currentTarget as HTMLFormElement;
     const input = form.elements.namedItem("files") as HTMLInputElement | null;
     const files = [...(input?.files ?? [])];
@@ -184,6 +185,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const move = (index: number, direction: -1 | 1): void => {
+    if (model.busy) return;
     const target = index + direction;
     if (target < 0 || target >= model.draftEpisodes.length) return;
     const next = [...model.draftEpisodes];
@@ -197,6 +199,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const removeDraft = (entryId: string): void => {
+    if (model.busy) return;
     model.draftEpisodes = model.draftEpisodes.filter(
       (item) => item.entryId !== entryId,
     );
@@ -204,6 +207,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const renameDraft = (entryId: string, title: string): void => {
+    if (model.busy) return;
     model.draftEpisodes = model.draftEpisodes.map((item) =>
       item.entryId === entryId ? { ...item, title } : item,
     );
@@ -211,6 +215,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
 
   const commit = (event: SubmitEvent): void => {
     event.preventDefault();
+    if (model.busy) return;
     const report = model.report;
     if (report === null) return;
     const fields = new FormData(event.currentTarget as HTMLFormElement);
@@ -235,6 +240,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const openSet = (set: SubtitleSetSnapshot): void => {
+    if (model.busy) return;
     void run(async (isCurrent) => {
       const result =
         set.analysis?.state === "complete"
@@ -267,6 +273,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const openPlan = (summary: PlanSummary): void => {
+    if (model.busy) return;
     void run(async (isCurrent) => {
       const plan = await requestJson<PlanSnapshot>(
         `/api/study/plans/${encodeURIComponent(summary.id)}`,
@@ -282,6 +289,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const preflight = (): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     if (set === null) return;
     void run(async () => {
@@ -294,6 +302,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const analyze = (retryUncertain = false): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     const preflightValue = model.preflight;
     if (set === null || preflightValue === null) return;
@@ -314,6 +323,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const correct = (finding: PreparationFinding, change: object): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     if (set === null) return;
     void run(async () => {
@@ -340,6 +350,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const showEvidence = (finding: PreparationFinding, offset = 0): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     if (set === null) return;
     void run(async () => {
@@ -352,6 +363,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const deleteSet = (): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     if (
       set === null ||
@@ -378,6 +390,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const reviewPlan = (): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     if (set === null) return;
     void run(async () => {
@@ -391,6 +404,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const startPlan = (): void => {
+    if (model.busy) return;
     const set = model.currentSet;
     const draft = model.draft;
     if (set === null || draft === null || draft.blockers.length > 0) return;
@@ -409,6 +423,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const changePlanState = (action: "pause" | "resume"): void => {
+    if (model.busy) return;
     const plan = model.plan;
     if (plan === null) return;
     void run(async () => {
@@ -423,6 +438,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
   };
 
   const deletePlan = (): void => {
+    if (model.busy) return;
     const plan = model.plan;
     if (
       plan === null ||

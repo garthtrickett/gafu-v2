@@ -84,6 +84,12 @@ const migrate = (
       if (current.version > MATERIAL_SCHEMA_VERSION) {
         throw new Error(`unsupported Learning Material schema ${current.version}`);
       }
+      const applied = database
+        .query("SELECT version FROM learning_material_migration ORDER BY version")
+        .all() as { version: number }[];
+      if (!applied.every(({ version }, index) => version === index + 1)) {
+        throw new Error("Learning Material migration history is not contiguous");
+      }
       if (current.version >= 1) return;
       database.exec(`
         CREATE TABLE validated_presentation (

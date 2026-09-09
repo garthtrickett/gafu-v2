@@ -16,7 +16,7 @@ const normalizeEnglish = (value: string): string =>
     .toLocaleLowerCase("en")
     .replace(/[.!?]+$/u, "");
 
-const katakanaToHiragana = (value: string): string =>
+export const normalizeVocabularyReading = (value: string): string =>
   [...value]
     .map((character) => {
       const point = character.codePointAt(0);
@@ -84,7 +84,7 @@ const canonicalVocabulary = (
   if (!partOfSpeech.ok) return partOfSpeech;
   const meaning = required("meaning", input.content.meaning);
   if (!meaning.ok) return meaning;
-  const normalizedReading = katakanaToHiragana(reading.value);
+  const normalizedReading = normalizeVocabularyReading(reading.value);
   const normalizedPartOfSpeech = normalizeEnglish(partOfSpeech.value);
   const normalizedMeaning = normalizeEnglish(meaning.value);
   const content: VocabularyContent = {

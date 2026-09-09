@@ -1,4 +1,4 @@
-import { decodePathSegment, readBoundedJson } from "../local-api.ts";
+import { decodePathSegment, readBoundedBody, readBoundedJson } from "../local-api.ts";
 import type { PlanSnapshot } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
 import type { Study, StudyFailure } from "../study/contracts.ts";
@@ -199,29 +199,15 @@ const readFiles = async (
   if (contentType?.toLocaleLowerCase().startsWith("multipart/form-data") !== true) {
     return invalid("Import must be multipart form data.");
   }
-  const reader = request.body?.getReader();
-  if (reader === undefined) return invalid("Import body is missing.");
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    received += chunk.value.byteLength;
-    if (received > maximumBodyBytes) {
-      await reader.cancel();
-      return new Response("Import body is too large.", { status: 413 });
-    }
-    chunks.push(chunk.value);
-  }
-  const body = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
+  const body = await readBoundedBody(request, maximumBodyBytes);
+  if (!body.ok) {
+    return body.error.kind === "bodyTooLarge"
+      ? new Response("Import body is too large.", { status: 413 })
+      : invalid("Import body could not be read.");
   }
   let form: FormData;
   try {
-    form = await new Response(body, {
+    form = await new Response(body.value.buffer as ArrayBuffer, {
       headers: { "Content-Type": contentType },
     }).formData();
   } catch {

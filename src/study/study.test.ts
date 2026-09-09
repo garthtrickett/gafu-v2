@@ -10,7 +10,12 @@ import {
   testPermitVerifier,
   testSeed,
 } from "../../tests/support/study.ts";
-import type { CreateCard, Study, StudyDependencies } from "./contracts.ts";
+import type {
+  CreateCard,
+  KnownWordSeed,
+  Study,
+  StudyDependencies,
+} from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
 
@@ -125,6 +130,139 @@ describe("Study Cards and knowledge", () => {
       ok: true,
       value: { baseline: { enabledCount: 2 } },
     });
+    study.close();
+  });
+
+  test("removes obsolete baseline entries on a seed upgrade and keeps corrections", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-seed-upgrade-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "study.sqlite");
+    const firstSeed: KnownWordSeed = {
+      id: "fixture-seed",
+      version: "v1",
+      availability: "available",
+      entries: [
+        {
+          key: "cat",
+          lemma: "猫",
+          reading: "ねこ",
+          meaning: "cat",
+          partOfSpeech: "noun",
+        },
+        {
+          key: "dog",
+          lemma: "犬",
+          reading: "いぬ",
+          meaning: "dog",
+          partOfSpeech: "noun",
+        },
+      ],
+    };
+    const dependencies = {
+      databasePath,
+      clock: () => new Date("2026-09-08T10:00:00.000Z"),
+      nextId: sequentialIds(),
+      permitVerifier: testPermitVerifier,
+    };
+    const first = openStudy({ ...dependencies, knownWordSeed: firstSeed });
+    if (!first.ok) throw new Error(first.error.kind);
+    first.value.setBaselineWordEnabled("cat", false);
+    first.value.close();
+    const second = openStudy({
+      ...dependencies,
+      knownWordSeed: {
+        ...firstSeed,
+        version: "v2",
+        entries: [firstSeed.entries[0] as KnownWordSeed["entries"][number]],
+      },
+    });
+    if (!second.ok) throw new Error(second.error.kind);
+    expect(second.value.knowledgeSnapshot()).toMatchObject({
+      ok: true,
+      value: {
+        baseline: {
+          enabledCount: 0,
+          entries: [{ key: "cat", enabled: false }],
+        },
+      },
+    });
+    second.value.close();
+  });
+
+  test("rejects capture sense claims that do not describe the Card", () => {
+    const { study } = openTestStudy();
+    expect(
+      study.captureVocabulary({
+        operationKey: "mismatched-capture",
+        card: {
+          type: "vocabulary",
+          content: {
+            lemma: "猫",
+            reading: "ねこ",
+            partOfSpeech: "noun",
+            meaning: "cat",
+            usageNotes: "",
+          },
+        },
+        identityClaim: {
+          authority: "gafu-capture-v1",
+          claimKey: `vocabulary:${JSON.stringify(["犬", "いぬ", "noun", "dog:1"])}`,
+        },
+        evidence: {
+          sourceKey: "episode",
+          cueKey: "cue",
+          selectedSurface: "猫",
+          span: { start: 0, end: 1 },
+        },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalidCapture" } });
+    expect(study.listCards()).toEqual({ ok: true, value: [] });
+    study.close();
+  });
+
+  test("does not attach an old source sense to corrected lexical content", () => {
+    const { study } = openTestStudy();
+    const captured = study.captureVocabulary({
+      operationKey: "capture-cat",
+      card: {
+        type: "vocabulary",
+        content: {
+          lemma: "猫",
+          reading: "ねこ",
+          partOfSpeech: "noun",
+          meaning: "cat",
+          usageNotes: "",
+        },
+      },
+      identityClaim: {
+        authority: "gafu-capture-v1",
+        claimKey: `vocabulary:${JSON.stringify(["猫", "ねこ", "noun", "cat:1"])}`,
+      },
+      evidence: {
+        sourceKey: "episode",
+        cueKey: "cue",
+        selectedSurface: "猫",
+        span: { start: 0, end: 1 },
+      },
+    });
+    if (!captured.ok) throw new Error(captured.error.kind);
+    study.setCardState({ cardId: captured.value.card.id, action: "markKnown" });
+    expect(
+      study.updateCard(captured.value.card.id, {
+        lemma: "犬",
+        reading: "いぬ",
+        partOfSpeech: "noun",
+        meaning: "dog",
+        usageNotes: "corrected identity display",
+      }),
+    ).toMatchObject({ ok: true });
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    expect(
+      knowledge.value.vocabulary.find(
+        (entry) => entry.key === `card:${captured.value.card.id}`,
+      ),
+    ).toMatchObject({ lemma: "犬", senseIds: [] });
     study.close();
   });
 

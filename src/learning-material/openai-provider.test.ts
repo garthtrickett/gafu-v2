@@ -99,6 +99,23 @@ describe("OpenAI Learning Material adapter", () => {
     }
   });
 
+  test("rejects an oversized provider response before parsing it", async () => {
+    const provider = createOpenAiMaterialProvider({
+      apiKey: () => "secret",
+      model: "gpt-5.6-luna",
+      promptVersion: "study-v1",
+      timeoutMs: 100,
+      fetch: async () => new Response("x".repeat(2 * 1024 * 1024 + 1)),
+    });
+    expect(await provider.generate(request)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformedResponse",
+        detail: "OpenAI response body was too large",
+      },
+    });
+  });
+
   test("separates incomplete, refusal, malformed, timeout, and cancellation", async () => {
     const make = (fetcher: OpenAiMaterialFetch) =>
       createOpenAiMaterialProvider({
