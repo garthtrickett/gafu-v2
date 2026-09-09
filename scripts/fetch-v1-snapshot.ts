@@ -22,7 +22,8 @@ const result = await fetchV1Snapshot(
   { fetch, clock: () => new Date() },
 );
 if (!result.ok) {
-  console.error(`V1 snapshot failed: ${result.error.kind}`);
+  const detail = "detail" in result.error ? `: ${result.error.detail}` : "";
+  console.error(`V1 snapshot failed: ${result.error.kind}${detail}`);
   process.exit(1);
 }
 
