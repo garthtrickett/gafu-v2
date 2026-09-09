@@ -12,6 +12,7 @@
     "test": "bun test",
     "build": "tsc --noEmit && vite build",
     "test:browser": "playwright test",
+    "kaishi:install": "bun run scripts/install-kaishi-seed.ts",
     "migration:v1:fetch": "bun run scripts/fetch-v1-snapshot.ts",
     "migration:v1": "bun run scripts/migrate-v1.ts",
     "backup:inspect": "bun run scripts/recover-backup.ts inspect",

@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
 import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
@@ -43,6 +43,7 @@ import type {
   StudyFailure,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
+import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -513,6 +514,20 @@ const materialProvider = fakeAi
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
 );
+const configuredKaishiPath = process.env["GAFU_KAISHI_SEED_PATH"];
+const kaishiPath = configuredKaishiPath ?? DEFAULT_KAISHI_SEED_PATH;
+const knownWordSeed = (() => {
+  if (kaishiPath === "") return unavailableKaishiSeed;
+  if (!existsSync(kaishiPath)) {
+    if (configuredKaishiPath !== undefined) {
+      throw new Error("Configured Kaishi seed file is unavailable.");
+    }
+    return unavailableKaishiSeed;
+  }
+  const loaded = loadKaishiSeedManifest(kaishiPath);
+  if (!loaded.ok) throw new Error(`Kaishi seed failed to load: ${loaded.error.kind}`);
+  return loaded.value;
+})();
 const transparentPartOfSpeech = new Set<BroadPartOfSpeech>([
   "particle",
   "auxiliary",
@@ -544,7 +559,7 @@ const opened = openStudy({
   clock: () => new Date(),
   nextId: () => crypto.randomUUID(),
   permitVerifier: openedMaterial.value.permitVerifier,
-  knownWordSeed: unavailableKaishiSeed,
+  knownWordSeed,
 });
 
 if (!opened.ok) {
