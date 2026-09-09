@@ -210,6 +210,13 @@ const desiredProgress = (
   let quarantine: string | null = null;
   if (known) {
     base = "known";
+  } else if (
+    learning === "unintroduced" &&
+    (progress.repetitions ?? 0) === 0 &&
+    progress.introducedAt === null &&
+    progress.lastReviewedAt === null
+  ) {
+    base = "staged";
   } else if (["introduced", "primed", "encountered", "learning"].includes(learning)) {
     if (kind === "grammar") {
       quarantine = "grammarFormationUnavailable";

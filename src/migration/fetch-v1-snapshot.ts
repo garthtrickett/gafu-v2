@@ -25,6 +25,56 @@ const safeShape = (value: unknown): string => {
   return typeof value;
 };
 
+const legacyProgress = (
+  grammarPoints: readonly unknown[],
+  srsUpdates: readonly unknown[],
+): readonly unknown[] => {
+  const progressIds = new Set<string>();
+  const normalized = srsUpdates.map((value) => {
+    if (!record(value)) return value;
+    const pointId =
+      value["knowledgePointId"] ??
+      value["knowledge_point_id"] ??
+      value["grammarPointId"] ??
+      value["grammar_point_id"];
+    if (typeof pointId === "string" && pointId !== "") progressIds.add(pointId);
+    const repetitions = value["repetitions"];
+    const stability = value["stability"];
+    return {
+      ...value,
+      knowledgePointId: pointId,
+      participationStatus: value["participationStatus"] ?? "active",
+      learningState:
+        value["learningState"] ??
+        (typeof stability === "number" && stability >= 21
+          ? "stable"
+          : typeof repetitions === "number" && repetitions > 0
+            ? "learning"
+            : "unintroduced"),
+      introducedAt: value["introducedAt"] ?? null,
+    };
+  });
+  for (const value of grammarPoints) {
+    if (!record(value)) continue;
+    const id = value["id"];
+    if (typeof id !== "string" || id === "" || progressIds.has(id)) continue;
+    progressIds.add(id);
+    normalized.push({
+      knowledgePointId: id,
+      repetitions: 0,
+      intervalDays: 0,
+      nextReview: null,
+      difficulty: null,
+      stability: 0,
+      lastReviewedAt: null,
+      participationStatus: "active",
+      learningState: "unintroduced",
+      introducedAt: null,
+    });
+  }
+  return normalized;
+};
+
 const validatedOrigin = (value: string): Result<URL, FetchV1SnapshotFailure> => {
   try {
     const origin = new URL(value);
@@ -122,10 +172,13 @@ export const fetchV1Snapshot = async (
   if (!Number.isFinite(now.getTime())) {
     return err({ kind: "remoteInvalid", detail: "Snapshot clock is invalid." });
   }
+  const grammarPoints = sync["grammarPoints"];
+  const rawProgress = sync["srsUpdates"];
+  const grammarOnlyLegacy = sync["knowledgePoints"] === undefined;
   if (
-    !Array.isArray(sync["knowledgePoints"]) ||
-    !Array.isArray(sync["grammarPoints"]) ||
-    !Array.isArray(sync["srsUpdates"]) ||
+    !(grammarOnlyLegacy || Array.isArray(sync["knowledgePoints"])) ||
+    !Array.isArray(grammarPoints) ||
+    !Array.isArray(rawProgress) ||
     !(
       sync["userPreference"] === undefined ||
       sync["userPreference"] === null ||
@@ -143,15 +196,18 @@ export const fetchV1Snapshot = async (
       ].join(" "),
     });
   }
+  const progress = grammarOnlyLegacy
+    ? legacyProgress(grammarPoints, rawProgress)
+    : rawProgress;
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       contractVersion: V1_SNAPSHOT_VERSION,
       capturedAt: now.toISOString(),
       sourceOrigin: origin.value.origin,
       sync: {
-        knowledgePoints: sync["knowledgePoints"],
-        grammarPoints: sync["grammarPoints"],
-        srsUpdates: sync["srsUpdates"],
+        knowledgePoints: grammarOnlyLegacy ? [] : sync["knowledgePoints"],
+        grammarPoints,
+        srsUpdates: progress,
         userPreference: sync["userPreference"] ?? null,
       },
     }),
