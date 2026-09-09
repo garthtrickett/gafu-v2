@@ -65,12 +65,13 @@ jobs:
       - name: Complete the stopped V2 storage boundary
         run: |
           set -euo pipefail
-          railway link \
+          railway volume \
             --project "$EXPECTED_PROJECT_ID" \
             --environment "$EXPECTED_ENVIRONMENT_ID" \
             --service "$EXPECTED_V2_SERVICE_ID" \
+            add \
+            --mount-path /data \
             --json
-          railway volume add --mount-path /data --json
           railway variable set \
             GAFU_PUBLIC_DEPLOYMENT=1 \
             GAFU_DATABASE_PATH=/data/gafu-v2.sqlite \
@@ -86,7 +87,12 @@ jobs:
         run: |
           set -euo pipefail
           railway service list --json | jq '[.[] | select(.name == "gafu-v2")]'
-          railway volume list --json | jq '{
+          railway volume \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            list \
+            --json | jq '{
             environment,
             project,
             volumes: [.volumes[] | select(.serviceName == "gafu-v2")]
