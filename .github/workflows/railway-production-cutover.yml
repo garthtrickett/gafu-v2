@@ -418,6 +418,15 @@ jobs:
           mkdir -p "$HOME/.ssh"
           ssh-keygen -t ed25519 -N '' -f "$key_path" -C "gafu-v2-cutover-$GITHUB_RUN_ID" -q
           railway ssh keys add -k "$key_path.pub" -n "gafu-v2-cutover-$GITHUB_RUN_ID" >/dev/null
+          # Volume file transport offers agent keys; a custom-named file in
+          # ~/.ssh is not tried on its own. The agent lives on this runner,
+          # so later steps reuse it through the persisted socket.
+          eval "$(ssh-agent -s)" >/dev/null
+          ssh-add "$key_path" >/dev/null
+          {
+            echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+          } >> "$GITHUB_ENV"
           echo "CUTOVER_SSH_KEY=gafu-v2-cutover-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           echo "Ephemeral SSH key registered for volume access."
 
@@ -425,11 +434,27 @@ jobs:
         run: |
           set -euo pipefail
           private_root="$RUNNER_TEMP/private-volume"
-          listing="$(railway volume \
-            --project "$EXPECTED_PROJECT_ID" \
-            --environment "$EXPECTED_ENVIRONMENT_ID" \
-            --service "$EXPECTED_V2_SERVICE_ID" \
-            files --volume "$EXPECTED_V2_VOLUME_ID" list / --json)"
+          # Key registration can lag a few seconds behind the add call, and
+          # the SSH transport flakes occasionally; retry a read-only list
+          # before concluding anything. A still-empty listing afterward fails
+          # closed with the transport's own error attached.
+          listing=""
+          for attempt in 1 2 3; do
+            if listing="$(railway volume \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" \
+              files --volume "$EXPECTED_V2_VOLUME_ID" list / --json 2>"$RUNNER_TEMP/volume-list.err")"; then
+              break
+            fi
+            echo "Volume list attempt $attempt failed; retrying."
+            sleep 15
+          done
+          if [ -z "$listing" ]; then
+            echo "::error::Volume list failed:"
+            cat "$RUNNER_TEMP/volume-list.err"
+            exit 1
+          fi
           jq -e '.files | length == 0' <<<"$listing" >/dev/null
 
           railway volume \
@@ -540,7 +565,7 @@ jobs:
           key_ref=""
           if [ -n "${CUTOVER_SSH_KEY:-}" ]; then
             key_line="$(railway ssh keys list 2>/dev/null | grep -F "$CUTOVER_SSH_KEY" || true)"
-            key_ref="$(printf '%s' "$key_line" | grep -oE 'SHA256:[^ ]+|([0-9a-f]{2}:){15}[0-9a-f]{2}' | head -1)"
+            key_ref="$(printf '%s' "$key_line" | grep -oE 'SHA256:[^ ]+|([0-9a-f]{2}:){15}[0-9a-f]{2}' | head -1 || true)"
           fi
           if [ -n "$key_ref" ]; then
             railway ssh keys remove "$key_ref" >/dev/null || echo "::warning::Ephemeral SSH key ${CUTOVER_SSH_KEY:-unknown} needs manual removal."
