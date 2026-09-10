@@ -200,7 +200,12 @@ export type PreparationDependencies = Readonly<{
   analyzer: JapaneseAnalyzer;
   grammar: GrammarDetector;
   provider: BatchProvider;
-  providerConfigured: () => boolean;
+  /**
+   * Async because a key can arrive unverified -- one seeded from the
+   * environment never passed through the settings route -- and the scope panel
+   * must not offer to analyze with a key the provider will reject.
+   */
+  providerConfigured: (signal?: AbortSignal) => Promise<boolean>;
   batchSize: number;
 }>;
 

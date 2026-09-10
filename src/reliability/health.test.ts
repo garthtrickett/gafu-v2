@@ -53,7 +53,7 @@ test("health reports only operational counts and flags unfinished preparation", 
       },
       grammar: declaredGrammarDetector,
       provider: createDeterministicPreparationProvider(),
-      providerConfigured: () => false,
+      providerConfigured: async () => false,
       batchSize: 20,
     });
     if (!preparation.ok) throw new Error(preparation.error.kind);

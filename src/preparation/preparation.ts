@@ -699,7 +699,7 @@ export const openPreparation = (
         subtitleSetId: id,
         sourceRevision: set.value.sourceRevision,
         provider: dependencies.provider.identity,
-        providerConfigured: dependencies.providerConfigured(),
+        providerConfigured: await dependencies.providerConfigured(),
         episodeCount: set.value.episodes.length,
         cueCount: cues.length,
         japaneseCueCount: analyzed.length,
@@ -725,7 +725,7 @@ export const openPreparation = (
         preflights.delete(command.preflightToken);
         return err({ kind: "stalePreflight" });
       }
-      if (!dependencies.providerConfigured())
+      if (!(await dependencies.providerConfigured(command.signal)))
         return err({ kind: "providerNotConfigured" });
       const currentSet = readSet(database, pending.value.subtitleSetId);
       if (!currentSet.ok) return currentSet;

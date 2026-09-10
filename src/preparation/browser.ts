@@ -405,6 +405,15 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           await refreshLists();
           return `Analysis failed: ${result.failure?.kind ?? "unknown"}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
+        // A round that names its failure has already said why it made no
+        // progress. Repeating it twice more only buries the cause inside a
+        // generic stall message.
+        if (result.failure !== null && result.completedBatches === completed) {
+          model.progress = null;
+          model.draft = null;
+          await refreshLists();
+          return `Analysis paused: ${result.failure.kind}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+        }
         if (stalledRounds >= 3) {
           model.progress = null;
           model.draft = null;

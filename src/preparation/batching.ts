@@ -70,6 +70,22 @@ const snapshot = (
   possibleDuplicateCharge,
 });
 
+/**
+ * Whether a failed dispatch might have reached the provider and been billed.
+ * A rejection carries the provider's own refusal to run the request, so it is
+ * evidence that nothing was generated; a lost or abandoned connection is not.
+ */
+const mayHaveBeenBilled = (failure: BatchFailure): boolean => {
+  switch (failure.kind) {
+    case "authentication":
+    case "permission":
+    case "rateLimit":
+      return false;
+    default:
+      return true;
+  }
+};
+
 const recoverable = (failure: BatchFailure): boolean => {
   switch (failure.kind) {
     case "authentication":
@@ -236,17 +252,28 @@ export const createPreparationBatching = (dependencies: {
           options.signal,
         );
         if (!submitted.ok) {
-          const latest = (await refresh(manifest)) ?? checkpoints;
+          let latest = (await refresh(manifest)) ?? checkpoints;
           const dispatched = latest.find(
             (item) => item.inputDigest === batch.inputDigest,
           );
+          const unanswerable =
+            dispatched?.state === "uncertain" && dispatched.providerResponseId === null;
+          if (unanswerable && !mayHaveBeenBilled(submitted.error)) {
+            // The provider refused to run it, so there is nothing to retrieve
+            // and nothing to pay for again. Leaving it dispatched would make
+            // the next attempt demand a duplicate-charge decision it does not
+            // need, and would block every later batch behind it.
+            await dependencies.store.release(manifest.runId, batch.inputDigest, key);
+            latest = (await refresh(manifest)) ?? latest;
+            return pause(manifest, latest, submitted.error, false);
+          }
           return pause(
             manifest,
             latest,
             submitted.error,
             // Reissuing only risks a second charge while nothing retrievable
             // was recorded for the request that has already been paid for.
-            dispatched?.state === "uncertain" && dispatched.providerResponseId === null,
+            unanswerable,
           );
         }
         const interrupted = await commit(

@@ -63,6 +63,8 @@ export const createDeterministicBatchProvider = (
       kind: "cueId" | "span";
     }>;
     retrievalAvailable?: boolean;
+    /** Keep injecting the failure instead of clearing it after one hit. */
+    alwaysFail?: boolean;
   }> = {},
 ): BatchProvider & {
   readonly submissions: string[];
@@ -123,7 +125,7 @@ export const createDeterministicBatchProvider = (
       const activeFailure =
         injection?.batchId === batch.batchId ? injection : undefined;
       if (activeFailure !== undefined && !activeFailure.afterAccept) {
-        injection = undefined;
+        if (options.alwaysFail !== true) injection = undefined;
         return err(activeFailure.failure);
       }
       const response = responses.get(requestKey) ?? responseFor(batch, requestKey);
@@ -136,7 +138,7 @@ export const createDeterministicBatchProvider = (
       // the wait for output is interrupted.
       await dispatched(response.providerRequestId);
       if (activeFailure !== undefined) {
-        injection = undefined;
+        if (options.alwaysFail !== true) injection = undefined;
         return err(activeFailure.failure);
       }
       return ok(response);
