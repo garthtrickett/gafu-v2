@@ -455,33 +455,60 @@ jobs:
             cat "$RUNNER_TEMP/volume-list.err"
             exit 1
           fi
-          jq -e '.files | length == 0' <<<"$listing" >/dev/null
-
-          railway volume \
-            --project "$EXPECTED_PROJECT_ID" \
-            --environment "$EXPECTED_ENVIRONMENT_ID" \
-            --service "$EXPECTED_V2_SERVICE_ID" \
-            files --volume "$EXPECTED_V2_VOLUME_ID" \
-            upload "$private_root/gafu-v2.sqlite" /gafu-v2.sqlite --json >/dev/null
-          railway volume \
-            --project "$EXPECTED_PROJECT_ID" \
-            --environment "$EXPECTED_ENVIRONMENT_ID" \
-            --service "$EXPECTED_V2_SERVICE_ID" \
-            files --volume "$EXPECTED_V2_VOLUME_ID" \
-            upload "$private_root/kaishi-1.5k.local.json" /kaishi-1.5k.local.json --json >/dev/null
-
-          listing="$(railway volume \
-            --project "$EXPECTED_PROJECT_ID" \
-            --environment "$EXPECTED_ENVIRONMENT_ID" \
-            --service "$EXPECTED_V2_SERVICE_ID" \
-            files --volume "$EXPECTED_V2_VOLUME_ID" list / --json)"
+          # Uploads are content-verified, so a re-run that finds exactly the
+          # verified files skips the upload; any other non-empty content
+          # fails closed with the listing attached (names and sizes only).
           database_size="$(stat -c %s "$private_root/gafu-v2.sqlite")"
           seed_size="$(stat -c %s "$private_root/kaishi-1.5k.local.json")"
-          jq -e --argjson database_size "$database_size" --argjson seed_size "$seed_size" '
-            (.files | length) == 2
-            and any(.files[]; .name == "gafu-v2.sqlite" and .type == "file" and .size == $database_size)
-            and any(.files[]; .name == "kaishi-1.5k.local.json" and .type == "file" and .size == $seed_size)
-          ' <<<"$listing" >/dev/null
+          volume_matches() {
+            jq -e --argjson database_size "$database_size" --argjson seed_size "$seed_size" '
+              (.files | length) == 2
+              and any(.files[]; .name == "gafu-v2.sqlite" and .type == "file" and .size == $database_size)
+              and any(.files[]; .name == "kaishi-1.5k.local.json" and .type == "file" and .size == $seed_size)
+            ' <<<"$1" >/dev/null
+          }
+          if volume_matches "$listing"; then
+            echo "Volume already holds exactly the verified files; skipping upload."
+          else
+            jq -e '.files | length == 0' <<<"$listing" >/dev/null || {
+              echo "::error::Unexpected volume content:"
+              echo "$listing"
+              exit 1
+            }
+
+            railway volume \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" \
+              files --volume "$EXPECTED_V2_VOLUME_ID" \
+              upload "$private_root/gafu-v2.sqlite" /gafu-v2.sqlite --json >/dev/null
+            railway volume \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" \
+              files --volume "$EXPECTED_V2_VOLUME_ID" \
+              upload "$private_root/kaishi-1.5k.local.json" /kaishi-1.5k.local.json --json >/dev/null
+          fi
+
+          # Uploaded files can lag behind the upload call in listings; poll
+          # the exact match before concluding anything.
+          for attempt in $(seq 1 6); do
+            if listing="$(railway volume \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" \
+              files --volume "$EXPECTED_V2_VOLUME_ID" list / --json)" \
+              && volume_matches "$listing"; then
+              break
+            fi
+            echo "Uploaded files not yet visible (attempt $attempt); retrying."
+            sleep 10
+          done
+          volume_matches "$listing" || {
+            echo "::error::Uploaded files not verified:"
+            echo "$listing"
+            exit 1
+          }
           echo "The stopped V2 boundary now contains exactly the verified database and Kaishi manifest."
 
       - name: Activate and verify the private V2 service
