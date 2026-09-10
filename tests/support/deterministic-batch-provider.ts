@@ -70,6 +70,9 @@ export const createDeterministicBatchProvider = (
   readonly chargedRequests: number;
 } => {
   const responses = new Map<string, ProviderBatchResponse>();
+  // Keyed by the provider's own id, which is what resume asks for once a
+  // dispatch has been recorded.
+  const dispatchedResponses = new Map<string, ProviderBatchResponse>();
   const submissions: string[] = [];
   const retrievals: string[] = [];
   const charged = new Set<string>();
@@ -112,7 +115,7 @@ export const createDeterministicBatchProvider = (
     get chargedRequests() {
       return charged.size;
     },
-    submit: async (batch, requestKey, signal) => {
+    submit: async (batch, requestKey, dispatched, signal) => {
       submissions.push(batch.inputDigest);
       if (signal?.aborted === true) {
         return err({ kind: "cancelled", detail: "request was cancelled" });
@@ -126,22 +129,24 @@ export const createDeterministicBatchProvider = (
       const response = responses.get(requestKey) ?? responseFor(batch, requestKey);
       responses.set(requestKey, response);
       charged.add(requestKey);
+      if (options.retrievalAvailable !== false) {
+        dispatchedResponses.set(response.providerRequestId, response);
+      }
+      // The provider accepted the request: the caller can now name it even if
+      // the wait for output is interrupted.
+      await dispatched(response.providerRequestId);
       if (activeFailure !== undefined) {
         injection = undefined;
         return err(activeFailure.failure);
       }
       return ok(response);
     },
-    retrieve: async (requestKey, signal) => {
-      retrievals.push(requestKey);
+    retrieve: async (providerResponseId, signal) => {
+      retrievals.push(providerResponseId);
       if (signal?.aborted === true) {
         return err({ kind: "cancelled", detail: "retrieval was cancelled" });
       }
-      return ok(
-        options.retrievalAvailable === false
-          ? null
-          : (responses.get(requestKey) ?? null),
-      );
+      return ok(dispatchedResponses.get(providerResponseId) ?? null);
     },
   };
   return provider;

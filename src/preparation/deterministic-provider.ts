@@ -26,7 +26,7 @@ export const createDeterministicPreparationProvider = (): BatchProvider & {
       promptVersion: "preparation-v2",
     },
     submissions,
-    submit: async (batch, key, signal) => {
+    submit: async (batch, key, dispatched, signal) => {
       if (signal?.aborted === true) {
         return {
           ok: false,
@@ -34,8 +34,11 @@ export const createDeterministicPreparationProvider = (): BatchProvider & {
         };
       }
       submissions.push(batch.inputDigest);
-      const existing = responses.get(key);
-      if (existing !== undefined) return ok(existing);
+      const existing = responses.get(`fixture:${key}`);
+      if (existing !== undefined) {
+        await dispatched(existing.providerRequestId);
+        return ok(existing);
+      }
       const candidates: CandidateEvidence[] = batch.cues.flatMap((cue) => [
         ...cue.tokens
           .filter((token) => contentParts.has(token.broadPartOfSpeech))
@@ -75,9 +78,11 @@ export const createDeterministicPreparationProvider = (): BatchProvider & {
           outputTokens: candidates.length * 10,
         },
       };
-      responses.set(key, response);
+      responses.set(response.providerRequestId, response);
+      await dispatched(response.providerRequestId);
       return ok(response);
     },
-    retrieve: async (key) => ok(responses.get(key) ?? null),
+    retrieve: async (providerResponseId) =>
+      ok(responses.get(providerResponseId) ?? null),
   };
 };

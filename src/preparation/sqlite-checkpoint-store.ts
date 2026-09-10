@@ -12,6 +12,7 @@ type CheckpointRow = Readonly<{
   input_digest: string;
   state: BatchCheckpoint["state"];
   request_key: string | null;
+  provider_response_id: string | null;
   response_json: string | null;
 }>;
 
@@ -25,11 +26,19 @@ const decode = (row: CheckpointRow): BatchCheckpoint => {
     return { state: "pending", inputDigest: row.input_digest };
   }
   if (row.request_key === null) throw new Error("checkpoint request key is missing");
-  if (row.state === "requested" || row.state === "uncertain") {
+  if (row.state === "requested") {
     return {
-      state: row.state,
+      state: "requested",
       inputDigest: row.input_digest,
       requestKey: row.request_key,
+    };
+  }
+  if (row.state === "uncertain") {
+    return {
+      state: "uncertain",
+      inputDigest: row.input_digest,
+      requestKey: row.request_key,
+      providerResponseId: row.provider_response_id,
     };
   }
   if (row.response_json === null) throw new Error("completed response is missing");
@@ -49,7 +58,7 @@ export const createSqliteCheckpointStore = (
     (
       database
         .query(
-          `SELECT input_digest, state, request_key, response_json
+          `SELECT input_digest, state, request_key, provider_response_id, response_json
            FROM preparation_batch WHERE run_id = ? ORDER BY batch_order`,
         )
         .all(runId) as CheckpointRow[]
@@ -79,13 +88,33 @@ export const createSqliteCheckpointStore = (
       try {
         const result = database
           .query(
-            `UPDATE preparation_batch SET state = 'requested', request_key = ?
+            `UPDATE preparation_batch
+             SET state = 'requested', request_key = ?, provider_response_id = NULL
              WHERE run_id = ? AND input_digest = ? AND state IN ('pending', 'uncertain')`,
           )
           .run(requestKey, runId, inputDigest);
         return result.changes === 1
           ? ok(undefined)
           : err({ kind: "persistence", detail: "batch checkpoint is not requestable" });
+      } catch (cause) {
+        return err(failure(cause));
+      }
+    },
+    markDispatched: async (runId, inputDigest, requestKey, providerResponseId) => {
+      try {
+        const result = database
+          .query(
+            `UPDATE preparation_batch SET provider_response_id = ?
+             WHERE run_id = ? AND input_digest = ? AND request_key = ?
+               AND state = 'uncertain'`,
+          )
+          .run(providerResponseId, runId, inputDigest, requestKey);
+        return result.changes === 1
+          ? ok(undefined)
+          : err({
+              kind: "persistence",
+              detail: "batch checkpoint is not awaiting a dispatch",
+            });
       } catch (cause) {
         return err(failure(cause));
       }

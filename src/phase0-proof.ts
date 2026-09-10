@@ -163,7 +163,11 @@ const diagnosticProvider = (
       model: "fixture-v1",
       promptVersion: "diagnostic-v1",
     },
-    submit: async (batch: AnalysisBatch, requestKey: string) => {
+    submit: async (
+      batch: AnalysisBatch,
+      requestKey: string,
+      dispatched: (providerResponseId: string) => Promise<void>,
+    ) => {
       const response: ProviderBatchResponse = {
         providerRequestId: `diagnostic:${requestKey}`,
         candidates: batch.cues.flatMap((cue) => {
@@ -172,10 +176,12 @@ const diagnosticProvider = (
         }),
         usage: { inputTokens: null, outputTokens: null },
       };
-      responses.set(requestKey, response);
+      responses.set(response.providerRequestId, response);
+      await dispatched(response.providerRequestId);
       return ok(response);
     },
-    retrieve: async (requestKey) => ok(responses.get(requestKey) ?? null),
+    retrieve: async (providerResponseId) =>
+      ok(responses.get(providerResponseId) ?? null),
   };
 };
 

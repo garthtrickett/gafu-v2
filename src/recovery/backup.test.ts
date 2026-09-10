@@ -9,7 +9,10 @@ import { createDeterministicMaterialProvider } from "../learning-material/script
 import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
 import { createSubtitleImportInspector } from "../preparation/import.ts";
 import { phase3ImportPolicy } from "../preparation/import-contracts.ts";
-import { openPreparation } from "../preparation/preparation.ts";
+import {
+  openPreparation,
+  PREPARATION_SCHEMA_VERSION,
+} from "../preparation/preparation.ts";
 import { err, ok } from "../result.ts";
 import type { KnownWordSeed } from "../study/contracts.ts";
 import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
@@ -100,7 +103,7 @@ describe("backup recovery", () => {
         ok: true,
         value: {
           studySchemaVersion: 6,
-          preparationSchemaVersion: 1,
+          preparationSchemaVersion: PREPARATION_SCHEMA_VERSION,
           cardCount: 1,
           integrity: "ok",
           foreignKeys: "ok",
@@ -278,7 +281,7 @@ describe("backup recovery", () => {
       const database = new Database(source);
       for (const [table, version] of [
         ["schema_migration", 6],
-        ["preparation_migration", 1],
+        ["preparation_migration", PREPARATION_SCHEMA_VERSION],
         ["learning_material_migration", 1],
       ] as const) {
         database.exec(

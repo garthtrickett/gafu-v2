@@ -150,6 +150,48 @@ describe("complete resumable preparation batching", () => {
     expect(resumed.state).toBe("complete");
   });
 
+  test("a timeout after dispatch resumes by retrieval instead of stalling", async () => {
+    // The production shape: the provider accepted the request and is billing
+    // for it, but the wait for output was cut short. Three rounds of retrying
+    // must make progress rather than returning the same paused snapshot.
+    const timeout: ProviderFailure = { kind: "timeout", detail: "injected" };
+    const context = setup({
+      failure: { batchId: "batch-0001", failure: timeout, afterAccept: true },
+    });
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const interrupted = await context.batching.analyze(manifest);
+    expect(interrupted.state).toBe("paused");
+    expect(interrupted.failure?.kind).toBe("timeout");
+    expect(interrupted.batches[0]?.state).toBe("uncertain");
+    // Nothing to decide: the dispatched request can simply be read back.
+    expect(interrupted.possibleDuplicateCharge).toBe(false);
+
+    const resumed = await context.batching.analyze(manifest);
+    expect(resumed.state).toBe("complete");
+    expect(context.provider.retrievals).toHaveLength(1);
+    // The interrupted batch was recovered, not bought a second time.
+    expect(context.provider.chargedRequests).toBe(4);
+  });
+
+  test("an interrupted batch is retrievable before its first poll", async () => {
+    const context = setup();
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    await context.batching.analyze(manifest, { maxBatches: 1 });
+    // markDispatched lands between markUncertain and the commit, so a crash at
+    // any point after dispatch finds an id to resume from.
+    const uncertainAt = context.store.history.findIndex((event) =>
+      event.startsWith("uncertain:"),
+    );
+    const dispatchedAt = context.store.history.findIndex((event) =>
+      event.startsWith("dispatched:"),
+    );
+    const completedAt = context.store.history.findIndex((event) =>
+      event.startsWith("completed:"),
+    );
+    expect(uncertainAt).toBeLessThan(dispatchedAt);
+    expect(dispatchedAt).toBeLessThan(completedAt);
+  });
+
   test("never reissues completed digests on a complete rerun", async () => {
     const context = setup();
     const manifest = await context.batching.createManifest(batchingCues, 3);

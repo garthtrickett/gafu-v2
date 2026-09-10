@@ -305,11 +305,12 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     });
   };
 
-  // Chunk sizing aims for roughly ten progress updates per run without
-  // drowning small sets in preflight overhead: at least 5 batches so tiny
-  // runs still move visibly, at most 50 so a preflight stays cheap.
-  const chunkBatches = (estimated: number): number =>
-    Math.min(50, Math.max(5, Math.ceil(estimated / 10)));
+  // One batch per request. A batch asks a reasoning model for a candidate per
+  // content token and runs to minutes, so a multi-batch chunk would hold one
+  // HTTP request open long enough for an intermediary to drop it. Re-running
+  // preflight per batch costs a local retokenization, which is noise beside
+  // the batch itself, and it buys per-batch progress and a short retry.
+  const chunkBatches = 1;
 
   const stopAnalysis = (): void => {
     model.stopAnalysis = true;
@@ -373,7 +374,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
             jsonRequest("POST", {
               preflightToken: fresh.token,
               retryUncertain,
-              maxBatches: chunkBatches(fresh.estimatedRequests),
+              maxBatches: chunkBatches,
             }),
           );
         } finally {

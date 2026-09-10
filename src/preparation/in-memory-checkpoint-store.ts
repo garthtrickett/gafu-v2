@@ -12,7 +12,7 @@ type StoredRun = {
   checkpoints: Map<string, BatchCheckpoint>;
 };
 
-export type StoreFault = "open" | "requested" | "uncertain" | "complete";
+export type StoreFault = "open" | "requested" | "uncertain" | "dispatched" | "complete";
 
 export const createInMemoryCheckpointStore = (): CheckpointStore & {
   failNext: (operation: StoreFault) => void;
@@ -77,8 +77,30 @@ export const createInMemoryCheckpointStore = (): CheckpointStore & {
         state: "uncertain",
         inputDigest,
         requestKey,
+        providerResponseId: null,
       });
       history.push(`uncertain:${inputDigest}`);
+      return ok(undefined);
+    },
+    markDispatched: async (runId, inputDigest, requestKey, providerResponseId) => {
+      const failure = fail("dispatched");
+      if (failure !== null) return err(failure);
+      const run = find(runId, inputDigest);
+      if (run === null) return err({ kind: "persistence", detail: "batch missing" });
+      const current = run.checkpoints.get(inputDigest);
+      if (current?.state !== "uncertain" || current.requestKey !== requestKey) {
+        return err({
+          kind: "persistence",
+          detail: "batch checkpoint is not awaiting a dispatch",
+        });
+      }
+      run.checkpoints.set(inputDigest, {
+        state: "uncertain",
+        inputDigest,
+        requestKey,
+        providerResponseId,
+      });
+      history.push(`dispatched:${inputDigest}`);
       return ok(undefined);
     },
     complete: async (

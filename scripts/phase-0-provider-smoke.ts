@@ -8,6 +8,9 @@ import {
 
 const apiKey = process.env["OPENAI_API_KEY"] ?? "";
 const model = process.env["OPENAI_MODEL"] ?? "gpt-5.6-luna";
+// Defaults to the batch size the server actually uses, so the measured
+// duration is a bound on production batches rather than on a smaller fixture.
+const batchSize = Number(process.env["OPENAI_BATCH_SIZE"] ?? "20");
 const inputPrice = Number(process.env["OPENAI_INPUT_USD_PER_MILLION"] ?? "NaN");
 const outputPrice = Number(process.env["OPENAI_OUTPUT_USD_PER_MILLION"] ?? "NaN");
 
@@ -34,7 +37,8 @@ for (let runNumber = 1; runNumber <= 3; runNumber += 1) {
     apiKey: () => apiKey,
     model,
     promptVersion: "preparation-v1",
-    timeoutMs: 60_000,
+    timeoutMs: 30_000,
+    completionTimeoutMs: 15 * 60_000,
   });
   const batching = createPreparationBatching({
     provider,
@@ -42,7 +46,7 @@ for (let runNumber = 1; runNumber <= 3; runNumber += 1) {
     normalizationVersion: "nfkc-v1",
     analyzerVersion: "kuromoji-ipadic-v1",
   });
-  const manifest = await batching.createManifest(batchingCues, 3);
+  const manifest = await batching.createManifest(batchingCues, batchSize);
   const started = performance.now();
   const result = await batching.analyze(manifest);
   const durationMs = Math.round(performance.now() - started);
