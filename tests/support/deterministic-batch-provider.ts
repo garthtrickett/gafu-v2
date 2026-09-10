@@ -60,7 +60,7 @@ export const createDeterministicBatchProvider = (
     failure?: FailureInjection;
     invalidEvidence?: Readonly<{
       batchId: string;
-      kind: "cueId" | "span";
+      kind: "cueId" | "span" | "omit" | "canonicalKey";
     }>;
     retrievalAvailable?: boolean;
     /** Keep injecting the failure instead of clearing it after one hit. */
@@ -85,13 +85,22 @@ export const createDeterministicBatchProvider = (
   ): ProviderBatchResponse => {
     const output = batch.cues.flatMap((cue) => candidates.get(cue.cueId) ?? []);
     if (batch.batchId === options.invalidEvidence?.batchId && output[0] !== undefined) {
-      output[0] =
-        options.invalidEvidence.kind === "cueId"
-          ? { ...output[0], cueId: "cue-that-was-never-in-the-batch" }
-          : {
-              ...output[0],
-              span: { ...output[0].span, end: output[0].span.end + 1 },
-            };
+      const kind = options.invalidEvidence.kind;
+      if (kind === "omit") {
+        output.shift();
+      } else if (kind === "cueId") {
+        output[0] = { ...output[0], cueId: "cue-that-was-never-in-the-batch" };
+      } else if (kind === "canonicalKey") {
+        output[0] = {
+          ...output[0],
+          canonicalKey: `${output[0].canonicalKey}-reformatted`,
+        };
+      } else {
+        output[0] = {
+          ...output[0],
+          span: { ...output[0].span, end: output[0].span.end + 1 },
+        };
+      }
     }
     return {
       providerRequestId: `fake:${requestKey}`,

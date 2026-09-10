@@ -8,6 +8,7 @@ import type {
   ProviderBatchResponse,
   ProviderFailure,
 } from "./batching-contracts.ts";
+import { canonicalVocabulary, isContentToken } from "./evidence-expectations.ts";
 
 export type OpenAiFetch = (
   input: string | URL | Request,
@@ -87,6 +88,12 @@ const candidateSchema = {
  *   `受身形`, `の ( nominalizer )`, `〜ている` -- and mostly does not occur in
  *   the cue. Each occurrence is flattened to the token shape, which already
  *   carries the `surface` the candidate contract asks it to copy.
+ * - `canonicalKey` had to be built from a rule, and the rule as written does
+ *   not cover a null reading: the validator wants `グリズリー:` with a
+ *   trailing colon. It is precomputed here so the model copies a string.
+ *
+ * Non-content tokens are dropped, so the answer's size is fixed by the
+ * payload rather than by the model agreeing with `contentParts`.
  */
 const labelledBatch = (
   cues: AnalysisBatch["cues"],
@@ -101,10 +108,18 @@ const labelledBatch = (
     return {
       cueId: label,
       normalizedJapanese: cue.normalizedJapanese,
-      tokens: cue.tokens,
+      // Only the tokens that earn a candidate, so "one per supplied token"
+      // is countable rather than a part-of-speech judgement the model has to
+      // reach the same way the validator does.
+      tokens: cue.tokens
+        .filter((token) => isContentToken(token.broadPartOfSpeech))
+        .map((token) => ({
+          ...token,
+          canonicalKey: canonicalVocabulary(token.lemma, token.reading),
+        })),
       grammarEvidence: cue.grammarEvidence.flatMap((item) =>
         item.spans.map((span) => ({
-          canonicalForm: item.canonicalForm,
+          canonicalKey: item.canonicalForm,
           surface: cue.normalizedJapanese.slice(span.start, span.end),
           span,
         })),
@@ -115,7 +130,7 @@ const labelledBatch = (
 };
 
 const instructions =
-  "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.";
+  "Return exactly one candidate for every supplied token and exactly one for every supplied grammarEvidence entry, and nothing else. Copy cueId, canonicalKey, surface, and span verbatim from the entry you are answering; never derive, reformat, or shorten them. Tokens are vocabulary and take the senseId you choose: a short stable label for the meaning used in this cue. grammarEvidence entries are grammar and take senseId null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese and are supplied; do not compute them. Put plausible alternative sense labels in ambiguity and invent no evidence.";
 
 const detail = (value: unknown): string =>
   value instanceof Error ? value.message : String(value);

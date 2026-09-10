@@ -11,6 +11,7 @@ import type {
   PreparationBatching,
   ProviderBatchResponse,
 } from "./batching-contracts.ts";
+import { compareAnnotations } from "./evidence-expectations.ts";
 import { createAnalysisManifest } from "./manifest.ts";
 import { mergeCompletedBatches } from "./merge.ts";
 
@@ -46,6 +47,14 @@ const validateResponse = (
         detail: `invalid normalized span for ${candidate.cueId}`,
       };
     }
+  }
+  // Completeness is checked here, as the batch commits, rather than only once
+  // the run is whole. Cues partition into batches, so agreement per batch is
+  // agreement on the manifest -- and a discrepancy costs this one batch to
+  // ask again instead of discarding every paid batch in the run.
+  const disagreement = compareAnnotations(batch.cues, response.candidates);
+  if (disagreement !== null) {
+    return { kind: "invalidCueEvidence", detail: disagreement };
   }
   return null;
 };
