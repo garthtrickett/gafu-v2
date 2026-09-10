@@ -80,6 +80,17 @@ const jsonRequest = (method: string, value?: unknown): RequestInit => ({
       }),
 });
 
+/**
+ * The kind alone cannot be acted on: `invalidCueEvidence` could be an unknown
+ * cue or a span that does not reconstruct, in one of hundreds of candidates.
+ * The detail names which, and it is already carried in the snapshot.
+ */
+const describeFailure = (failure: PreparationSnapshot["failure"]): string => {
+  if (failure === null) return "unknown";
+  const detail = failure.detail.trim();
+  return detail === "" ? failure.kind : `${failure.kind} (${detail})`;
+};
+
 const acceptedEpisodes = (report: ImportReport): DraftEpisode[] =>
   report.entries.flatMap((entry) =>
     entry.outcome === "accepted"
@@ -403,7 +414,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           model.progress = null;
           model.draft = null;
           await refreshLists();
-          return `Analysis failed: ${result.failure?.kind ?? "unknown"}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+          return `Analysis failed: ${describeFailure(result.failure)}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
         // A round that names its failure has already said why it made no
         // progress. Repeating it twice more only buries the cause inside a
@@ -412,7 +423,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           model.progress = null;
           model.draft = null;
           await refreshLists();
-          return `Analysis paused: ${result.failure.kind}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+          return `Analysis paused: ${describeFailure(result.failure)}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
         if (stalledRounds >= 3) {
           model.progress = null;

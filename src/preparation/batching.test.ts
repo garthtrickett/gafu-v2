@@ -264,9 +264,31 @@ describe("complete resumable preparation batching", () => {
       expect(result.state).toBe("failed");
       expect(result.failure?.kind).toBe("invalidCueEvidence");
       expect(result.merged).toBeNull();
-      expect(result.batches.at(-1)?.state).toBe("uncertain");
+      // Not left dispatched: a rejected response is billed but worthless, and
+      // caching it would replay the same rejection on every resume.
+      expect(result.batches.at(-1)?.state).toBe("pending");
     },
   );
+
+  test("a rejected response is asked again instead of replayed", async () => {
+    const context = setup({
+      invalidEvidence: { batchId: "batch-0001", kind: "span" },
+    });
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const first = await context.batching.analyze(manifest);
+    expect(first.state).toBe("failed");
+    // The detail names the offending cue, which the kind alone cannot.
+    expect(first.failure?.detail).toContain("episode-1:001");
+
+    const submissions = context.provider.submissions.length;
+    const retrievals = context.provider.retrievals.length;
+    const second = await context.batching.analyze(manifest);
+    // The old shape retrieved the same invalid output and re-failed on it,
+    // then demanded a duplicate-charge decision once retention expired.
+    expect(context.provider.submissions.length).toBe(submissions + 1);
+    expect(context.provider.retrievals.length).toBe(retrievals);
+    expect(second.possibleDuplicateCharge).toBe(false);
+  });
 
   test("rejects incompatible resume metadata", async () => {
     const context = setup();

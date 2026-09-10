@@ -71,6 +71,23 @@ const snapshot = (
 });
 
 /**
+ * Whether a failure means a response arrived and was rejected locally. Such a
+ * response is billed but worthless, and caching it would replay the same
+ * rejection on every resume instead of asking the provider again.
+ */
+const outputIsUnusable = (failure: BatchFailure): boolean => {
+  switch (failure.kind) {
+    case "invalidCueEvidence":
+    case "malformedStructure":
+    case "incompleteResponse":
+    case "refusal":
+      return true;
+    default:
+      return false;
+  }
+};
+
+/**
  * Whether a failed dispatch might have reached the provider and been billed.
  * A rejection carries the provider's own refusal to run the request, so it is
  * evidence that nothing was generated; a lost or abandoned connection is not.
@@ -140,7 +157,13 @@ export const createPreparationBatching = (dependencies: {
     current: readonly BatchCheckpoint[],
   ): Promise<AnalysisRunSnapshot | null> => {
     const invalid = validateResponse(batch, response);
-    if (invalid !== null) return pause(manifest, current, invalid);
+    if (invalid !== null) {
+      // Paid for but unusable. Releasing keeps the batch from completing, as
+      // an invalid span must, without caching the rejection for every later
+      // resume to trip over.
+      await dependencies.store.release(manifest.runId, batch.inputDigest, key);
+      return pause(manifest, (await refresh(manifest)) ?? current, invalid);
+    }
     const completed = await dependencies.store.complete(
       manifest.runId,
       batch.inputDigest,
@@ -201,6 +224,14 @@ export const createPreparationBatching = (dependencies: {
                   options.signal,
                 );
           if (!retrieved.ok) {
+            if (outputIsUnusable(retrieved.error)) {
+              await dependencies.store.release(manifest.runId, batch.inputDigest, key);
+              return pause(
+                manifest,
+                (await refresh(manifest)) ?? checkpoints,
+                retrieved.error,
+              );
+            }
             return pause(manifest, checkpoints, retrieved.error);
           }
           if (retrieved.value !== null) {
@@ -258,11 +289,16 @@ export const createPreparationBatching = (dependencies: {
           );
           const unanswerable =
             dispatched?.state === "uncertain" && dispatched.providerResponseId === null;
-          if (unanswerable && !mayHaveBeenBilled(submitted.error)) {
-            // The provider refused to run it, so there is nothing to retrieve
-            // and nothing to pay for again. Leaving it dispatched would make
-            // the next attempt demand a duplicate-charge decision it does not
-            // need, and would block every later batch behind it.
+          if (
+            unanswerable &&
+            (!mayHaveBeenBilled(submitted.error) || outputIsUnusable(submitted.error))
+          ) {
+            // Either the provider refused to run it -- nothing generated, so
+            // nothing to retrieve and nothing to repay -- or a response
+            // arrived and was rejected locally, which is billed but worthless.
+            // Both must return to pending: leaving them dispatched would make
+            // the next attempt replay the rejection or demand a
+            // duplicate-charge decision it does not need.
             await dependencies.store.release(manifest.runId, batch.inputDigest, key);
             latest = (await refresh(manifest)) ?? latest;
             return pause(manifest, latest, submitted.error, false);
