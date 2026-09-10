@@ -274,8 +274,10 @@ jobs:
           ' <<<"$status" >/dev/null
           echo "guard: v1 service ok"
           # The V2 service is either untouched (pristine) or exactly where a
-          # previous gated run stopped: source connected to this repository's
-          # main with no data uploaded yet. Anything else fails closed here
+          # previous gated run stopped: source connected to this repository
+          # with no data uploaded yet. The status view exposes only repo and
+          # image (no branch), so the bootstrap step below always reconnects
+          # branch main authoritatively. Anything else fails closed here
           # before any mutation. The volume-emptiness and domain assertions
           # below apply to both states, so no data can be overwritten.
           v2_boundary="$(jq -r --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
@@ -290,7 +292,7 @@ jobs:
                 and .[0].latestDeployment == null
                 and (.[0].activeDeployments | length) == 0 then "pristine"
               elif .[0].source.repo == "garthtrickett/gafu-v2"
-                and .[0].source.branch == "main" then "resumed"
+                and .[0].source.image == null then "resumed"
               else "invalid" end
           ' <<<"$status")"
           echo "V2 boundary state: $v2_boundary"
@@ -370,21 +372,18 @@ jobs:
             --raw-var environmentId="$EXPECTED_ENVIRONMENT_ID" \
             --var 'input={"healthcheckPath":"/healthz","healthcheckTimeout":300,"numReplicas":1,"restartPolicyType":"ON_FAILURE","restartPolicyMaxRetries":3}' \
             --compact | jq -e '.data | has("serviceInstanceUpdate")' >/dev/null
-          # On a pristine boundary the source is connected here; on a resumed
-          # boundary the guard already verified it points at this
-          # repository's main, so reconnecting would only risk an error.
-          if [ "${BOUNDARY_STATE:-invalid}" = pristine ]; then
-            railway service source connect \
-              --repo garthtrickett/gafu-v2 \
-              --branch main \
-              --project "$EXPECTED_PROJECT_ID" \
-              --environment "$EXPECTED_ENVIRONMENT_ID" \
-              --service "$EXPECTED_V2_SERVICE_ID" \
-              --json >/dev/null
-          elif [ "$BOUNDARY_STATE" != resumed ]; then
-            echo "::error::Unknown boundary state; refusing to mutate Railway."
-            exit 1
-          fi
+          # The source is (re)connected on every run: on pristine it is the
+          # first connection, on resume it re-pins branch main
+          # authoritatively (the status view cannot report the branch).
+          # A same-target reconnect is idempotent; any real failure here
+          # fails the run visibly before the deployment wait below.
+          railway service source connect \
+            --repo garthtrickett/gafu-v2 \
+            --branch main \
+            --project "$EXPECTED_PROJECT_ID" \
+            --environment "$EXPECTED_ENVIRONMENT_ID" \
+            --service "$EXPECTED_V2_SERVICE_ID" \
+            --json >/dev/null
 
           for _ in $(seq 1 120); do
             deployment="$(railway service status \
