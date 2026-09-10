@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readBoundedBody } from "../local-api.ts";
 import { err, ok, type Result } from "../result.ts";
 import type {
+  AnalysisBatch,
   BatchProvider,
   CandidateEvidence,
   ProviderBatchResponse,
@@ -70,6 +71,29 @@ const candidateSchema = {
     ambiguity: { type: "array", items: { type: "string" } },
   },
 } as const;
+
+/**
+ * What the model is shown for a batch. Tokens already carry the `surface` the
+ * candidate contract asks it to copy; grammar evidence carried only a
+ * canonical form, which is a label -- `受身形`, `の ( nominalizer )`, `〜ている`
+ * -- and mostly does not occur in the cue at all. Copying it produced a span
+ * that could not reconstruct, and one such candidate rejects its whole batch.
+ * Flattening each occurrence to the token shape gives the model a surface to
+ * copy instead of an offset to compute.
+ */
+const providerCues = (cues: AnalysisBatch["cues"]) =>
+  cues.map((cue) => ({
+    cueId: cue.cueId,
+    normalizedJapanese: cue.normalizedJapanese,
+    tokens: cue.tokens,
+    grammarEvidence: cue.grammarEvidence.flatMap((item) =>
+      item.spans.map((span) => ({
+        canonicalForm: item.canonicalForm,
+        surface: cue.normalizedJapanese.slice(span.start, span.end),
+        span,
+      })),
+    ),
+  }));
 
 const instructions =
   "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.";
@@ -380,7 +404,7 @@ export const createOpenAiBatchProvider = (
               gafu_batch_id: batch.batchId,
             },
             instructions,
-            input: JSON.stringify({ cues: batch.cues }),
+            input: JSON.stringify({ cues: providerCues(batch.cues) }),
             text: {
               format: {
                 type: "json_schema",

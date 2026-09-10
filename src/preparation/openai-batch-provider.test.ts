@@ -166,6 +166,77 @@ describe("OpenAI preparation provider adapter", () => {
     if (!missing.ok) expect(missing.error.kind).toBe("authentication");
   });
 
+  test("shows a copyable surface for every grammar occurrence", async () => {
+    // The candidate contract asks the model to copy `surface` and `span`. For
+    // grammar it previously had only a canonical form, which is a label and
+    // usually absent from the cue, so it had to compute UTF-16 offsets -- and
+    // one wrong span rejects the whole batch.
+    const grammarBatch: AnalysisBatch = {
+      ...batch,
+      cues: [
+        {
+          cueId: "cue-1",
+          normalizedJapanese: "毎日走っているので、疲れた。",
+          tokens: [],
+          grammarEvidence: [
+            {
+              canonicalForm: "〜ている",
+              spans: [
+                {
+                  start: 4,
+                  end: 7,
+                  unit: "utf16-code-unit",
+                  normalization: "nfkc-v1",
+                },
+              ],
+            },
+            {
+              canonicalForm: "受身形",
+              spans: [
+                {
+                  start: 7,
+                  end: 9,
+                  unit: "utf16-code-unit",
+                  normalization: "nfkc-v1",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    let sent: { cues: { normalizedJapanese: string; grammarEvidence: unknown[] }[] } = {
+      cues: [],
+    };
+    await provider(async (_input, init) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { input: string };
+        sent = JSON.parse(body.input);
+        return Response.json({ id: "resp_test", status: "queued" });
+      }
+      return Response.json(successBody);
+    }).submit(grammarBatch, "request-key", ignoreDispatch);
+
+    const cue = sent.cues[0];
+    const occurrences = cue?.grammarEvidence as readonly {
+      canonicalForm: string;
+      surface: string;
+      span: { start: number; end: number };
+    }[];
+    expect(occurrences).toHaveLength(2);
+    for (const occurrence of occurrences) {
+      // Copying the surface verbatim is enough to satisfy the validator.
+      expect(
+        cue?.normalizedJapanese.slice(occurrence.span.start, occurrence.span.end),
+      ).toBe(occurrence.surface);
+    }
+    // The label is still supplied for canonicalKey, and still is not the text.
+    expect(occurrences[0]?.canonicalForm).toBe("〜ている");
+    expect(occurrences[0]?.surface).toBe("ている");
+    expect(occurrences[1]?.canonicalForm).toBe("受身形");
+    expect(occurrences[1]?.surface).toBe("ので");
+  });
+
   test("dispatches in the background and polls until the response is terminal", async () => {
     const urls: string[] = [];
     let dispatchBody: Record<string, unknown> = {};
