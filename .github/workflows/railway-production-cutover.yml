@@ -252,11 +252,16 @@ jobs:
             --project "$EXPECTED_PROJECT_ID" \
             --environment "$EXPECTED_ENVIRONMENT_ID" \
             --service "$EXPECTED_V2_SERVICE_ID"
-          status="$(railway status --json)"
+          echo "guard: linked"
+          status="$(railway status --json 2>"$RUNNER_TEMP/status.err" || { cat "$RUNNER_TEMP/status.err"; exit 1; })"
+          echo "guard: status bytes ${#status}"
+          test "$(jq -r '.id' <<<"$status")" = "$EXPECTED_PROJECT_ID"
+          echo "guard: project ok"
           test "$(jq -r '.id' <<<"$status")" = "$EXPECTED_PROJECT_ID"
           jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" '
             any(.environments.edges[]; .node.id == $environment_id and .node.name == "production" and .node.canAccess)
           ' <<<"$status" >/dev/null
+          echo "guard: environment ok"
           jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V1_SERVICE_ID" '
             [
               .environments.edges[].node
@@ -267,6 +272,7 @@ jobs:
             | ($instances | length) == 1
               and $instances[0].source.repo == "garthtrickett/gafu"
           ' <<<"$status" >/dev/null
+          echo "guard: v1 service ok"
           # The V2 service is either untouched (pristine) or exactly where a
           # previous gated run stopped: source connected to this repository's
           # main with no data uploaded yet. Anything else fails closed here
@@ -306,6 +312,7 @@ jobs:
               and $volumes[0].mountPath == "/data"
               and $volumes[0].status == "Ready"
           ' <<<"$volumes" >/dev/null
+          echo "guard: volume ok"
           v2_domains="$(railway domain list \
             --project "$EXPECTED_PROJECT_ID" \
             --environment "$EXPECTED_ENVIRONMENT_ID" \
