@@ -411,8 +411,11 @@ jobs:
           set -euo pipefail
           # Volume file operations travel over SSH. Token auth carries no SSH
           # identity, so mint a single-use keypair for this run only. The
-          # workspace token auto-scopes registration to the workspace.
-          key_path="$RUNNER_TEMP/gafu-v2-cutover-ssh"
+          # 5.41.2 CLI only discovers keys in the agent or ~/.ssh, so the
+          # keypair lives there rather than RUNNER_TEMP. The workspace token
+          # auto-scopes registration to the workspace.
+          key_path="$HOME/.ssh/gafu-v2-cutover-$GITHUB_RUN_ID"
+          mkdir -p "$HOME/.ssh"
           ssh-keygen -t ed25519 -N '' -f "$key_path" -C "gafu-v2-cutover-$GITHUB_RUN_ID" -q
           railway ssh keys add -k "$key_path.pub" -n "gafu-v2-cutover-$GITHUB_RUN_ID" >/dev/null
           echo "CUTOVER_SSH_KEY=gafu-v2-cutover-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
@@ -544,3 +547,4 @@ jobs:
           else
             echo "No ephemeral SSH key to remove."
           fi
+          rm -f "$HOME/.ssh/gafu-v2-cutover-$GITHUB_RUN_ID" "$HOME/.ssh/gafu-v2-cutover-$GITHUB_RUN_ID.pub"
