@@ -305,10 +305,11 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     });
   };
 
-  // One analyze call covers this many batches, then checkpoints and
-  // reports back. Twenty keeps each round trip to a few paid requests while
-  // completed checkpoints make every chunk resumable without repaying.
-  const ANALYSIS_CHUNK_BATCHES = 20;
+  // Chunk sizing aims for roughly ten progress updates per run without
+  // drowning small sets in preflight overhead: at least 5 batches so tiny
+  // runs still move visibly, at most 50 so a preflight stays cheap.
+  const chunkBatches = (estimated: number): number =>
+    Math.min(50, Math.max(5, Math.ceil(estimated / 10)));
 
   const stopAnalysis = (): void => {
     model.stopAnalysis = true;
@@ -325,6 +326,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     void run(async (isCurrent) => {
       let total = 0;
       let completed = 0;
+      let stalledRounds = 0;
       for (;;) {
         if (model.stopAnalysis) {
           model.progress = null;
@@ -336,17 +338,51 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         );
         if (!isCurrent()) return "Analysis superseded.";
         model.preflight = fresh;
-        const result = await requestJson<PreparationSnapshot>(
-          `${url}/analyze`,
-          jsonRequest("POST", {
-            preflightToken: fresh.token,
-            retryUncertain,
-            maxBatches: ANALYSIS_CHUNK_BATCHES,
-          }),
-        );
+        total = Math.max(total, fresh.estimatedRequests);
+        model.progress = { completed, total };
+        draw();
+        // Poll the live run snapshot while the chunk works: batch
+        // checkpoints commit per batch, so this moves even mid-chunk.
+        // Counts only ever move forward; stale reads are ignored.
+        const poller = window.setInterval(() => {
+          if (!isCurrent()) return;
+          void requestJson<SubtitleSetSnapshot>(url, { method: "GET" })
+            .then((live) => {
+              if (!isCurrent()) return;
+              const analysis = live.analysis;
+              if (analysis !== null && analysis.completedBatches > completed) {
+                completed = analysis.completedBatches;
+                total = analysis.totalBatches;
+                model.progress = { completed, total };
+                draw();
+              }
+            })
+            .catch(() => {
+              // Poll failures are informational only; the chunk itself
+              // reports authoritatively when it resolves.
+            });
+        });
+        let result: PreparationSnapshot;
+        try {
+          result = await requestJson<PreparationSnapshot>(
+            `${url}/analyze`,
+            jsonRequest("POST", {
+              preflightToken: fresh.token,
+              retryUncertain,
+              maxBatches: chunkBatches(fresh.estimatedRequests),
+            }),
+          );
+        } finally {
+          window.clearInterval(poller);
+        }
         if (!isCurrent()) return "Analysis superseded.";
         model.result = result;
-        completed = result.completedBatches;
+        if (result.completedBatches > completed) {
+          completed = result.completedBatches;
+          stalledRounds = 0;
+        } else {
+          stalledRounds += 1;
+        }
         total = result.totalBatches;
         model.progress = { completed, total };
         draw();
@@ -362,8 +398,14 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           await refreshLists();
           return `Analysis failed: ${result.failure?.kind ?? "unknown"}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
-        // paused or incomplete: loop with a fresh preflight, which resumes
-        // the durable checkpoints left by this chunk.
+        if (stalledRounds >= 3) {
+          model.progress = null;
+          model.draft = null;
+          await refreshLists();
+          return `Analysis stalled: three rounds finished no new batches${result.failure === null ? "" : ` (last error: ${result.failure.kind})`}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+        }
+        // paused or incomplete with progress: loop with a fresh preflight,
+        // which resumes the durable checkpoints left by this chunk.
       }
     });
   };
