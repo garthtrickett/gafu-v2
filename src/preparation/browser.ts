@@ -327,6 +327,10 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       let total = 0;
       let completed = 0;
       let stalledRounds = 0;
+      // Rounds overwrite each other's recorded failure server-side, so a
+      // failing round followed by clean paused rounds would report no error.
+      // Remember the latest named failure until progress resumes.
+      let lastFailure: string | null = null;
       for (;;) {
         if (model.stopAnalysis) {
           model.progress = null;
@@ -380,8 +384,10 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         if (result.completedBatches > completed) {
           completed = result.completedBatches;
           stalledRounds = 0;
+          lastFailure = null;
         } else {
           stalledRounds += 1;
+          if (result.failure !== null) lastFailure = result.failure.kind;
         }
         total = result.totalBatches;
         model.progress = { completed, total };
@@ -402,7 +408,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           model.progress = null;
           model.draft = null;
           await refreshLists();
-          return `Analysis stalled: three rounds finished no new batches${result.failure === null ? "" : ` (last error: ${result.failure.kind})`}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+          return `Analysis stalled: three rounds finished no new batches${lastFailure === null ? "" : ` (last error: ${lastFailure})`}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
         // paused or incomplete with progress: loop with a fresh preflight,
         // which resumes the durable checkpoints left by this chunk.
