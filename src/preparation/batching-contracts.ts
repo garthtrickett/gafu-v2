@@ -159,6 +159,12 @@ export type CheckpointStore = Readonly<{
 export type AnalyzeOptions = Readonly<{
   signal?: AbortSignal;
   retryUncertain?: boolean;
+  /**
+   * Stop cleanly after this many batches newly complete in this call.
+   * Already-completed batches do not count toward the limit. Absent (or
+   * non-positive) means no limit.
+   */
+  maxBatches?: number;
 }>;
 
 export type PreparationBatching = Readonly<{

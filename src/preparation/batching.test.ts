@@ -205,4 +205,43 @@ describe("complete resumable preparation batching", () => {
     expect(result.failure?.kind).toBe("cancelled");
     expect(result.batches[0]?.state).toBe("uncertain");
   });
+
+  test("maxBatches pauses cleanly and resumes without repaying", async () => {
+    const context = setup();
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const first = await context.batching.analyze(manifest, { maxBatches: 2 });
+    expect(first.state).toBe("paused");
+    expect(first.failure).toBeNull();
+    expect(first.possibleDuplicateCharge).toBe(false);
+    expect(first.batches.filter((batch) => batch.state === "completed")).toHaveLength(
+      2,
+    );
+    const resumed = await context.batching.analyze(manifest);
+    expect(resumed.state).toBe("complete");
+    expect(resumed.batches.filter((batch) => batch.state === "completed")).toHaveLength(
+      4,
+    );
+    const reference = setup();
+    const complete = await reference.batching.analyze(
+      await reference.batching.createManifest(batchingCues, 3),
+    );
+    expect(resumed.merged).toEqual(complete.merged);
+  });
+
+  test("maxBatches covering every batch completes instead of pausing", async () => {
+    const context = setup();
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const result = await context.batching.analyze(manifest, { maxBatches: 4 });
+    expect(result.state).toBe("complete");
+    expect(result.batches.filter((batch) => batch.state === "completed")).toHaveLength(
+      4,
+    );
+  });
+
+  test("non-positive maxBatches means no limit", async () => {
+    const context = setup();
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const result = await context.batching.analyze(manifest, { maxBatches: 0 });
+    expect(result.state).toBe("complete");
+  });
 });

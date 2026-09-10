@@ -111,6 +111,12 @@ export type AnalyzeCommand = Readonly<{
   preflightToken: string;
   retryUncertain?: boolean;
   signal?: AbortSignal;
+  /**
+   * Stop cleanly after this many batches complete in this call. Reached
+   * batches stay checkpointed, so the next call resumes without repaying.
+   * Absent (or non-positive) means no limit.
+   */
+  maxBatches?: number;
 }>;
 
 export type CorrectionCommand = Readonly<{
