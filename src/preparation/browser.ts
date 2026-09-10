@@ -80,6 +80,17 @@ const jsonRequest = (method: string, value?: unknown): RequestInit => ({
       }),
 });
 
+/**
+ * The kind alone cannot be acted on: `invalidCueEvidence` could be an unknown
+ * cue or a span that does not reconstruct, in one of hundreds of candidates.
+ * The detail names which, and it is already carried in the snapshot.
+ */
+const describeFailure = (failure: PreparationSnapshot["failure"]): string => {
+  if (failure === null) return "unknown";
+  const detail = failure.detail.trim();
+  return detail === "" ? failure.kind : `${failure.kind} (${detail})`;
+};
+
 const acceptedEpisodes = (report: ImportReport): DraftEpisode[] =>
   report.entries.flatMap((entry) =>
     entry.outcome === "accepted"
@@ -349,6 +360,11 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         // Poll the live run snapshot while the chunk works: batch
         // checkpoints commit per batch, so this moves even mid-chunk.
         // Counts only ever move forward; stale reads are ignored.
+        //
+        // The delay is required. setInterval with none defaults to 0, which
+        // browsers clamp to ~4ms, so this fired hundreds of times a second
+        // against a server already waiting on the provider. A batch takes
+        // minutes, so seconds of granularity is ample.
         const poller = window.setInterval(() => {
           if (!isCurrent()) return;
           void requestJson<SubtitleSetSnapshot>(url, { method: "GET" })
@@ -366,7 +382,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
               // Poll failures are informational only; the chunk itself
               // reports authoritatively when it resolves.
             });
-        });
+        }, 2_000);
         let result: PreparationSnapshot;
         try {
           result = await requestJson<PreparationSnapshot>(
@@ -403,7 +419,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           model.progress = null;
           model.draft = null;
           await refreshLists();
-          return `Analysis failed: ${result.failure?.kind ?? "unknown"}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+          return `Analysis failed: ${describeFailure(result.failure)}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
         // A round that names its failure has already said why it made no
         // progress. Repeating it twice more only buries the cause inside a
@@ -412,7 +428,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
           model.progress = null;
           model.draft = null;
           await refreshLists();
-          return `Analysis paused: ${result.failure.kind}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+          return `Analysis paused: ${describeFailure(result.failure)}. Finished batches are saved; fix the cause and Analyze resumes them.`;
         }
         if (stalledRounds >= 3) {
           model.progress = null;
