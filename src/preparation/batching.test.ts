@@ -192,6 +192,52 @@ describe("complete resumable preparation batching", () => {
     expect(dispatchedAt).toBeLessThan(completedAt);
   });
 
+  test.each(["authentication", "permission", "rateLimit"] as const)(
+    "a %s rejection is not a possible duplicate charge and does not latch",
+    async (kind) => {
+      // The provider refused to run the request, so nothing was generated and
+      // nothing was billed. Warning about a second charge would be false, and
+      // holding the batch dispatched would block every later batch.
+      const context = setup({
+        failure: {
+          batchId: "batch-0001",
+          failure: { kind, detail: "injected" },
+          afterAccept: false,
+        },
+      });
+      const manifest = await context.batching.createManifest(batchingCues, 3);
+      const rejected = await context.batching.analyze(manifest);
+      expect(rejected.state).toBe("paused");
+      expect(rejected.failure?.kind).toBe(kind);
+      expect(rejected.possibleDuplicateCharge).toBe(false);
+      expect(rejected.batches[0]?.state).toBe("pending");
+
+      // Fixing the cause needs no duplicate-charge decision.
+      const resumed = await context.batching.analyze(manifest);
+      expect(resumed.state).toBe("complete");
+      expect(context.provider.chargedRequests).toBe(4);
+    },
+  );
+
+  test("a rejected round keeps naming its cause instead of falling silent", async () => {
+    const context = setup({
+      failure: {
+        batchId: "batch-0001",
+        failure: { kind: "authentication", detail: "injected" },
+        afterAccept: false,
+      },
+      alwaysFail: true,
+    });
+    const manifest = await context.batching.createManifest(batchingCues, 3);
+    const first = await context.batching.analyze(manifest);
+    const second = await context.batching.analyze(manifest);
+    expect(first.failure?.kind).toBe("authentication");
+    // The old shape reported `null` here, which the UI showed as an unexplained
+    // stall rather than as a rejected key.
+    expect(second.failure?.kind).toBe("authentication");
+    expect(second.possibleDuplicateCharge).toBe(false);
+  });
+
   test("never reissues completed digests on a complete rerun", async () => {
     const context = setup();
     const manifest = await context.batching.createManifest(batchingCues, 3);

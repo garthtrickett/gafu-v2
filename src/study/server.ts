@@ -642,7 +642,8 @@ const openedPreparation = openPreparation({
   analyzer,
   grammar: declaredGrammarDetector,
   provider: preparationProvider,
-  providerConfigured: () => fakeAi || keyCustody.isConfigured(),
+  providerConfigured: async (signal) =>
+    fakeAi || (await keyCustody.ensureUsable(signal)),
   batchSize: 20,
 });
 if (!openedPreparation.ok) {

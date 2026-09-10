@@ -38,6 +38,66 @@ describe("server-side provider key custody spike", () => {
     expect(observed).toEqual(["first-secret", "second-secret"]);
   });
 
+  test("verifies an environment-seeded key once, on first use", async () => {
+    let verifications = 0;
+    const custody = createProviderKeyCustody(
+      {
+        verify: async () => {
+          verifications += 1;
+          return ok(undefined);
+        },
+      },
+      "sk-deployed",
+    );
+    expect(await custody.ensureUsable()).toBe(true);
+    expect(await custody.ensureUsable()).toBe(true);
+    // Verified once and remembered: the scope panel is drawn on every preflight.
+    expect(verifications).toBe(1);
+  });
+
+  test("an environment-seeded key the provider rejects is not usable", async () => {
+    const custody = createProviderKeyCustody(
+      {
+        verify: async () =>
+          err({ kind: "authentication", detail: "HTTP 401" } as const),
+      },
+      "sk-revoked",
+    );
+    // isConfigured only knows a key is present; it cannot know it works.
+    expect(custody.isConfigured()).toBe(true);
+    expect(await custody.ensureUsable()).toBe(false);
+  });
+
+  test("an unreachable provider does not condemn the key", async () => {
+    let verifications = 0;
+    const custody = createProviderKeyCustody(
+      {
+        verify: async () => {
+          verifications += 1;
+          return err({ kind: "offline", detail: "no route" } as const);
+        },
+      },
+      "sk-deployed",
+    );
+    // A network blip is not evidence about the key, and is not remembered.
+    expect(await custody.ensureUsable()).toBe(true);
+    expect(await custody.ensureUsable()).toBe(true);
+    expect(verifications).toBe(2);
+  });
+
+  test("a key entered through settings is already verified", async () => {
+    let verifications = 0;
+    const custody = createProviderKeyCustody({
+      verify: async () => {
+        verifications += 1;
+        return ok(undefined);
+      },
+    });
+    expect((await custody.replace("sk-entered")).ok).toBe(true);
+    expect(await custody.ensureUsable()).toBe(true);
+    expect(verifications).toBe(1);
+  });
+
   test("a rejected replacement preserves the last verified key", async () => {
     const custody = createProviderKeyCustody({
       verify: async (candidate) =>

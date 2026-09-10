@@ -69,7 +69,7 @@ const setup = (providerOverride?: TestProvider) => {
       analyzer,
       grammar: declaredGrammarDetector,
       provider,
-      providerConfigured: () => true,
+      providerConfigured: async () => true,
       batchSize: 1,
     });
   const preparation = open();

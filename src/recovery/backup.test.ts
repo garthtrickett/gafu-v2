@@ -61,7 +61,7 @@ const completeBackup = (
     },
     grammar: declaredGrammarDetector,
     provider: createDeterministicPreparationProvider(),
-    providerConfigured: () => true,
+    providerConfigured: async () => true,
     batchSize: 20,
   });
   if (!preparation.ok) throw new Error(preparation.error.kind);

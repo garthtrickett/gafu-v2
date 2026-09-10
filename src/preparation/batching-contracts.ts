@@ -163,6 +163,16 @@ export type CheckpointStore = Readonly<{
     requestKey: string,
     providerResponseId: string,
   ) => Promise<Result<void, BatchFailure>>;
+  /**
+   * Return a dispatched checkpoint to `pending`. Only for failures that prove
+   * the provider never accepted the request, so nothing was billed and the
+   * next attempt is an ordinary first attempt rather than a repeat.
+   */
+  release: (
+    runId: string,
+    inputDigest: string,
+    requestKey: string,
+  ) => Promise<Result<void, BatchFailure>>;
   complete: (
     runId: string,
     inputDigest: string,

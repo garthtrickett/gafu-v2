@@ -137,6 +137,23 @@ export const createSqliteCheckpointStore = (
         return err(failure(cause));
       }
     },
+    release: async (runId, inputDigest, requestKey) => {
+      try {
+        const result = database
+          .query(
+            `UPDATE preparation_batch
+             SET state = 'pending', request_key = NULL, provider_response_id = NULL
+             WHERE run_id = ? AND input_digest = ? AND request_key = ?
+               AND state IN ('requested', 'uncertain')`,
+          )
+          .run(runId, inputDigest, requestKey);
+        return result.changes === 1
+          ? ok(undefined)
+          : err({ kind: "persistence", detail: "batch checkpoint is not releasable" });
+      } catch (cause) {
+        return err(failure(cause));
+      }
+    },
     complete: async (runId, inputDigest, requestKey, response) => {
       try {
         const complete = database.transaction(() => {

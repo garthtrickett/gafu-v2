@@ -22,6 +22,14 @@ export type ProviderKeyCustody = Readonly<{
   ) => Promise<Result<void, KeyVerificationFailure>>;
   remove: () => void;
   isConfigured: () => boolean;
+  /**
+   * Whether the current key is usable, verifying it once if it arrived without
+   * having been checked -- a key seeded from the environment never passed
+   * through `replace`. A key the provider rejects is remembered as unusable; a
+   * verification that could not reach the provider is not, because a network
+   * blip must not present as a bad key.
+   */
+  ensureUsable: (signal?: AbortSignal) => Promise<boolean>;
   readForServerAdapter: () => string | null;
 }>;
 
@@ -37,6 +45,9 @@ export const createProviderKeyCustody = (
   const initialKey = initialCandidate?.trim() ?? "";
   let apiKey: string | null = initialKey === "" ? null : initialKey;
   let revision = 0;
+  // Null until this key's usability is known. An environment-seeded key starts
+  // unknown; `replace` only stores a key it has already verified.
+  let usable: boolean | null = null;
   return {
     replace: async (candidate, signal) => {
       const operationRevision = ++revision;
@@ -53,13 +64,36 @@ export const createProviderKeyCustody = (
         });
       }
       apiKey = trimmed;
+      usable = true;
       return ok(undefined);
     },
     remove: () => {
       revision += 1;
       apiKey = null;
+      usable = null;
     },
     isConfigured: () => apiKey !== null,
+    ensureUsable: async (signal) => {
+      const candidate = apiKey;
+      if (candidate === null) return false;
+      if (usable !== null) return usable;
+      const operationRevision = revision;
+      const verified = await verifier.verify(candidate, signal);
+      if (operationRevision !== revision) return apiKey !== null && usable !== false;
+      if (verified.ok) {
+        usable = true;
+        return true;
+      }
+      // Only the provider's own refusal is evidence about the key itself.
+      if (
+        verified.error.kind === "authentication" ||
+        verified.error.kind === "permission"
+      ) {
+        usable = false;
+        return false;
+      }
+      return true;
+    },
     readForServerAdapter: () => apiKey,
   };
 };
