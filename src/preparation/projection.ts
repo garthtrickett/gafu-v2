@@ -19,6 +19,7 @@ import type {
   FindingEvidence,
   PreparationFinding,
 } from "./contracts.ts";
+import { compareAnnotations } from "./evidence-expectations.ts";
 import type { SubtitleSetId, SubtitleSetSnapshot } from "./import-contracts.ts";
 
 const RANK_VERSION = "preparation-rank-v1" as const;
@@ -43,9 +44,6 @@ type CorrectionOverlay = Partial<CorrectionCommand> & Readonly<{ correctedAt: st
 const clean = (value: string): string => value.normalize("NFKC").trim();
 const sha256 = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
-const contentParts = new Set(["noun", "verb", "adjective", "adverb", "interjection"]);
-const canonicalVocabulary = (lemma: string, reading: string | null): string =>
-  `${lemma}:${reading ?? ""}`;
 
 const allCues = (database: Database, id: SubtitleSetId): readonly CueRow[] =>
   database
@@ -377,55 +375,25 @@ export const providerUsage = (batches: readonly BatchCheckpoint[]): ProviderUsag
   };
 };
 
+/**
+ * A final assertion that the whole manifest is represented. Batches are
+ * checked as they commit, and cues partition into batches, so this should
+ * never be the first thing to fail; it stays as defence against a batching
+ * error rather than as the place provider mistakes are caught.
+ */
 export const validateCompleteEvidence = (
   manifest: AnalysisManifest,
   snapshot: AnalysisRunSnapshot,
 ): Result<void, Readonly<{ kind: "incompleteEvidence"; detail: string }>> => {
-  const expected = new Map<string, string>();
-  for (const batch of manifest.batches) {
-    for (const cue of batch.cues) {
-      for (const token of cue.tokens) {
-        if (!contentParts.has(token.broadPartOfSpeech)) continue;
-        const key = `vocabulary\0${cue.cueId}\0${token.span.start}\0${token.span.end}`;
-        expected.set(key, canonicalVocabulary(token.lemma, token.reading));
-      }
-      for (const grammar of cue.grammarEvidence) {
-        for (const span of grammar.spans) {
-          const key = `grammar\0${cue.cueId}\0${span.start}\0${span.end}\0${grammar.canonicalForm}`;
-          expected.set(key, grammar.canonicalForm);
-        }
-      }
-    }
-  }
-  const observed = new Map<string, string>();
-  for (const batch of snapshot.batches) {
-    if (batch.state !== "completed") continue;
-    for (const candidate of batch.response.candidates) {
-      const key = `${candidate.kind}\0${candidate.cueId}\0${candidate.span.start}\0${candidate.span.end}${candidate.kind === "grammar" ? `\0${candidate.canonicalKey}` : ""}`;
-      if (observed.has(key)) {
-        return err({
-          kind: "incompleteEvidence",
-          detail: "Provider duplicated supplied evidence.",
-        });
-      }
-      observed.set(key, candidate.canonicalKey);
-    }
-  }
-  if (observed.size !== expected.size) {
-    return err({
-      kind: "incompleteEvidence",
-      detail: `Expected ${expected.size} evidence annotations and received ${observed.size}.`,
-    });
-  }
-  for (const [key, canonical] of expected) {
-    if (observed.get(key) !== canonical) {
-      return err({
-        kind: "incompleteEvidence",
-        detail: "Provider altered canonical evidence.",
-      });
-    }
-  }
-  return ok(undefined);
+  const disagreement = compareAnnotations(
+    manifest.batches.flatMap((batch) => [...batch.cues]),
+    snapshot.batches.flatMap((batch) =>
+      batch.state === "completed" ? [...batch.response.candidates] : [],
+    ),
+  );
+  return disagreement === null
+    ? ok(undefined)
+    : err({ kind: "incompleteEvidence", detail: disagreement });
 };
 
 export const findingCounts = (findings: readonly PreparationFinding[]) => ({

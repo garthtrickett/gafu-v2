@@ -270,6 +270,48 @@ describe("complete resumable preparation batching", () => {
     },
   );
 
+  test.each(["omit", "canonicalKey"] as const)(
+    "an incomplete or reformatted answer costs one batch, not the run (%s)",
+    async (kind) => {
+      // Cues partition into batches, so checking a batch as it commits catches
+      // the same discrepancy the run-level check would -- but three batches
+      // stay paid for instead of being discarded.
+      const context = setup({ invalidEvidence: { batchId: "batch-0004", kind } });
+      const manifest = await context.batching.createManifest(batchingCues, 3);
+      const result = await context.batching.analyze(manifest);
+
+      expect(result.state).toBe("failed");
+      expect(result.failure?.kind).toBe("invalidCueEvidence");
+      expect(result.batches.filter((item) => item.state === "completed")).toHaveLength(
+        3,
+      );
+      expect(result.batches.at(-1)?.state).toBe("pending");
+      expect(result.merged).toBeNull();
+    },
+  );
+
+  test("an omission names what was missing, not just a count", async () => {
+    const context = setup({
+      invalidEvidence: { batchId: "batch-0001", kind: "omit" },
+    });
+    const result = await context.batching.analyze(
+      await context.batching.createManifest(batchingCues, 3),
+    );
+    expect(result.failure?.detail).toContain("omitted");
+    expect(result.failure?.detail).toContain("episode-1:001");
+  });
+
+  test("a reformatted canonicalKey is named as such", async () => {
+    const context = setup({
+      invalidEvidence: { batchId: "batch-0001", kind: "canonicalKey" },
+    });
+    const result = await context.batching.analyze(
+      await context.batching.createManifest(batchingCues, 3),
+    );
+    expect(result.failure?.detail).toContain("canonicalKey");
+    expect(result.failure?.detail).toContain("-reformatted");
+  });
+
   test("a rejected response is asked again instead of replayed", async () => {
     const context = setup({
       invalidEvidence: { batchId: "batch-0001", kind: "span" },

@@ -223,6 +223,68 @@ describe("OpenAI preparation provider adapter", () => {
     }
   });
 
+  test("sends only candidate-earning tokens, each with its canonicalKey", async () => {
+    const filteredBatch: AnalysisBatch = {
+      ...batch,
+      cues: [
+        {
+          cueId: "cue-1",
+          normalizedJapanese: "グリズリーは走る",
+          tokens: [
+            {
+              surface: "グリズリー",
+              lemma: "グリズリー",
+              // Loanwords and latin come back without one, and the validator
+              // wants a trailing colon that "lemma:reading" does not describe.
+              reading: null,
+              partOfSpeech: ["名詞"],
+              broadPartOfSpeech: "noun",
+              span: {
+                start: 0,
+                end: 5,
+                unit: "utf16-code-unit",
+                normalization: "nfkc-v1",
+              },
+            },
+            {
+              surface: "は",
+              lemma: "は",
+              reading: "ハ",
+              partOfSpeech: ["助詞"],
+              broadPartOfSpeech: "particle",
+              span: {
+                start: 5,
+                end: 6,
+                unit: "utf16-code-unit",
+                normalization: "nfkc-v1",
+              },
+            },
+          ],
+          grammarEvidence: [],
+        },
+      ],
+    };
+    let sent: {
+      cues: { tokens: { surface: string; canonicalKey: string }[] }[];
+    } = { cues: [] };
+    await provider(async (_input, init) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { input: string };
+        sent = JSON.parse(body.input);
+        return Response.json({ id: "resp_test", status: "queued" });
+      }
+      return Response.json(successBody);
+    }).submit(filteredBatch, "request-key", ignoreDispatch);
+
+    const tokens = sent.cues[0]?.tokens ?? [];
+    // The particle earns no candidate, so it is not offered: the answer's size
+    // is fixed by the payload, not by the model matching contentParts.
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.surface).toBe("グリズリー");
+    // Copied, not derived from a rule that omits the null-reading case.
+    expect(tokens[0]?.canonicalKey).toBe("グリズリー:");
+  });
+
   test("shows a copyable surface for every grammar occurrence", async () => {
     // The candidate contract asks the model to copy `surface` and `span`. For
     // grammar it previously had only a canonical form, which is a label and
@@ -276,7 +338,7 @@ describe("OpenAI preparation provider adapter", () => {
 
     const cue = sent.cues[0];
     const occurrences = cue?.grammarEvidence as readonly {
-      canonicalForm: string;
+      canonicalKey: string;
       surface: string;
       span: { start: number; end: number };
     }[];
@@ -287,10 +349,10 @@ describe("OpenAI preparation provider adapter", () => {
         cue?.normalizedJapanese.slice(occurrence.span.start, occurrence.span.end),
       ).toBe(occurrence.surface);
     }
-    // The label is still supplied for canonicalKey, and still is not the text.
-    expect(occurrences[0]?.canonicalForm).toBe("〜ている");
+    // The label is still supplied as canonicalKey, and still is not the text.
+    expect(occurrences[0]?.canonicalKey).toBe("〜ている");
     expect(occurrences[0]?.surface).toBe("ている");
-    expect(occurrences[1]?.canonicalForm).toBe("受身形");
+    expect(occurrences[1]?.canonicalKey).toBe("受身形");
     expect(occurrences[1]?.surface).toBe("ので");
   });
 
