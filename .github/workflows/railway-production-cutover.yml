@@ -267,19 +267,31 @@ jobs:
             | ($instances | length) == 1
               and $instances[0].source.repo == "garthtrickett/gafu"
           ' <<<"$status" >/dev/null
-          jq -e --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+          # The V2 service is either untouched (pristine) or exactly where a
+          # previous gated run stopped: source connected to this repository's
+          # main with no data uploaded yet. Anything else fails closed here
+          # before any mutation. The volume-emptiness and domain assertions
+          # below apply to both states, so no data can be overwritten.
+          v2_boundary="$(jq -r --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
             [
               .environments.edges[].node
               | select(.id == $environment_id)
               | .serviceInstances.edges[].node
               | select(.serviceId == $service_id)
-            ] as $instances
-            | ($instances | length) == 1
-              and $instances[0].source.repo == null
-              and $instances[0].source.image == null
-              and $instances[0].latestDeployment == null
-              and ($instances[0].activeDeployments | length) == 0
-          ' <<<"$status" >/dev/null
+            ] | if length != 1 then "invalid"
+              elif .[0].source.repo == null
+                and .[0].source.image == null
+                and .[0].latestDeployment == null
+                and (.[0].activeDeployments | length) == 0 then "pristine"
+              elif .[0].source.repo == "garthtrickett/gafu-v2"
+                and .[0].source.branch == "main" then "resumed"
+              else "invalid" end
+          ' <<<"$status")"
+          test "$v2_boundary" = pristine -o "$v2_boundary" = resumed
+          echo "BOUNDARY_STATE=$v2_boundary" >> "$GITHUB_ENV"
+          if [ "$v2_boundary" = resumed ]; then
+            echo "Resuming after a previous gated stop; no data has been uploaded yet."
+          fi
 
           volumes="$(railway volume \
             --project "$EXPECTED_PROJECT_ID" \
@@ -333,13 +345,21 @@ jobs:
             --raw-var environmentId="$EXPECTED_ENVIRONMENT_ID" \
             --var 'input={"healthcheckPath":"/healthz","healthcheckTimeout":300,"numReplicas":1,"restartPolicyType":"ON_FAILURE","restartPolicyMaxRetries":3}' \
             --compact | jq -e '.data | has("serviceInstanceUpdate")' >/dev/null
-          railway service source connect \
-            --repo garthtrickett/gafu-v2 \
-            --branch main \
-            --project "$EXPECTED_PROJECT_ID" \
-            --environment "$EXPECTED_ENVIRONMENT_ID" \
-            --service "$EXPECTED_V2_SERVICE_ID" \
-            --json >/dev/null
+          # On a pristine boundary the source is connected here; on a resumed
+          # boundary the guard already verified it points at this
+          # repository's main, so reconnecting would only risk an error.
+          if [ "${BOUNDARY_STATE:-invalid}" = pristine ]; then
+            railway service source connect \
+              --repo garthtrickett/gafu-v2 \
+              --branch main \
+              --project "$EXPECTED_PROJECT_ID" \
+              --environment "$EXPECTED_ENVIRONMENT_ID" \
+              --service "$EXPECTED_V2_SERVICE_ID" \
+              --json >/dev/null
+          elif [ "$BOUNDARY_STATE" != resumed ]; then
+            echo "::error::Unknown boundary state; refusing to mutate Railway."
+            exit 1
+          fi
 
           for _ in $(seq 1 120); do
             deployment="$(railway service status \
@@ -361,6 +381,18 @@ jobs:
           done
           echo "::error::Bootstrap deployment did not become active within ten minutes."
           exit 1
+
+      - name: Provision an ephemeral volume-access SSH key
+        run: |
+          set -euo pipefail
+          # Volume file operations travel over SSH. Token auth carries no SSH
+          # identity, so mint a single-use keypair for this run only. The
+          # workspace token auto-scopes registration to the workspace.
+          key_path="$RUNNER_TEMP/gafu-v2-cutover-ssh"
+          ssh-keygen -t ed25519 -N '' -f "$key_path" -C "gafu-v2-cutover-$GITHUB_RUN_ID" -q
+          railway ssh keys add -k "$key_path.pub" -n "gafu-v2-cutover-$GITHUB_RUN_ID" --json >/dev/null
+          echo "CUTOVER_SSH_KEY=gafu-v2-cutover-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          echo "Ephemeral SSH key registered for volume access."
 
       - name: Verify the empty volume and upload only the private data files
         run: |
@@ -468,3 +500,17 @@ jobs:
             echo "- Existing V1 domain: unchanged"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Private Gafu V2 is active at $v2_origin; V1 remains unchanged."
+
+      - name: Remove the ephemeral volume-access SSH key
+        if: always()
+        run: |
+          set -euo pipefail
+          # Hygiene only: the key is single-use per run. Removal failure (for
+          # example a 2FA challenge) warns instead of failing the run; a
+          # leftover key is named by run ID for manual removal.
+          key_ref="$(railway ssh keys list --json | jq -r --arg name "${CUTOVER_SSH_KEY:-}" '[.. | objects | select(.name == $name) | .fingerprint // .id // empty][0] // empty')"
+          if [ -n "$key_ref" ]; then
+            railway ssh keys remove "$key_ref" --json >/dev/null || echo "::warning::Ephemeral SSH key ${CUTOVER_SSH_KEY:-unknown} needs manual removal."
+          else
+            echo "No ephemeral SSH key to remove."
+          fi
