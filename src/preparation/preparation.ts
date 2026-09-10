@@ -757,6 +757,7 @@ export const openPreparation = (
         ...(command.retryUncertain === undefined
           ? {}
           : { retryUncertain: command.retryUncertain }),
+        ...(command.maxBatches === undefined ? {} : { maxBatches: command.maxBatches }),
       });
       const evidenceValidation =
         analyzed.state === "complete"

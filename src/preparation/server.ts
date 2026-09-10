@@ -291,6 +291,11 @@ export const handlePreparationApi = async (
       const analyzed = await preparation.analyze({
         preflightToken: body["preflightToken"],
         ...(body["retryUncertain"] === true ? { retryUncertain: true } : {}),
+        ...(typeof body["maxBatches"] === "number" &&
+        Number.isInteger(body["maxBatches"]) &&
+        (body["maxBatches"] as number) > 0
+          ? { maxBatches: body["maxBatches"] as number }
+          : {}),
         signal: request.signal,
       });
       if (!analyzed.ok || analyzed.value.state !== "complete") {

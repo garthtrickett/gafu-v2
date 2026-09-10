@@ -46,6 +46,8 @@ type Model = {
   busy: boolean;
   message: string;
   messageKind: "neutral" | "success" | "error";
+  progress: { completed: number; total: number } | null;
+  stopAnalysis: boolean;
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
@@ -125,6 +127,8 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     busy: true,
     message: "Loading Subtitle Sets…",
     messageKind: "neutral",
+    progress: null,
+    stopAnalysis: false,
   };
 
   const refreshLists = async (): Promise<void> => {
@@ -301,24 +305,66 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     });
   };
 
+  // One analyze call covers this many batches, then checkpoints and
+  // reports back. Twenty keeps each round trip to a few paid requests while
+  // completed checkpoints make every chunk resumable without repaying.
+  const ANALYSIS_CHUNK_BATCHES = 20;
+
+  const stopAnalysis = (): void => {
+    model.stopAnalysis = true;
+    draw();
+  };
+
   const analyze = (retryUncertain = false): void => {
     if (model.busy) return;
     const set = model.currentSet;
-    const preflightValue = model.preflight;
-    if (set === null || preflightValue === null) return;
-    void run(async () => {
-      model.result = await requestJson<PreparationSnapshot>(
-        `/api/preparation/sets/${encodeURIComponent(set.id)}/analyze`,
-        jsonRequest("POST", {
-          preflightToken: preflightValue.token,
-          retryUncertain,
-        }),
-      );
-      model.draft = null;
-      await refreshLists();
-      return model.result.state === "complete"
-        ? `Preparation Gap complete: ${model.result.counts.gap} missing, ${model.result.counts.existing} already in Study, ${model.result.counts.known} known.`
-        : `Analysis ${model.result.state}: ${model.result.completedBatches}/${model.result.totalBatches} batches complete.`;
+    if (set === null) return;
+    model.stopAnalysis = false;
+    model.progress = null;
+    const url = `/api/preparation/sets/${encodeURIComponent(set.id)}`;
+    void run(async (isCurrent) => {
+      let total = 0;
+      let completed = 0;
+      for (;;) {
+        if (model.stopAnalysis) {
+          model.progress = null;
+          return `Analysis stopped at ${completed} of ${total} batches. Finished batches are saved; Analyze resumes without repaying them.`;
+        }
+        const fresh = await requestJson<AnalysisPreflight>(
+          `${url}/preflight`,
+          jsonRequest("POST"),
+        );
+        if (!isCurrent()) return "Analysis superseded.";
+        model.preflight = fresh;
+        const result = await requestJson<PreparationSnapshot>(
+          `${url}/analyze`,
+          jsonRequest("POST", {
+            preflightToken: fresh.token,
+            retryUncertain,
+            maxBatches: ANALYSIS_CHUNK_BATCHES,
+          }),
+        );
+        if (!isCurrent()) return "Analysis superseded.";
+        model.result = result;
+        completed = result.completedBatches;
+        total = result.totalBatches;
+        model.progress = { completed, total };
+        draw();
+        if (result.state === "complete") {
+          model.progress = null;
+          model.draft = null;
+          await refreshLists();
+          return `Preparation Gap complete: ${result.counts.gap} missing, ${result.counts.existing} already in Study, ${result.counts.known} known.`;
+        }
+        if (result.state === "failed") {
+          model.progress = null;
+          model.draft = null;
+          await refreshLists();
+          return `Analysis failed: ${result.failure?.kind ?? "unknown"}. Finished batches are saved; fix the cause and Analyze resumes them.`;
+        }
+        // paused or incomplete: loop with a fresh preflight, which resumes
+        // the durable checkpoints left by this chunk.
+      }
     });
   };
 
@@ -511,6 +557,15 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       <p>${value.episodeCount} episodes · ${value.japaneseCueCount}/${value.cueCount} Japanese cues · ${value.inputBytes.toLocaleString()} text bytes</p>
       <p>${value.estimatedRequests - value.completedRequests} paid request(s) remain out of ${value.estimatedRequests} batches.</p>
       <ul>${value.disclosure.map((item) => html`<li>${item}</li>`)}</ul>
+      ${
+        model.progress === null
+          ? ""
+          : html`<div class="progress" data-testid="analysis-progress" role="status">
+            <progress max=${model.progress.total} value=${model.progress.completed}></progress>
+            <p>${model.progress.completed} of ${model.progress.total} batches complete. Safe to leave or stop — finished batches are saved and never repaid.</p>
+            <button type="button" @click=${stopAnalysis}>Stop after this chunk</button>
+          </div>`
+      }
       ${
         value.providerConfigured
           ? html`<button type="button" @click=${() => analyze()} ?disabled=${model.busy}>Analyze subtitle text</button>`

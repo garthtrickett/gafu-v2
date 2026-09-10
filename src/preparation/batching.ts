@@ -151,6 +151,11 @@ export const createPreparationBatching = (dependencies: {
         return snapshot(manifest, [], "failed", opened.error);
       }
       let checkpoints = opened.value;
+      let completedThisCall = 0;
+      const limit =
+        options.maxBatches !== undefined && options.maxBatches > 0
+          ? options.maxBatches
+          : Number.POSITIVE_INFINITY;
       for (const batch of manifest.batches) {
         let checkpoint = checkpoints.find(
           (item) => item.inputDigest === batch.inputDigest,
@@ -227,6 +232,16 @@ export const createPreparationBatching = (dependencies: {
         checkpoint = checkpoints.find((item) => item.inputDigest === batch.inputDigest);
         if (checkpoint?.state !== "completed") {
           return snapshot(manifest, checkpoints, "incomplete", null);
+        }
+        completedThisCall += 1;
+        if (completedThisCall >= limit) {
+          // Clean chunk stop: every reached batch is checkpointed, so
+          // resuming repays nothing and risks no duplicate charge.
+          const current = (await refresh(manifest)) ?? checkpoints;
+          if (current.every((item) => item.state === "completed")) {
+            return snapshot(manifest, current, "complete", null);
+          }
+          return snapshot(manifest, current, "paused", null);
         }
       }
       const final = (await refresh(manifest)) ?? checkpoints;
