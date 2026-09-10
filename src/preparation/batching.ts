@@ -220,6 +220,7 @@ export const createPreparationBatching = (dependencies: {
             checkpoint.providerResponseId === null
               ? ok(null)
               : await dependencies.provider.retrieve(
+                  batch,
                   checkpoint.providerResponseId,
                   options.signal,
                 );

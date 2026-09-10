@@ -84,7 +84,13 @@ export type BatchProvider = Readonly<{
     dispatched: (providerResponseId: string) => Promise<void>,
     signal?: AbortSignal,
   ) => Promise<Result<ProviderBatchResponse, ProviderFailure>>;
+  /**
+   * Takes the batch because a provider may address cues by a local label of
+   * its own choosing, and only the batch can translate an answer back into
+   * cue ids.
+   */
   retrieve: (
+    batch: AnalysisBatch,
     providerResponseId: string,
     signal?: AbortSignal,
   ) => Promise<Result<ProviderBatchResponse | null, ProviderFailure>>;

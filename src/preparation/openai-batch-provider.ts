@@ -73,27 +73,46 @@ const candidateSchema = {
 } as const;
 
 /**
- * What the model is shown for a batch. Tokens already carry the `surface` the
- * candidate contract asks it to copy; grammar evidence carried only a
- * canonical form, which is a label -- `受身形`, `の ( nominalizer )`, `〜ている`
- * -- and mostly does not occur in the cue at all. Copying it produced a span
- * that could not reconstruct, and one such candidate rejects its whole batch.
- * Flattening each occurrence to the token shape gives the model a surface to
- * copy instead of an offset to compute.
+ * What the model is shown for a batch, and how to read its answer back.
+ *
+ * Two things the model was previously asked to reproduce that it cannot do
+ * reliably, each of which rejects a whole batch of ~120 candidates on a single
+ * slip:
+ *
+ * - A cue id is `cue-v1:sha256:` plus a 64-character digest. Echoing one per
+ *   candidate meant thousands of characters of pure entropy, byte-perfect; an
+ *   id came back 25 characters short. Cues are labelled `c1`, `c2`, ... here
+ *   and translated back on the way in.
+ * - Grammar evidence carried only a canonical form, which is a label --
+ *   `受身形`, `の ( nominalizer )`, `〜ている` -- and mostly does not occur in
+ *   the cue. Each occurrence is flattened to the token shape, which already
+ *   carries the `surface` the candidate contract asks it to copy.
  */
-const providerCues = (cues: AnalysisBatch["cues"]) =>
-  cues.map((cue) => ({
-    cueId: cue.cueId,
-    normalizedJapanese: cue.normalizedJapanese,
-    tokens: cue.tokens,
-    grammarEvidence: cue.grammarEvidence.flatMap((item) =>
-      item.spans.map((span) => ({
-        canonicalForm: item.canonicalForm,
-        surface: cue.normalizedJapanese.slice(span.start, span.end),
-        span,
-      })),
-    ),
-  }));
+const labelledBatch = (
+  cues: AnalysisBatch["cues"],
+): {
+  readonly payload: readonly unknown[];
+  readonly cueIdOf: ReadonlyMap<string, string>;
+} => {
+  const cueIdOf = new Map<string, string>();
+  const payload = cues.map((cue, index) => {
+    const label = `c${index + 1}`;
+    cueIdOf.set(label, cue.cueId);
+    return {
+      cueId: label,
+      normalizedJapanese: cue.normalizedJapanese,
+      tokens: cue.tokens,
+      grammarEvidence: cue.grammarEvidence.flatMap((item) =>
+        item.spans.map((span) => ({
+          canonicalForm: item.canonicalForm,
+          surface: cue.normalizedJapanese.slice(span.start, span.end),
+          span,
+        })),
+      ),
+    };
+  });
+  return { payload, cueIdOf };
+};
 
 const instructions =
   "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.";
@@ -179,7 +198,10 @@ type Decoded =
   | { readonly response: ProviderBatchResponse }
   | { readonly failure: ProviderFailure };
 
-const decodeResponse = (value: unknown): Decoded => {
+const decodeResponse = (
+  value: unknown,
+  cueIdOf: ReadonlyMap<string, string>,
+): Decoded => {
   if (!isRecord(value) || typeof value["id"] !== "string") {
     return {
       failure: { kind: "malformedStructure", detail: "response object has no id" },
@@ -240,11 +262,28 @@ const decodeResponse = (value: unknown): Decoded => {
       },
     };
   }
+  // A label the batch does not name is a real modelling error, and saying so
+  // here beats letting it surface as an opaque unknown cue id.
+  const unknown = decoded["candidates"].find(
+    (candidate) => !cueIdOf.has(candidate.cueId),
+  );
+  if (unknown !== undefined) {
+    return {
+      failure: {
+        kind: "malformedStructure",
+        detail: `candidate names cue ${unknown.cueId}, which is not in this batch`,
+      },
+    };
+  }
+  const candidates = decoded["candidates"].map((candidate) => ({
+    ...candidate,
+    cueId: cueIdOf.get(candidate.cueId) as string,
+  }));
   const usage = isRecord(value["usage"]) ? value["usage"] : {};
   return {
     response: {
       providerRequestId: value["id"],
-      candidates: decoded["candidates"],
+      candidates,
       usage: {
         inputTokens:
           typeof usage["input_tokens"] === "number" ? usage["input_tokens"] : null,
@@ -350,6 +389,7 @@ export const createOpenAiBatchProvider = (
    * dispatch is gone from provider-side retention and cannot be recovered.
    */
   const poll = async (
+    cueIdOf: ReadonlyMap<string, string>,
     providerResponseId: string,
     deadline: number,
     outerSignal: AbortSignal | undefined,
@@ -359,7 +399,7 @@ export const createOpenAiBatchProvider = (
       const polled = await call(url, { method: "GET" }, outerSignal);
       if (!polled.ok) return polled;
       if ("notFound" in polled.value) return ok(null);
-      const decoded = decodeResponse(polled.value.value);
+      const decoded = decodeResponse(polled.value.value, cueIdOf);
       if ("failure" in decoded) return err(decoded.failure);
       if ("response" in decoded) return ok(decoded.response);
       if (outerSignal?.aborted === true) {
@@ -383,6 +423,7 @@ export const createOpenAiBatchProvider = (
     },
     submit: async (batch, requestKey, dispatched, outerSignal) => {
       const deadline = Date.now() + options.completionTimeoutMs;
+      const { payload, cueIdOf } = labelledBatch(batch.cues);
       // background: true returns as soon as the request is queued, so the
       // window in which a crash loses the response id is one short HTTP call
       // rather than the whole generation. store stays false; the provider
@@ -404,7 +445,7 @@ export const createOpenAiBatchProvider = (
               gafu_batch_id: batch.batchId,
             },
             instructions,
-            input: JSON.stringify({ cues: providerCues(batch.cues) }),
+            input: JSON.stringify({ cues: payload }),
             text: {
               format: {
                 type: "json_schema",
@@ -439,10 +480,10 @@ export const createOpenAiBatchProvider = (
         });
       }
       await dispatched(body["id"]);
-      const decoded = decodeResponse(body);
+      const decoded = decodeResponse(body, cueIdOf);
       if ("failure" in decoded) return err(decoded.failure);
       if ("response" in decoded) return ok(decoded.response);
-      const polled = await poll(body["id"], deadline, outerSignal);
+      const polled = await poll(cueIdOf, body["id"], deadline, outerSignal);
       if (!polled.ok) return polled;
       if (polled.value === null) {
         return err({
@@ -452,7 +493,12 @@ export const createOpenAiBatchProvider = (
       }
       return ok(polled.value);
     },
-    retrieve: (providerResponseId, outerSignal) =>
-      poll(providerResponseId, Date.now() + options.completionTimeoutMs, outerSignal),
+    retrieve: (batch, providerResponseId, outerSignal) =>
+      poll(
+        labelledBatch(batch.cues).cueIdOf,
+        providerResponseId,
+        Date.now() + options.completionTimeoutMs,
+        outerSignal,
+      ),
   };
 };
