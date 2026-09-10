@@ -288,6 +288,7 @@ jobs:
               else "invalid" end
           ' <<<"$status")"
           test "$v2_boundary" = pristine -o "$v2_boundary" = resumed
+          echo "V2 boundary state: $v2_boundary"
           echo "BOUNDARY_STATE=$v2_boundary" >> "$GITHUB_ENV"
           if [ "$v2_boundary" = resumed ]; then
             echo "Resuming after a previous gated stop; no data has been uploaded yet."
@@ -313,9 +314,9 @@ jobs:
           if [ "$v2_boundary" = pristine ]; then
             test -z "$v2_domains"
           else
-            # Resumed: Railway generates a default *.up.railway.app domain
-            # for the bootstrap deployment. Custom domains fail closed here.
-            test -n "$v2_domains"
+            # Resumed: normally still empty; a Railway-generated default
+            # *.up.railway.app domain is also acceptable. Custom domains
+            # fail closed here.
             ! printf '%s\n' "$v2_domains" | grep -vE '\.up\.railway\.app$' | grep -q .
           fi
           echo "V2 boundary confirmed ($v2_boundary); V1 remains the active service."
