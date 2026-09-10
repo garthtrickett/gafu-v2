@@ -82,7 +82,7 @@ export const createDeterministicPreparationProvider = (): BatchProvider & {
       await dispatched(response.providerRequestId);
       return ok(response);
     },
-    retrieve: async (providerResponseId) =>
+    retrieve: async (_batch, providerResponseId) =>
       ok(responses.get(providerResponseId) ?? null),
   };
 };

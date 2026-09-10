@@ -143,7 +143,7 @@ export const createDeterministicBatchProvider = (
       }
       return ok(response);
     },
-    retrieve: async (providerResponseId, signal) => {
+    retrieve: async (_batch, providerResponseId, signal) => {
       retrievals.push(providerResponseId);
       if (signal?.aborted === true) {
         return err({ kind: "cancelled", detail: "retrieval was cancelled" });

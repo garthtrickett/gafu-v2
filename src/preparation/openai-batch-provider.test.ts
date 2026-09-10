@@ -32,9 +32,7 @@ const successBody = {
         {
           type: "output_text",
           text: JSON.stringify({
-            candidates: [
-              evidence("cue-1", "猫が寝る。", "猫", "vocabulary", "猫:ねこ"),
-            ],
+            candidates: [evidence("c1", "猫が寝る。", "猫", "vocabulary", "猫:ねこ")],
           }),
         },
       ],
@@ -166,6 +164,65 @@ describe("OpenAI preparation provider adapter", () => {
     if (!missing.ok) expect(missing.error.kind).toBe("authentication");
   });
 
+  test("labels cues shortly and translates the answer back", async () => {
+    // A cue id is `cue-v1:sha256:` plus 64 hex characters. Echoing one per
+    // candidate meant reproducing thousands of characters of entropy exactly;
+    // one came back 25 characters short and rejected its whole batch.
+    const longId = `cue-v1:sha256:${"a1b2c3d4".repeat(8)}`;
+    const digestBatch: AnalysisBatch = {
+      ...batch,
+      cues: batch.cues.map((cue) => ({ ...cue, cueId: longId })),
+    };
+    let sent: { cues: { cueId: string }[] } = { cues: [] };
+    const result = await provider(async (_input, init) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { input: string };
+        sent = JSON.parse(body.input);
+        return Response.json({ id: "resp_test", status: "queued" });
+      }
+      return Response.json(successBody);
+    }).submit(digestBatch, "request-key", ignoreDispatch);
+
+    expect(longId).toHaveLength(78);
+    // The model is asked to echo two characters, not seventy-eight.
+    expect(sent.cues[0]?.cueId).toBe("c1");
+    expect(String(sent.cues[0]?.cueId)).not.toContain("sha256");
+    expect(result.ok).toBe(true);
+    // And the answer comes back in the caller's terms.
+    if (result.ok) expect(result.value.candidates[0]?.cueId).toBe(longId);
+  });
+
+  test("a label the batch does not name is reported as such", async () => {
+    const result = await provider(async (_input, init) =>
+      init?.method === "POST"
+        ? Response.json({ id: "resp_test", status: "queued" })
+        : Response.json({
+            ...successBody,
+            output: [
+              {
+                type: "message",
+                content: [
+                  {
+                    type: "output_text",
+                    text: JSON.stringify({
+                      candidates: [
+                        evidence("c99", "猫が寝る。", "猫", "vocabulary", "猫:ねこ"),
+                      ],
+                    }),
+                  },
+                ],
+              },
+            ],
+          }),
+    ).submit(batch, "request-key", ignoreDispatch);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("malformedStructure");
+      expect(result.error.detail).toContain("c99");
+    }
+  });
+
   test("shows a copyable surface for every grammar occurrence", async () => {
     // The candidate contract asks the model to copy `surface` and `span`. For
     // grammar it previously had only a canonical form, which is a label and
@@ -289,7 +346,7 @@ describe("OpenAI preparation provider adapter", () => {
     const result = await provider(async (input) => {
       urls.push(String(input));
       return Response.json(successBody);
-    }).retrieve("resp_test");
+    }).retrieve(batch, "resp_test");
 
     expect(urls).toEqual(["https://api.openai.com/v1/responses/resp_test"]);
     expect(result.ok).toBe(true);
@@ -299,7 +356,7 @@ describe("OpenAI preparation provider adapter", () => {
   test("reports a dispatch the provider no longer holds as unrecoverable", async () => {
     const result = await provider(
       async () => new Response("", { status: 404 }),
-    ).retrieve("resp_expired");
+    ).retrieve(batch, "resp_expired");
     // Not a failure: the caller must decide whether to pay for it again.
     expect(result).toEqual({ ok: true, value: null });
   });
