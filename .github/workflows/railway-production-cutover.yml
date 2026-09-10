@@ -293,8 +293,17 @@ jobs:
                 and .[0].source.branch == "main" then "resumed"
               else "invalid" end
           ' <<<"$status")"
-          test "$v2_boundary" = pristine -o "$v2_boundary" = resumed
           echo "V2 boundary state: $v2_boundary"
+          if [ "$v2_boundary" != pristine ] && [ "$v2_boundary" != resumed ]; then
+            echo "V2 source object:"
+            jq -c --arg environment_id "$EXPECTED_ENVIRONMENT_ID" --arg service_id "$EXPECTED_V2_SERVICE_ID" '
+              [.environments.edges[].node
+               | select(.id == $environment_id)
+               | .serviceInstances.edges[].node
+               | select(.serviceId == $service_id)][0].source
+            ' <<<"$status"
+            exit 1
+          fi
           echo "BOUNDARY_STATE=$v2_boundary" >> "$GITHUB_ENV"
           if [ "$v2_boundary" = resumed ]; then
             echo "Resuming after a previous gated stop; no data has been uploaded yet."
