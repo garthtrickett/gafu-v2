@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+// This test creates fourteen background Grammar Cards one at a time, marks
+// each known, and then waits for a generated review. It measures 28-29s
+// unloaded, against Playwright's 30s default, so it failed whenever anything
+// else shared the machine. The work is legitimately long; the budget was wrong.
+test.setTimeout(90_000);
+
 test("configures a key and teaches before the first generated review", async ({
   page,
 }) => {
