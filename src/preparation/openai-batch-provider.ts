@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readBoundedBody } from "../local-api.ts";
-import { err, ok } from "../result.ts";
+import { err, ok, type Result } from "../result.ts";
 import type {
   BatchProvider,
   CandidateEvidence,
@@ -17,7 +17,16 @@ type OpenAiProviderOptions = Readonly<{
   apiKey: () => string | null;
   model: string;
   promptVersion: string;
+  /**
+   * Bound on a single HTTP call, not on generation. Background mode makes the
+   * dispatch and each poll short regardless of how long the model thinks, so
+   * this no longer has to be sized against the largest batch.
+   */
   timeoutMs: number;
+  /** Bound on the whole batch: dispatch plus polling to a terminal status. */
+  completionTimeoutMs: number;
+  pollIntervalMs?: number;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   fetch?: OpenAiFetch;
 }>;
 
@@ -61,6 +70,9 @@ const candidateSchema = {
     ambiguity: { type: "array", items: { type: "string" } },
   },
 } as const;
+
+const instructions =
+  "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.";
 
 const detail = (value: unknown): string =>
   value instanceof Error ? value.message : String(value);
@@ -136,15 +148,31 @@ const hasRefusal = (response: Record<string, unknown>): boolean =>
       ),
   );
 
-const decodeResponse = (
-  value: unknown,
-): { response: ProviderBatchResponse } | { failure: ProviderFailure } => {
+const terminalStatuses = new Set(["completed", "incomplete", "failed", "cancelled"]);
+
+type Decoded =
+  | { readonly pending: true }
+  | { readonly response: ProviderBatchResponse }
+  | { readonly failure: ProviderFailure };
+
+const decodeResponse = (value: unknown): Decoded => {
   if (!isRecord(value) || typeof value["id"] !== "string") {
     return {
       failure: { kind: "malformedStructure", detail: "response object has no id" },
     };
   }
-  if (value["status"] === "incomplete") {
+  const status = value["status"];
+  // Background responses report progress before they report output. Only a
+  // terminal status is evidence about the batch; anything else is "not yet".
+  if (typeof status === "string" && !terminalStatuses.has(status)) {
+    return { pending: true };
+  }
+  if (status === "cancelled") {
+    return {
+      failure: { kind: "cancelled", detail: "provider cancelled the response" },
+    };
+  }
+  if (status === "incomplete") {
     return {
       failure: {
         kind: "incompleteResponse",
@@ -203,42 +231,146 @@ const decodeResponse = (
   };
 };
 
+const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+
 export const createOpenAiBatchProvider = (
   options: OpenAiProviderOptions,
 ): BatchProvider => {
   const request = options.fetch ?? fetch;
+  const sleep = options.sleep ?? defaultSleep;
+  const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+
+  /**
+   * One bounded HTTP call. `notFound` distinguishes a dispatch that aged out of
+   * provider-side retention from a transport failure, because the two need
+   * opposite recoveries.
+   */
+  const call = async (
+    url: string,
+    init: RequestInit,
+    outerSignal: AbortSignal | undefined,
+  ): Promise<Result<{ value: unknown } | { notFound: true }, ProviderFailure>> => {
+    const apiKey = options.apiKey();
+    if (apiKey === null || apiKey.trim() === "") {
+      return err({
+        kind: "authentication",
+        detail: "OpenAI API key is not configured",
+      });
+    }
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, options.timeoutMs);
+    const cancel = () => controller.abort();
+    if (outerSignal?.aborted === true) cancel();
+    else outerSignal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const response = await request(url, {
+        ...init,
+        headers: {
+          ...init.headers,
+          Authorization: `Bearer ${apiKey}`,
+        },
+        signal: controller.signal,
+      });
+      if (response.status === 404) return ok({ notFound: true });
+      if (!response.ok) return err(httpFailure(response.status));
+      const responseBody = await readBoundedBody(
+        response,
+        maximumProviderResponseBytes,
+      );
+      if (!responseBody.ok) {
+        return err({
+          kind: "malformedStructure",
+          detail:
+            responseBody.error.kind === "bodyTooLarge"
+              ? "OpenAI response body is too large"
+              : "OpenAI response body could not be read",
+        });
+      }
+      try {
+        return ok({ value: JSON.parse(new TextDecoder().decode(responseBody.value)) });
+      } catch {
+        return err({
+          kind: "malformedStructure",
+          detail: "OpenAI response body is not JSON",
+        });
+      }
+    } catch (cause) {
+      if (outerSignal?.aborted === true) {
+        return err({ kind: "cancelled", detail: "OpenAI request was cancelled" });
+      }
+      if (timedOut) return err({ kind: "timeout", detail: "OpenAI request timed out" });
+      return err({ kind: "offline", detail: detail(cause) });
+    } finally {
+      clearTimeout(timeout);
+      outerSignal?.removeEventListener("abort", cancel);
+    }
+  };
+
+  /**
+   * Polls one dispatched response to a terminal status. `null` means the
+   * dispatch is gone from provider-side retention and cannot be recovered.
+   */
+  const poll = async (
+    providerResponseId: string,
+    deadline: number,
+    outerSignal: AbortSignal | undefined,
+  ): Promise<Result<ProviderBatchResponse | null, ProviderFailure>> => {
+    const url = `https://api.openai.com/v1/responses/${encodeURIComponent(providerResponseId)}`;
+    for (;;) {
+      const polled = await call(url, { method: "GET" }, outerSignal);
+      if (!polled.ok) return polled;
+      if ("notFound" in polled.value) return ok(null);
+      const decoded = decodeResponse(polled.value.value);
+      if ("failure" in decoded) return err(decoded.failure);
+      if ("response" in decoded) return ok(decoded.response);
+      if (outerSignal?.aborted === true) {
+        return err({ kind: "cancelled", detail: "OpenAI request was cancelled" });
+      }
+      if (Date.now() + pollIntervalMs >= deadline) {
+        return err({
+          kind: "timeout",
+          detail: "OpenAI response did not finish within the batch budget",
+        });
+      }
+      await sleep(pollIntervalMs, outerSignal);
+    }
+  };
+
   return {
     identity: {
       provider: "openai-responses",
       model: options.model,
       promptVersion: options.promptVersion,
     },
-    submit: async (batch, requestKey, outerSignal) => {
-      const apiKey = options.apiKey();
-      if (apiKey === null || apiKey.trim() === "") {
-        return err({
-          kind: "authentication",
-          detail: "OpenAI API key is not configured",
-        });
-      }
-      const controller = new AbortController();
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, options.timeoutMs);
-      const cancel = () => controller.abort();
-      if (outerSignal?.aborted === true) cancel();
-      else outerSignal?.addEventListener("abort", cancel, { once: true });
-      try {
-        const response = await request("https://api.openai.com/v1/responses", {
+    submit: async (batch, requestKey, dispatched, outerSignal) => {
+      const deadline = Date.now() + options.completionTimeoutMs;
+      // background: true returns as soon as the request is queued, so the
+      // window in which a crash loses the response id is one short HTTP call
+      // rather than the whole generation. store stays false; the provider
+      // retains a background response only long enough to be polled.
+      const created = await call(
+        "https://api.openai.com/v1/responses",
+        {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: options.model,
+            background: true,
             store: false,
             safety_identifier: createHash("sha256")
               .update("gafu-v2-local-learner")
@@ -247,8 +379,7 @@ export const createOpenAiBatchProvider = (
               gafu_request_key: requestKey.slice(0, 512),
               gafu_batch_id: batch.batchId,
             },
-            instructions:
-              "Return one candidate for every supplied content token (noun, verb, adjective, adverb, or interjection) and every deterministic grammar-evidence item. For vocabulary, canonicalKey is exactly lemma:reading from the token and senseId is a short stable label for the meaning used in this cue. For grammar, canonicalKey is exactly canonicalForm and senseId is null. meaning is the concise English meaning or function in this cue. impact is required only when missing it is likely to block comprehension, helpful for useful supporting language, and incidental for names, noise, transparent terms, and low-value one-offs. Copy cueId, surface, and span exactly from the supplied cue. Spans are zero-based UTF-16 code-unit offsets into normalizedJapanese. Put plausible alternative sense labels in ambiguity and invent no evidence.",
+            instructions,
             input: JSON.stringify({ cues: batch.cues }),
             text: {
               format: {
@@ -266,45 +397,38 @@ export const createOpenAiBatchProvider = (
               },
             },
           }),
-          signal: controller.signal,
+        },
+        outerSignal,
+      );
+      if (!created.ok) return created;
+      if ("notFound" in created.value) {
+        return err({
+          kind: "offline",
+          detail: "OpenAI responses endpoint is unavailable",
         });
-        if (!response.ok) return err(httpFailure(response.status));
-        const responseBody = await readBoundedBody(
-          response,
-          maximumProviderResponseBytes,
-        );
-        if (!responseBody.ok) {
-          return err({
-            kind: "malformedStructure",
-            detail:
-              responseBody.error.kind === "bodyTooLarge"
-                ? "OpenAI response body is too large"
-                : "OpenAI response body could not be read",
-          });
-        }
-        let value: unknown;
-        try {
-          value = JSON.parse(new TextDecoder().decode(responseBody.value));
-        } catch {
-          return err({
-            kind: "malformedStructure",
-            detail: "OpenAI response body is not JSON",
-          });
-        }
-        const decoded = decodeResponse(value);
-        return "failure" in decoded ? err(decoded.failure) : ok(decoded.response);
-      } catch (cause) {
-        if (outerSignal?.aborted === true) {
-          return err({ kind: "cancelled", detail: "OpenAI request was cancelled" });
-        }
-        if (timedOut)
-          return err({ kind: "timeout", detail: "OpenAI request timed out" });
-        return err({ kind: "offline", detail: detail(cause) });
-      } finally {
-        clearTimeout(timeout);
-        outerSignal?.removeEventListener("abort", cancel);
       }
+      const body = created.value.value;
+      if (!isRecord(body) || typeof body["id"] !== "string") {
+        return err({
+          kind: "malformedStructure",
+          detail: "dispatch response object has no id",
+        });
+      }
+      await dispatched(body["id"]);
+      const decoded = decodeResponse(body);
+      if ("failure" in decoded) return err(decoded.failure);
+      if ("response" in decoded) return ok(decoded.response);
+      const polled = await poll(body["id"], deadline, outerSignal);
+      if (!polled.ok) return polled;
+      if (polled.value === null) {
+        return err({
+          kind: "offline",
+          detail: "OpenAI discarded the dispatched response before it was read",
+        });
+      }
+      return ok(polled.value);
     },
-    retrieve: async () => ok(null),
+    retrieve: (providerResponseId, outerSignal) =>
+      poll(providerResponseId, Date.now() + options.completionTimeoutMs, outerSignal),
   };
 };

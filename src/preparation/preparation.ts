@@ -37,7 +37,7 @@ import {
 } from "./projection.ts";
 import { createSqliteCheckpointStore } from "./sqlite-checkpoint-store.ts";
 
-export const PREPARATION_SCHEMA_VERSION = 1;
+export const PREPARATION_SCHEMA_VERSION = 2;
 const NORMALIZATION_VERSION = "nfkc-v1";
 
 type PendingImport = Readonly<{
@@ -139,7 +139,19 @@ const migrate = (
         detail: "Preparation migration history is not contiguous.",
       });
     }
-    if (current.version >= 1) return ok(undefined);
+    if (current.version >= PREPARATION_SCHEMA_VERSION) return ok(undefined);
+    if (current.version === 1) {
+      const addDispatchId = database.transaction(() => {
+        database.exec(
+          "ALTER TABLE preparation_batch ADD COLUMN provider_response_id TEXT",
+        );
+        database
+          .query("INSERT INTO preparation_migration(version, applied_at) VALUES (2, ?)")
+          .run(appliedAt);
+      });
+      addDispatchId.immediate();
+      return ok(undefined);
+    }
     const apply = database.transaction(() => {
       database.exec(`
         CREATE TABLE subtitle_set (
@@ -195,6 +207,7 @@ const migrate = (
           batch_order INTEGER NOT NULL,
           state TEXT NOT NULL CHECK (state IN ('pending', 'requested', 'uncertain', 'completed')),
           request_key TEXT,
+          provider_response_id TEXT,
           response_json TEXT,
           PRIMARY KEY (run_id, input_digest),
           UNIQUE (run_id, batch_order)
@@ -208,8 +221,11 @@ const migrate = (
         );
       `);
       database
-        .query("INSERT INTO preparation_migration(version, applied_at) VALUES (1, ?)")
-        .run(appliedAt);
+        .query(
+          `INSERT INTO preparation_migration(version, applied_at)
+           VALUES (1, ?), (2, ?)`,
+        )
+        .run(appliedAt, appliedAt);
     });
     apply.immediate();
     return ok(undefined);
@@ -378,24 +394,33 @@ export const openPreparation = (
     const checkpoints = (
       database
         .query(
-          `SELECT input_digest, state, request_key, response_json
+          `SELECT input_digest, state, request_key, provider_response_id, response_json
            FROM preparation_batch WHERE run_id = ? ORDER BY batch_order`,
         )
         .all(run.run_id) as {
         input_digest: string;
         state: BatchCheckpoint["state"];
         request_key: string | null;
+        provider_response_id: string | null;
         response_json: string | null;
       }[]
     ).map((row): BatchCheckpoint => {
       if (row.state === "pending")
         return { state: "pending", inputDigest: row.input_digest };
       if (row.request_key === null) throw new Error("stored request key missing");
-      if (row.state === "requested" || row.state === "uncertain") {
+      if (row.state === "requested") {
         return {
-          state: row.state,
+          state: "requested",
           inputDigest: row.input_digest,
           requestKey: row.request_key,
+        };
+      }
+      if (row.state === "uncertain") {
+        return {
+          state: "uncertain",
+          inputDigest: row.input_digest,
+          requestKey: row.request_key,
+          providerResponseId: row.provider_response_id,
         };
       }
       if (row.response_json === null) throw new Error("stored response missing");

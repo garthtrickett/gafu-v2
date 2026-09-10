@@ -81,10 +81,11 @@ export type BatchProvider = Readonly<{
   submit: (
     batch: AnalysisBatch,
     requestKey: string,
+    dispatched: (providerResponseId: string) => Promise<void>,
     signal?: AbortSignal,
   ) => Promise<Result<ProviderBatchResponse, ProviderFailure>>;
   retrieve: (
-    requestKey: string,
+    providerResponseId: string,
     signal?: AbortSignal,
   ) => Promise<Result<ProviderBatchResponse | null, ProviderFailure>>;
 }>;
@@ -106,6 +107,14 @@ export type BatchCheckpoint =
       readonly state: "uncertain";
       readonly inputDigest: string;
       readonly requestKey: string;
+      /**
+       * The provider's own id for the dispatched request, committed as soon as
+       * dispatch returns it. Null only while the crash window is still open:
+       * between sending the dispatch and durably recording its answer. A
+       * recorded id makes the uncertainty resolvable by retrieval instead of
+       * by an explicit duplicate-charge decision.
+       */
+      readonly providerResponseId: string | null;
     }
   | {
       readonly state: "completed";
@@ -147,6 +156,12 @@ export type CheckpointStore = Readonly<{
     runId: string,
     inputDigest: string,
     requestKey: string,
+  ) => Promise<Result<void, BatchFailure>>;
+  markDispatched: (
+    runId: string,
+    inputDigest: string,
+    requestKey: string,
+    providerResponseId: string,
   ) => Promise<Result<void, BatchFailure>>;
   complete: (
     runId: string,

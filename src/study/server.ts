@@ -625,7 +625,12 @@ const preparationProvider = fakeAi
       apiKey: keyCustody.readForServerAdapter,
       model: openAiModel,
       promptVersion: "preparation-v2",
-      timeoutMs: 60_000,
+      // Bounds one HTTP call. Dispatch and each poll are short whatever the
+      // model does, so this is a transport bound, not a generation budget.
+      timeoutMs: 30_000,
+      // Bounds the whole batch. A batch of `batchSize` cues asks a reasoning
+      // model for a candidate per content token, which runs to minutes.
+      completionTimeoutMs: 15 * 60_000,
     });
 const openedPreparation = openPreparation({
   databasePath,

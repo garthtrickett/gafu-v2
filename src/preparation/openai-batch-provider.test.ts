@@ -48,8 +48,14 @@ const provider = (fetcher: OpenAiFetch, key = "test-secret") =>
     model: "gpt-5.6-luna",
     promptVersion: "preparation-v1",
     timeoutMs: 20,
+    completionTimeoutMs: 200,
+    pollIntervalMs: 1,
+    sleep: async () => {},
     fetch: fetcher,
   });
+
+/** Records nothing: most cases do not care that a dispatch was announced. */
+const ignoreDispatch = async () => {};
 
 describe("OpenAI preparation provider adapter", () => {
   test("sends server-held credentials and strict structured output", async () => {
@@ -57,7 +63,7 @@ describe("OpenAI preparation provider adapter", () => {
     const result = await provider(async (_input, init) => {
       observed = init;
       return Response.json(successBody);
-    }).submit(batch, "request-key");
+    }).submit(batch, "request-key", ignoreDispatch);
     expect(result.ok).toBe(true);
     expect(observed?.headers).toEqual({
       Authorization: "Bearer test-secret",
@@ -79,7 +85,7 @@ describe("OpenAI preparation provider adapter", () => {
   ] as const)("maps HTTP %i to %s", async (status, kind) => {
     const result = await provider(
       async () => new Response("private body", { status }),
-    ).submit(batch, "request-key");
+    ).submit(batch, "request-key", ignoreDispatch);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe(kind);
@@ -90,13 +96,13 @@ describe("OpenAI preparation provider adapter", () => {
   test("rejects incomplete and malformed provider results", async () => {
     const incomplete = await provider(async () =>
       Response.json({ ...successBody, status: "incomplete" }),
-    ).submit(batch, "request-key");
+    ).submit(batch, "request-key", ignoreDispatch);
     expect(incomplete.ok).toBe(false);
     if (!incomplete.ok) expect(incomplete.error.kind).toBe("incompleteResponse");
 
     const malformed = await provider(async () =>
       Response.json({ ...successBody, output: [] }),
-    ).submit(batch, "request-key");
+    ).submit(batch, "request-key", ignoreDispatch);
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.error.kind).toBe("malformedStructure");
 
@@ -105,7 +111,7 @@ describe("OpenAI preparation provider adapter", () => {
         ...successBody,
         output: [{ type: "message", content: [{ type: "refusal", refusal: "no" }] }],
       }),
-    ).submit(batch, "request-key");
+    ).submit(batch, "request-key", ignoreDispatch);
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.error.kind).toBe("refusal");
   });
@@ -113,7 +119,7 @@ describe("OpenAI preparation provider adapter", () => {
   test("rejects oversized provider responses before JSON parsing", async () => {
     const result = await provider(
       async () => new Response("x".repeat(4 * 1024 * 1024 + 1)),
-    ).submit(batch, "request-key");
+    ).submit(batch, "request-key", ignoreDispatch);
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -132,7 +138,11 @@ describe("OpenAI preparation provider adapter", () => {
         }
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
       });
-    const timeout = await provider(hangingFetch).submit(batch, "request-key");
+    const timeout = await provider(hangingFetch).submit(
+      batch,
+      "request-key",
+      ignoreDispatch,
+    );
     expect(timeout.ok).toBe(false);
     if (!timeout.ok) expect(timeout.error.kind).toBe("timeout");
 
@@ -141,6 +151,7 @@ describe("OpenAI preparation provider adapter", () => {
     const cancelled = await provider(hangingFetch).submit(
       batch,
       "request-key",
+      ignoreDispatch,
       controller.signal,
     );
     expect(cancelled.ok).toBe(false);
@@ -149,15 +160,88 @@ describe("OpenAI preparation provider adapter", () => {
     const missing = await provider(async () => Response.json(successBody), "").submit(
       batch,
       "request-key",
+      ignoreDispatch,
     );
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.error.kind).toBe("authentication");
   });
 
-  test("does not claim it can retrieve an uncertain request by local key", async () => {
-    const result = await provider(async () => Response.json(successBody)).retrieve(
-      "local-request-key",
-    );
+  test("dispatches in the background and polls until the response is terminal", async () => {
+    const urls: string[] = [];
+    let dispatchBody: Record<string, unknown> = {};
+    let polls = 0;
+    const result = await provider(async (input, init) => {
+      urls.push(String(input));
+      if (init?.method === "POST") {
+        dispatchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Response.json({ id: "resp_test", status: "queued" });
+      }
+      polls += 1;
+      return Response.json(
+        polls < 3 ? { id: "resp_test", status: "in_progress" } : successBody,
+      );
+    }).submit(batch, "request-key", ignoreDispatch);
+
+    // The long wait happens across short polls, so no single call has to be
+    // sized against the model's thinking time.
+    expect(dispatchBody["background"]).toBe(true);
+    expect(dispatchBody["store"]).toBe(false);
+    expect(polls).toBe(3);
+    expect(urls[0]).toBe("https://api.openai.com/v1/responses");
+    expect(urls[1]).toBe("https://api.openai.com/v1/responses/resp_test");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.providerRequestId).toBe("resp_test");
+  });
+
+  test("names the dispatched request before waiting for its output", async () => {
+    const announced: string[] = [];
+    let pollsBeforeAnnouncement = -1;
+    let polls = 0;
+    await provider(async (_input, init) => {
+      if (init?.method === "POST")
+        return Response.json({ id: "resp_test", status: "queued" });
+      polls += 1;
+      return Response.json(successBody);
+    }).submit(batch, "request-key", async (id) => {
+      announced.push(id);
+      pollsBeforeAnnouncement = polls;
+    });
+
+    expect(announced).toEqual(["resp_test"]);
+    // Announced before the first poll: an interrupted wait still leaves a
+    // request that can be retrieved instead of repaid.
+    expect(pollsBeforeAnnouncement).toBe(0);
+  });
+
+  test("retrieves a dispatched response by the provider's own id", async () => {
+    const urls: string[] = [];
+    const result = await provider(async (input) => {
+      urls.push(String(input));
+      return Response.json(successBody);
+    }).retrieve("resp_test");
+
+    expect(urls).toEqual(["https://api.openai.com/v1/responses/resp_test"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value?.candidates).toHaveLength(1);
+  });
+
+  test("reports a dispatch the provider no longer holds as unrecoverable", async () => {
+    const result = await provider(
+      async () => new Response("", { status: 404 }),
+    ).retrieve("resp_expired");
+    // Not a failure: the caller must decide whether to pay for it again.
     expect(result).toEqual({ ok: true, value: null });
+  });
+
+  test("a batch that outlives its completion budget times out rather than vanishing", async () => {
+    const result = await provider(async (_input, init) =>
+      Response.json({
+        id: "resp_test",
+        status: init?.method === "POST" ? "queued" : "in_progress",
+      }),
+    ).submit(batch, "request-key", ignoreDispatch);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("timeout");
   });
 });

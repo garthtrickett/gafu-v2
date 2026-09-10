@@ -1,3 +1,4 @@
+import { ok } from "../result.ts";
 import type {
   AnalysisBatch,
   AnalysisManifest,
@@ -173,7 +174,16 @@ export const createPreparationBatching = (dependencies: {
             : requestKey(batch);
 
         if (checkpoint.state === "uncertain") {
-          const retrieved = await dependencies.provider.retrieve(key, options.signal);
+          // A recorded dispatch id makes the uncertainty answerable: the work
+          // is already paid for, so retrieve it rather than making the reader
+          // choose between abandoning the batch and paying for it twice.
+          const retrieved =
+            checkpoint.providerResponseId === null
+              ? ok(null)
+              : await dependencies.provider.retrieve(
+                  checkpoint.providerResponseId,
+                  options.signal,
+                );
           if (!retrieved.ok) {
             return pause(manifest, checkpoints, retrieved.error);
           }
@@ -189,6 +199,8 @@ export const createPreparationBatching = (dependencies: {
             checkpoints = (await refresh(manifest)) ?? checkpoints;
             continue;
           }
+          // No id, or the dispatch aged out of provider-side retention: this is
+          // the only case where reissuing can genuinely pay twice.
           if (options.retryUncertain !== true) {
             return snapshot(manifest, checkpoints, "paused", null, true);
           }
@@ -210,14 +222,31 @@ export const createPreparationBatching = (dependencies: {
         const submitted = await dependencies.provider.submit(
           batch,
           key,
+          // Committed before the provider starts generating, so an interrupted
+          // wait leaves a retrievable request rather than an unanswerable one.
+          async (providerResponseId) => {
+            await dependencies.store.markDispatched(
+              manifest.runId,
+              batch.inputDigest,
+              key,
+              providerResponseId,
+            );
+            checkpoints = (await refresh(manifest)) ?? checkpoints;
+          },
           options.signal,
         );
         if (!submitted.ok) {
+          const latest = (await refresh(manifest)) ?? checkpoints;
+          const dispatched = latest.find(
+            (item) => item.inputDigest === batch.inputDigest,
+          );
           return pause(
             manifest,
-            checkpoints,
+            latest,
             submitted.error,
-            checkpoint.state === "uncertain" && options.retryUncertain === true,
+            // Reissuing only risks a second charge while nothing retrievable
+            // was recorded for the request that has already been paid for.
+            dispatched?.state === "uncertain" && dispatched.providerResponseId === null,
           );
         }
         const interrupted = await commit(

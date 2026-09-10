@@ -48,14 +48,33 @@ error detail. Authentication, permission, rate limit, transport, timeout,
 malformed structure, incomplete output, refusal, and cancellation are mapped to
 the provider-independent failure union.
 
-OpenAI response retrieval requires a provider response ID. A crash can occur
-before that ID is committed, and this experiment found no documented mapping
-from Gafu's local request key to a response ID. The adapter therefore does not
-claim safe retrieval in that case: it returns no recovery and the orchestrator
-requires an explicit retry carrying a possible-duplicate-charge warning.
+OpenAI response retrieval requires a provider response ID. The first version of
+this adapter called the Responses API synchronously, so the ID arrived only with
+the finished output: any interruption before that left an `uncertain` checkpoint
+that nothing could answer. Because `retrieve` then had to return no recovery,
+one timeout converted a run into a per-batch duplicate-charge decision, and the
+orchestrator stopped calling the provider entirely on later resume attempts.
+
+The adapter now dispatches with `background: true`. The POST returns as soon as
+the request is queued, carrying the response ID, and the orchestrator commits it
+to the checkpoint before waiting for any output. Generation is then read over
+short `GET /v1/responses/{id}` polls. Two consequences:
+
+- No single HTTP call has to be sized against the model's thinking time.
+  `timeoutMs` bounds one call; `completionTimeoutMs` bounds the whole batch.
+- An interrupted wait is recoverable by retrieval. `possibleDuplicateCharge` is
+  now raised only for the narrow window in which a dispatch was sent but its ID
+  was never committed, or in which the provider has already discarded it.
+
+`store` stays `false`. Background responses are retained provider-side for
+roughly ten minutes purely so they can be polled, which the analysis disclosure
+already covers ("the provider's retention policy still applies"). A `GET` that
+returns 404 means the dispatch aged out; that is reported as no recovery rather
+than as a transport failure, because the two need opposite responses.
 
 References: [create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create/),
-[retrieve a model response](https://developers.openai.com/api/reference/resources/responses/methods/retrieve/).
+[retrieve a model response](https://developers.openai.com/api/reference/resources/responses/methods/retrieve/),
+[background mode](https://developers.openai.com/api/docs/guides/background).
 
 ## Manual provider gate
 
@@ -71,3 +90,10 @@ No `OPENAI_API_KEY` was available in the implementation environment on
 2026-09-08, so the three paid runs have not been executed. Patch 0.5's code and
 offline gates are complete, but its manual evidence gate remains open and is not
 represented as a passing result.
+
+Because that gate never ran, no measured per-batch duration exists. The original
+`timeoutMs: 60_000` was therefore never validated against a real call, and the
+server analyses 20 cues per batch where this script defaulted to 3. The script
+now defaults to the server's batch size (`OPENAI_BATCH_SIZE`) so that the
+duration it reports bounds production batches. Until it is run, treat
+`completionTimeoutMs` as an unmeasured upper bound, not a calibrated one.
