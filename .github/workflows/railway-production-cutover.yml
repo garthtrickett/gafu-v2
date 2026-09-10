@@ -458,11 +458,14 @@ jobs:
           # Uploads are content-verified, so a re-run that finds exactly the
           # verified files skips the upload; any other non-empty content
           # fails closed with the listing attached (names and sizes only).
+          # The filesystem's lost+found directory (present since volume
+          # creation, holding no learner data) is excluded from every
+          # content assertion below.
           database_size="$(stat -c %s "$private_root/gafu-v2.sqlite")"
           seed_size="$(stat -c %s "$private_root/kaishi-1.5k.local.json")"
           volume_matches() {
             jq -e --argjson database_size "$database_size" --argjson seed_size "$seed_size" '
-              (.files | length) == 2
+              ([.files[] | select(.name != "lost+found")] | length) == 2
               and any(.files[]; .name == "gafu-v2.sqlite" and .type == "file" and .size == $database_size)
               and any(.files[]; .name == "kaishi-1.5k.local.json" and .type == "file" and .size == $seed_size)
             ' <<<"$1" >/dev/null
@@ -470,7 +473,7 @@ jobs:
           if volume_matches "$listing"; then
             echo "Volume already holds exactly the verified files; skipping upload."
           else
-            jq -e '.files | length == 0' <<<"$listing" >/dev/null || {
+            jq -e '[.files[] | select(.name != "lost+found")] | length == 0' <<<"$listing" >/dev/null || {
               echo "::error::Unexpected volume content:"
               echo "$listing"
               exit 1
