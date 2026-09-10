@@ -305,12 +305,20 @@ jobs:
               and $volumes[0].mountPath == "/data"
               and $volumes[0].status == "Ready"
           ' <<<"$volumes" >/dev/null
-          test "$(railway domain list \
+          v2_domains="$(railway domain list \
             --project "$EXPECTED_PROJECT_ID" \
             --environment "$EXPECTED_ENVIRONMENT_ID" \
             --service "$EXPECTED_V2_SERVICE_ID" \
-            --json | jq '.domains | length')" = 0
-          echo "Exact empty V2 boundary confirmed; V1 remains the active service."
+            --json | jq -r '.domains[]? // empty')"
+          if [ "$v2_boundary" = pristine ]; then
+            test -z "$v2_domains"
+          else
+            # Resumed: Railway generates a default *.up.railway.app domain
+            # for the bootstrap deployment. Custom domains fail closed here.
+            test -n "$v2_domains"
+            ! printf '%s\n' "$v2_domains" | grep -vE '\.up\.railway\.app$' | grep -q .
+          fi
+          echo "V2 boundary confirmed ($v2_boundary); V1 remains the active service."
 
       - name: Start the inaccessible bootstrap deployment
         env:
@@ -390,7 +398,7 @@ jobs:
           # workspace token auto-scopes registration to the workspace.
           key_path="$RUNNER_TEMP/gafu-v2-cutover-ssh"
           ssh-keygen -t ed25519 -N '' -f "$key_path" -C "gafu-v2-cutover-$GITHUB_RUN_ID" -q
-          railway ssh keys add -k "$key_path.pub" -n "gafu-v2-cutover-$GITHUB_RUN_ID" --json >/dev/null
+          railway ssh keys add -k "$key_path.pub" -n "gafu-v2-cutover-$GITHUB_RUN_ID" >/dev/null
           echo "CUTOVER_SSH_KEY=gafu-v2-cutover-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
           echo "Ephemeral SSH key registered for volume access."
 
@@ -505,12 +513,18 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          # Hygiene only: the key is single-use per run. Removal failure (for
-          # example a 2FA challenge) warns instead of failing the run; a
-          # leftover key is named by run ID for manual removal.
-          key_ref="$(railway ssh keys list --json | jq -r --arg name "${CUTOVER_SSH_KEY:-}" '[.. | objects | select(.name == $name) | .fingerprint // .id // empty][0] // empty')"
+          # Hygiene only: the key is single-use per run. The 5.41.2 CLI prints
+          # a human table here, so the fingerprint is matched by pattern
+          # rather than parsed JSON. Removal failure (for example a 2FA
+          # challenge) warns instead of failing the run; a leftover key is
+          # named by run ID for manual removal.
+          key_ref=""
+          if [ -n "${CUTOVER_SSH_KEY:-}" ]; then
+            key_line="$(railway ssh keys list 2>/dev/null | grep -F "$CUTOVER_SSH_KEY" || true)"
+            key_ref="$(printf '%s' "$key_line" | grep -oE 'SHA256:[^ ]+|([0-9a-f]{2}:){15}[0-9a-f]{2}' | head -1)"
+          fi
           if [ -n "$key_ref" ]; then
-            railway ssh keys remove "$key_ref" --json >/dev/null || echo "::warning::Ephemeral SSH key ${CUTOVER_SSH_KEY:-unknown} needs manual removal."
+            railway ssh keys remove "$key_ref" >/dev/null || echo "::warning::Ephemeral SSH key ${CUTOVER_SSH_KEY:-unknown} needs manual removal."
           else
             echo "No ephemeral SSH key to remove."
           fi
