@@ -140,6 +140,12 @@ export type LearningMaterial = Readonly<{
   prepare: (
     input: PrepareMaterial,
   ) => Promise<Result<PreparedMaterial, MaterialFailure>>;
+  /**
+   * Whether teaching has been acknowledged for the Card: the read-only half
+   * of the new-vs-taught distinction `prepare` acts on. The server uses it to
+   * offer learn and review as separate queues without preparing anything.
+   */
+  hasTeaching: (cardId: CardSummary["id"]) => Result<boolean, MaterialFailure>;
   acknowledgeTeaching: (
     cardId: CardSummary["id"],
     presentationId: string,

@@ -107,7 +107,7 @@ test("configures a key and teaches before the first generated review", async ({
   });
   if (!attached.ok()) throw new Error(`attach teaching: ${attached.status()}`);
 
-  await review.getByRole("button", { name: "Start next Card" }).click();
+  await review.getByRole("button", { name: "Learn new" }).click();
   await expect(review.getByText("teach", { exact: true })).toBeVisible({
     timeout: 20_000,
   });
@@ -116,11 +116,14 @@ test("configures a key and teaches before the first generated review", async ({
 
   await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
   await expect(page.getByRole("status")).toContainText("back in the queue");
-  await expect(review.getByRole("button", { name: "Start next Card" })).toBeVisible();
+  await expect(review.getByRole("button", { name: "Learn new" })).toBeVisible();
 
-  // Teaching ends the encounter. The Card goes back in the queue, so starting
-  // again serves it as a review — generated live, as reviews always are.
-  await review.getByRole("button", { name: "Start next Card" }).click();
+  // The taught Card is no longer learnable: Learn reports an empty queue
+  // while Review picks the same Card up as a review.
+  await review.getByRole("button", { name: "Learn new" }).click();
+  await expect(page.getByRole("status")).toContainText("nothingDue");
+
+  await review.getByRole("button", { name: "Review" }).click();
   await expect(review.getByText("review", { exact: true })).toBeVisible({
     timeout: 20_000,
   });

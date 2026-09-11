@@ -293,10 +293,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * duplicate text. A segment whose reading is its own writing is kana already
    * and takes no ruby: putting が over が is noise that pushes the line apart.
    */
-  const startStudy = (): void => {
+  const startSession = (url: string): void => {
     void run(async () => {
       try {
-        model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
+        model.presentation = await requestJson<PreparedMaterial>(url, {
           method: "POST",
         });
       } catch (cause) {
@@ -315,6 +315,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
         : "Recall the target, then reveal the answer.";
     });
   };
+
+  const startLearn = (): void => startSession("/api/study/learn");
+
+  const startReview = (): void => startSession("/api/study/session/review");
 
   const finishTeaching = (): void => {
     const current = model.presentation;
@@ -400,15 +404,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   </div>
                   ${
                     model.presentation === null
-                      ? html`<button type="button" @click=${startStudy} ?disabled=${model.busy}>
-                          Start next Card
-                        </button>`
+                      ? html`<div class="button-row">
+                          <button type="button" @click=${startLearn} ?disabled=${model.busy}>
+                            Learn new
+                          </button>
+                          <button type="button" @click=${startReview} ?disabled=${model.busy}>
+                            Review
+                          </button>
+                        </div>`
                       : ""
                   }
                 </div>
                 ${
                   model.presentation === null
-                    ? html`<p>Starting Study admits staged Cards under your daily limit, then prepares the first due Card.</p>`
+                    ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
                         <p class="context">${model.presentation.material.context}</p>

@@ -367,6 +367,7 @@ export const openLearningMaterial = (
 
   return ok({
     prepare,
+    hasTeaching,
     acknowledgeTeaching: (cardId, presentationId) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
