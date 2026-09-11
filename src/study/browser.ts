@@ -33,6 +33,7 @@ type BrowserModel = {
     id: string;
     total: number;
     completed: number;
+    completedIds: string[];
     failed: number;
     pending: number;
     done: boolean;
@@ -384,6 +385,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             total:
               progress.completed.length + progress.failed.length + progress.pending,
             completed: progress.completed.length,
+            completedIds: [...progress.completed],
             failed: progress.failed.length,
             pending: progress.pending,
             done: progress.done,
@@ -413,6 +415,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         id: dispatched.batchId,
         total: dispatched.total,
         completed: 0,
+        completedIds: [],
         failed: 0,
         pending: dispatched.total,
         done: false,
@@ -439,6 +442,38 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  // After a grade, keep working through a finished batch without sending
+  // the learner back to the buttons: serve the next batched Card that is
+  // still due, skipping anything already answered elsewhere. Failed batch
+  // Cards are never attempted here — they stay due for single Review.
+  // Returns the next presentation, "done" when the batch is exhausted, or
+  // null when no batch is driving.
+  const chainBatch = async (
+    justGraded: string,
+  ): Promise<PreparedMaterial | "done" | null> => {
+    const batch = model.batch;
+    if (batch === null || !batch.done) return null;
+    for (const cardId of batch.completedIds) {
+      if (cardId === justGraded) continue;
+      try {
+        return await requestJson<PreparedMaterial>("/api/study/session/prepare", {
+          method: "POST",
+          body: JSON.stringify({ cardId }),
+        });
+      } catch (cause) {
+        if (
+          cause instanceof Error &&
+          (cause.message === "cardNotDue" || cause.message === "nothingDue")
+        ) {
+          continue;
+        }
+        throw cause;
+      }
+    }
+    model.batch = null;
+    return "done";
+  };
+
   // Check yourself against the explanation, then mark it honestly:
   // correct maps to good, incorrect maps to again, and the scheduler never
   // sees a third option.
@@ -457,6 +492,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
       });
       model.presentation = null;
       model.revealed = false;
+      const chained = await chainBatch(current.cardId);
+      if (chained !== null && chained !== "done") {
+        model.presentation = chained;
+        model.revealed = false;
+        return correct
+          ? "Review recorded once. Next batched Card."
+          : "Marked for sooner. Next batched Card.";
+      }
+      if (chained === "done") return "Batch complete.";
       return correct
         ? "Review recorded once. The Card's next due time is saved."
         : "Marked for sooner. The Card's next due time is saved.";
