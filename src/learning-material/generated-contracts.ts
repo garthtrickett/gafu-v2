@@ -107,6 +107,12 @@ export type MaterialFailure =
       readonly cause: MaterialProviderFailure["kind"];
     }
   | { readonly kind: "teachingNotAcknowledged" }
+  /**
+   * A new Card with nothing stored to teach from. First exposure shows only
+   * material stored when the Card was made; Study never generates teaching,
+   * so this fails fast instead of holding the session open on the provider.
+   */
+  | { readonly kind: "teachingNotPrepared" }
   | { readonly kind: "presentationNotFound" }
   | { readonly kind: "presentationAlreadyShown" }
   | { readonly kind: "inspectionDisabled" }

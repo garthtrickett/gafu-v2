@@ -15,6 +15,7 @@ import { openLearningMaterial } from "./learning-material.ts";
 import {
   createDeterministicMaterialProvider,
   createScriptedMaterialProvider,
+  deterministicMaterialResult,
 } from "./scripted-provider.ts";
 
 const directories: string[] = [];
@@ -134,6 +135,24 @@ describe("Phase 2 generated study lifecycle", () => {
     }
     const knowledge = app.study.knowledgeSnapshot();
     if (!knowledge.ok) throw new Error(knowledge.error.kind);
+
+    // First exposure shows only what was stored when the Card was made. The
+    // deterministic teach fixture is stored the way the cards CLI stores it.
+    const authored = deterministicMaterialResult({
+      mode: "teach",
+      card: queue.value.due[0].card,
+      knowledge: knowledge.value,
+      recentJapanese: [],
+      candidateCount: 3,
+    });
+    if (!authored.ok || authored.value.candidates[0] === undefined)
+      throw new Error("deterministic teach");
+    const stored = await app.material.storeAuthoredTeaching({
+      card: queue.value.due[0].card,
+      knowledge: knowledge.value,
+      value: authored.value.candidates[0],
+    });
+    if (!stored.ok) throw new Error(`authored teach rejected: ${stored.error.kind}`);
 
     const taught = await app.material.prepare({
       card: queue.value.due[0].card,
@@ -294,6 +313,22 @@ describe("Phase 2 generated study lifecycle", () => {
     const knowledge = app.study.knowledgeSnapshot();
     if (!queue.ok || queue.value.due[0] === undefined || !knowledge.ok)
       throw new Error("setup");
+    const authoredGrammar = deterministicMaterialResult({
+      mode: "teach",
+      card: queue.value.due[0].card,
+      knowledge: knowledge.value,
+      recentJapanese: [],
+      candidateCount: 3,
+    });
+    if (!authoredGrammar.ok || authoredGrammar.value.candidates[0] === undefined)
+      throw new Error("deterministic grammar teach");
+    const storedGrammar = await app.material.storeAuthoredTeaching({
+      card: queue.value.due[0].card,
+      knowledge: knowledge.value,
+      value: authoredGrammar.value.candidates[0],
+    });
+    if (!storedGrammar.ok)
+      throw new Error(`authored grammar teach rejected: ${storedGrammar.error.kind}`);
     const prepared = await app.material.prepare({
       card: queue.value.due[0].card,
       knowledge: knowledge.value,
@@ -301,13 +336,14 @@ describe("Phase 2 generated study lifecycle", () => {
     expect(prepared).toMatchObject({ ok: true, value: { mode: "teach" } });
     app.study.close();
     app.material.close();
+  });
 
-    const invalidApp = harness(
-      createScriptedMaterialProvider([
-        err({ kind: "timeout", detail: "provider timed out" }),
-      ]),
-    );
-    const card = invalidApp.study.createCard({
+  test("a new Card without stored teaching fails without calling the provider", async () => {
+    // An empty script answers every provider call with an offline error and
+    // records it. A null last request proves Study never asked.
+    const provider = createScriptedMaterialProvider([]);
+    const app = harness(provider);
+    const card = app.study.createCard({
       type: "vocabulary",
       content: {
         lemma: "鳥",
@@ -318,24 +354,25 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!card.ok) throw new Error(card.error.kind);
-    const invalidQueue = invalidApp.study.studyQueue();
-    const invalidKnowledge = invalidApp.study.knowledgeSnapshot();
+    const invalidQueue = app.study.studyQueue();
+    const invalidKnowledge = app.study.knowledgeSnapshot();
     if (
       !invalidQueue.ok ||
       invalidQueue.value.due[0] === undefined ||
       !invalidKnowledge.ok
     )
       throw new Error("setup");
-    const failed = await invalidApp.material.prepare({
+    const failed = await app.material.prepare({
       card: invalidQueue.value.due[0].card,
       knowledge: invalidKnowledge.value,
     });
-    expect(failed).toMatchObject({ ok: false, error: { kind: "timeout" } });
-    expect(invalidApp.study.listCards()).toMatchObject({
+    expect(failed).toMatchObject({ ok: false, error: { kind: "teachingNotPrepared" } });
+    expect(provider.inspectLastRequest()).toBeNull();
+    expect(app.study.listCards()).toMatchObject({
       ok: true,
       value: [{ reviewCount: 0 }],
     });
-    invalidApp.study.close();
-    invalidApp.material.close();
+    app.study.close();
+    app.material.close();
   });
 });

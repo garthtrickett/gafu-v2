@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { buildTeaching } from "../../scripts/authored-teaching.ts";
+import { createKuromojiAnalyzer } from "../../src/analysis/kuromoji-analyzer.ts";
+import { loadKuromojiFromDirectory } from "../../src/analysis/loaders.ts";
+import { LOCAL_MUTATION_HEADER, LOCAL_MUTATION_VALUE } from "../../src/local-api.ts";
 
 // This test creates fourteen background Grammar Cards one at a time, marks
 // each known, and then waits for a generated review. It measures 28-29s
@@ -62,6 +66,47 @@ test("configures a key and teaches before the first generated review", async ({
   }
 
   const review = page.getByTestId("review-panel");
+
+  // First exposure shows only what was stored when the Card was made, so the
+  // journey attaches teaching the way the cards CLI does. Study then shows it
+  // without touching the provider; only the later review generates.
+  const studyState = await page.request.get("/api/study");
+  if (!studyState.ok()) throw new Error(`study read: ${studyState.status()}`);
+  const studyBody = (await studyState.json()) as {
+    cards: { id: string; content: { lemma?: string } }[];
+    knowledge: {
+      vocabulary: { lemma: string; reading: string; partOfSpeech: string | null }[];
+      grammar: { canonicalForm: string }[];
+    };
+  };
+  const tori = studyBody.cards.find((card) => card.content.lemma === "鳥");
+  if (tori === undefined) throw new Error("missing 鳥 card");
+  const analyzer = createKuromojiAnalyzer(() =>
+    loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
+  );
+  const built = await buildTeaching(
+    analyzer,
+    {
+      type: "vocabulary",
+      lemma: "鳥",
+      reading: "とり",
+      partOfSpeech: "noun",
+      meaning: "bird",
+      usageNotes: "A general word for a bird.",
+      example: "鳥かな。",
+    },
+    {
+      vocabulary: studyBody.knowledge.vocabulary,
+      grammar: new Set(studyBody.knowledge.grammar.map((item) => item.canonicalForm)),
+    },
+  );
+  if ("reason" in built) throw new Error(`authored teach: ${built.reason}`);
+  const attached = await page.request.put(`/api/study/cards/${tori.id}/teaching`, {
+    headers: { [LOCAL_MUTATION_HEADER]: LOCAL_MUTATION_VALUE },
+    data: built.value,
+  });
+  if (!attached.ok()) throw new Error(`attach teaching: ${attached.status()}`);
+
   await review.getByRole("button", { name: "Start next Card" }).click();
   await expect(review.getByText("teach", { exact: true })).toBeVisible({
     timeout: 20_000,

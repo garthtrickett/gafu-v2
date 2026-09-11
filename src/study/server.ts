@@ -185,6 +185,7 @@ const materialFailureStatus = (failure: MaterialFailure): number => {
     case "tooSimilar":
     case "noValidCandidate":
     case "teachingNotAcknowledged":
+    case "teachingNotPrepared":
     case "presentationNotFound":
     case "presentationAlreadyShown":
       return 422;
