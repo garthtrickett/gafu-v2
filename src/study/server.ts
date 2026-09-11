@@ -563,7 +563,11 @@ const materialProvider = fakeAi
   : createOpenAiMaterialProvider({
       apiKey: keyCustody.readForServerAdapter,
       model: openAiModel,
-      promptVersion: "study-v1",
+      // Bumped whenever what the provider is asked for changes, because a
+      // generation completed under an older ask is not re-checked. v2 stops
+      // sending usageNotes: the quoted media cue was copied into candidates
+      // together with whatever unknown language it leans on.
+      promptVersion: "study-v2",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,

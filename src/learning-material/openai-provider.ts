@@ -280,20 +280,27 @@ const httpFailure = (status: number): MaterialProviderFailure => {
   return { kind: "offline", detail };
 };
 
-const promptInput = (request: MaterialProviderRequest): unknown => ({
-  mode: request.mode,
-  target: request.card,
-  allowedSupportingVocabulary: request.knowledge.vocabulary.map((word) => ({
-    lemma: word.lemma,
-    reading: word.reading,
-    meaning: word.meaning,
-  })),
-  allowedSupportingGrammar: request.knowledge.grammar.map(
-    (grammar) => grammar.canonicalForm,
-  ),
-  recentJapaneseToAvoid: request.recentJapanese,
-  candidateCount: request.candidateCount,
-});
+const promptInput = (request: MaterialProviderRequest): unknown => {
+  // usageNotes stay out of the prompt. They quote the media cue the Card
+  // came from, and the model copies that cue into its candidates — along
+  // with whatever unknown language the cue leans on. Meaning already carries
+  // the sense; the cue sentence would only poison the i+1 constraint.
+  const { usageNotes: _cue, ...contentWithoutCue } = request.card.content;
+  return {
+    mode: request.mode,
+    target: { ...request.card, content: contentWithoutCue },
+    allowedSupportingVocabulary: request.knowledge.vocabulary.map((word) => ({
+      lemma: word.lemma,
+      reading: word.reading,
+      meaning: word.meaning,
+    })),
+    allowedSupportingGrammar: request.knowledge.grammar.map(
+      (grammar) => grammar.canonicalForm,
+    ),
+    recentJapaneseToAvoid: request.recentJapanese,
+    candidateCount: request.candidateCount,
+  };
+};
 
 const requestBody = (options: Options, request: MaterialProviderRequest): unknown => ({
   model: options.model,
