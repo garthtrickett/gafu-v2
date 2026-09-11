@@ -64,7 +64,7 @@ const provider = (
   createOpenAiMaterialProvider({
     apiKey: () => key,
     model: "gpt-5.6-luna",
-    promptVersion: "study-v1",
+    promptVersion: "study-v2",
     timeoutMs: 20,
     completionTimeoutMs,
     pollIntervalMs: 1,
@@ -89,6 +89,12 @@ describe("OpenAI Learning Material adapter", () => {
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
     expect(JSON.stringify(material.inspectLastRequest())).not.toContain("sk-private");
+    // The media cue stays out of the prompt: the model copies it into its
+    // candidates together with whatever unknown language it leans on.
+    const sent = JSON.parse(String(body["input"])) as {
+      target: { content: Record<string, unknown> };
+    };
+    expect("usageNotes" in sent.target.content).toBe(false);
   });
 
   test.each([
@@ -127,7 +133,7 @@ describe("OpenAI Learning Material adapter", () => {
       createOpenAiMaterialProvider({
         apiKey: () => "secret",
         model: "gpt-5.6-luna",
-        promptVersion: "study-v1",
+        promptVersion: "study-v2",
         timeoutMs: 10,
         completionTimeoutMs: 10,
         fetch: fetcher,
