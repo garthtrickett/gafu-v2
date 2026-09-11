@@ -413,9 +413,10 @@ Non-goals: the vocabulary path is untouched; `formationHint` exactness is
 unchanged; the analyzer-tokenisation identity class (癒やし系, モテる, …) is
 a different mechanism and stays out.
 
-**Gate:** whole-word span accepted on an otherwise-clean sentence;
-detector-exact span still accepted; a span containing no match still
-`targetAbsent`; fully-inside different-form excluded; partially-overlapping
+**Gate:** whole-word span accepted on an otherwise-clean sentence (a
+detector-exact suffix span is no longer sufficient on its own: it leaves the
+verb stem exposed as supporting vocabulary, which is the correct verdict for
+a span that is not the word); a span containing no match still `targetAbsent`; fully-inside different-form excluded; partially-overlapping
 different-form still required (rejected when not support-ready, accepted when
 it is). Then the full required validation (`bun run check`, `bun test`,
 `bun run build`, `bun run test:browser`, `git diff --check`). No migration:
@@ -530,6 +531,33 @@ never called (pinned by an empty-script provider and a null last request);
 stored teaching still teaches from reserve with no permit; the browser journey
 attaches teaching through the public route and sees teach instantly; the full
 required validation passes.
+
+### Patch 2.12 — Compound vocabulary targets and だ-lemmatized adjectives
+
+Implements 2.7 for grammar (presence by containment, inside-span exclusion
+for supporting grammar, prompt documents the whole-word span) and extends the
+same thinking to vocabulary. A vocabulary target is present when analyzer
+tokens tile its span and concatenate to its lemma and reading; one token
+keeps the old part-of-speech and sense checks, while a tiling carries no
+per-component sense because the Card's identity claim covers the whole. A
+な-adjective stem meets its copula-lemmatized token (肝心だ against the
+claimed 肝心). Tokens inside the span are the word's own morphology, never
+supporting language. The cards CLI locates the target with the same tiling
+rule before sending.
+
+Out of scope: analyzer misreadings (破れる read われる) and part-of-speech
+mismatches (意地悪 analyzed as a noun against an adjective claim) stay
+rejected; they are card-data or analyzer defects, not span semantics.
+
+**Gate:** whole-word passive span accepted; outside-span constructions still
+required; compound tiling accepted; だ-lemma accepted; covered-but-wrong form
+still `wrongTargetIdentity`; CLI builds both new shapes; prompt asserts the
+span sentence; the full required validation passes. No migration: old accepts
+are a subset of new accepts, so stored reserves stay valid.
+
+**Backfill:** restore the suspended compound, な-adjective, and suffix-grammar
+cards after deploy, attach teaching for the blocked staged cards through the
+CLI, and probe one live review generation per class.
 
 ## Exit gate
 

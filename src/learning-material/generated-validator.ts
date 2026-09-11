@@ -11,7 +11,7 @@ import type {
   MaterialValidationInput,
 } from "./generated-contracts.ts";
 import { decodeGeneratedMaterial, parseBroadPartOfSpeech } from "./generated-decode.ts";
-import { createLearningMaterialValidator } from "./validator.ts";
+import { adjectiveLemma, createLearningMaterialValidator } from "./validator.ts";
 
 const normalizeReading = (value: string): string =>
   value
@@ -154,7 +154,9 @@ export const createGeneratedMaterialValidator = (
       senses: {
         resolve: (token) =>
           target.kind === "vocabulary" &&
-          token.lemma === target.lemma &&
+          (target.partOfSpeech === "adjective"
+            ? adjectiveLemma(token.lemma)
+            : token.lemma) === target.lemma &&
           normalizeReading(token.reading ?? "") === target.reading &&
           token.broadPartOfSpeech === target.partOfSpeech
             ? [targetSense]
