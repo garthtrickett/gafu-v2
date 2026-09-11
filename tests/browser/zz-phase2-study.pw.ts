@@ -152,9 +152,10 @@ test("configures a key and teaches before the first generated review", async ({
     timeout: 30_000,
   });
 
-  // Work through in whatever order the queue serves, recording each grade
-  // exactly once. The first grade holds the answer request to prove the
-  // buttons stay disabled until it resolves.
+  // Work through in whatever order the queue serves. A review shows the
+  // scene and the sentence with the target coloured, asks honestly, and only
+  // then shows the breakdown. The first grade holds the answer request to
+  // prove the buttons stay disabled until it resolves.
   let releaseAnswer = (): void => {};
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
@@ -169,19 +170,21 @@ test("configures a key and teaches before the first generated review", async ({
     await expect(review.getByText("review", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
+    // Nothing to recall from: no answer up front, and the target word stands
+    // out in the sentence.
     await expect(review.getByTestId("material-answer")).toHaveCount(0);
-    await review.getByRole("button", { name: "Reveal answer" }).click();
-    const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
-    worked.push(shown.includes("cat") ? "cat" : "bird");
-    await review.getByRole("button", { name: "good" }).click();
+    await expect(review.locator(".japanese .target").first()).toBeVisible();
+    await review.getByRole("button", { name: round === 0 ? "Yes" : "No" }).click();
     if (round === 0) {
-      await expect(review.getByRole("button", { name: "again" })).toBeDisabled();
-      await expect(review.getByRole("button", { name: "hard" })).toBeDisabled();
-      await expect(review.getByRole("button", { name: "good" })).toBeDisabled();
-      await expect(review.getByRole("button", { name: "easy" })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "Yes" })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "No" })).toBeDisabled();
       releaseAnswer();
     }
-    await expect(page.getByRole("status")).toContainText("Review recorded once");
+    await expect(page.getByRole("status")).toContainText("next due time is saved");
+    const shown = (await review.getByTestId("material-feedback").textContent()) ?? "";
+    worked.push(shown.includes("cat") ? "cat" : "bird");
+    await review.getByRole("button", { name: "Next" }).click();
+    await expect(review.getByTestId("material-feedback")).toHaveCount(0);
   }
   expect(worked.sort()).toEqual(["bird", "cat"]);
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
