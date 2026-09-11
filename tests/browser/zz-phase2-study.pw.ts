@@ -114,9 +114,13 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(review.getByTestId("material-answer")).toContainText("bird");
   await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
 
-  await review
-    .getByRole("button", { name: "I've studied this — start recall" })
-    .click();
+  await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
+  await expect(page.getByRole("status")).toContainText("back in the queue");
+  await expect(review.getByRole("button", { name: "Start next Card" })).toBeVisible();
+
+  // Teaching ends the encounter. The Card goes back in the queue, so starting
+  // again serves it as a review — generated live, as reviews always are.
+  await review.getByRole("button", { name: "Start next Card" }).click();
   await expect(review.getByText("review", { exact: true })).toBeVisible({
     timeout: 20_000,
   });

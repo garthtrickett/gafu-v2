@@ -299,19 +299,10 @@ const handleApi = async (
       body["presentationId"],
     );
     if (!acknowledged.ok) return materialResponse(acknowledged);
-    const knowledge = study.knowledgeSnapshot();
-    if (!knowledge.ok) return failureResponse(knowledge.error);
-    const prepared = await material.prepare({
-      card: card.card,
-      knowledge: knowledge.value,
-    });
-    if (!prepared.ok) return materialResponse(prepared);
-    const current = study.studyQueue();
-    if (!current.ok) return failureResponse(current.error);
-    if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
-      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
-    }
-    return Response.json(prepared.value);
+    // Teaching ends here. The Card goes back in the queue and its first
+    // review is prepared on a later start, when it is due — never chained to
+    // first exposure.
+    return Response.json({ ok: true });
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/answer") {
     const body = await readJson(request);
