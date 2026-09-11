@@ -134,10 +134,10 @@ they are not trusted merely because the provider emitted them.
 
 In `teach` mode the browser initially shows the target, reading, meaning or
 function, example, and explanation. In `review` mode it shows the situation
-and the Japanese sentence with the target word coloured, then asks plainly
-whether the sentence was understood — yes maps to `good`, no maps to
-`again`, and the scheduler never sees a third option. Only after grading
-does it show the answer, explanation, and usage note as feedback.
+and the Japanese sentence with the target word coloured. An Explanation
+button opens the answer, explanation, and usage note; only then do Correct
+(`good`) and Incorrect (`again`) appear, and the scheduler never sees a
+third option.
 
 ### Variation and fallback
 
@@ -301,13 +301,13 @@ The browser has three explicit states:
 ```text
 idle -> preparing -> teaching -> idle
                   \-> unavailable
-idle -> preparing -> recall -> grading -> feedback -> idle
-                             \-> unavailable
+idle -> preparing -> recall -> revealed -> grading
+                                       \-> unavailable
 ```
 
 A new Card travels the first line; its first review travels the second on a
-later start, when the Card is due. Recall asks for an honest yes or no about
-the sentence just read; grading records it; feedback shows the breakdown.
+later start, when the Card is due. Recall shows the scene and sentence;
+revealing opens the explanation; grading marks correct or incorrect.
 
 Only `grading` invokes Study's `answer`. Leaving or refreshing any earlier state
 does not change SRS. The comprehension buttons disable while the grade is in
@@ -562,20 +562,20 @@ are a subset of new accepts, so stored reserves stay valid.
 cards after deploy, attach teaching for the blocked staged cards through the
 CLI, and probe one live review generation per class.
 
-### Patch 2.13 — Reviews ask understood-or-not
+### Patch 2.13 — Reviews ask correct-or-incorrect
 
-A review is a comprehension check, not a recall ceremony. It shows the
-situation and the Japanese sentence with the target word coloured, then asks
-plainly whether the sentence was understood — yes maps to `good`, no maps to
-`again`, and the scheduler never sees a third option. Answer, explanation,
-and usage note appear only afterwards, as feedback. Colouring is per
-segment: segments fully inside the target span colour exactly, anything else
-falls back to overlapping segments, and sentences whose segments do not
-rejoin stay uncoloured rather than mis-coloured.
+A review is a check against the explanation, not a recall ceremony. It shows
+the situation and the Japanese sentence with the target word coloured; an
+Explanation button opens the answer, explanation, and usage note; only then
+do Correct (`good`) and Incorrect (`again`) appear, and the scheduler never
+sees a third option. Colouring is per segment: segments fully inside the
+target span colour exactly, anything else falls back to overlapping segments,
+and sentences whose segments do not rejoin stay uncoloured rather than
+mis-coloured.
 
-**Gate:** the journey reviews with nothing to recall from, answers yes on one
-Card and no on the other, sees the breakdown after each, and records both;
-module grades are untouched; the full required validation passes.
+**Gate:** the journey reviews with nothing to recall from, opens the
+explanation, marks one Card correct and the other incorrect, and records
+both; module grades are untouched; the full required validation passes.
 
 ## Exit gate
 
