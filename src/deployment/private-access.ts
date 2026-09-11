@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readBoundedBody } from "../local-api.ts";
 import { err, ok, type Result } from "../result.ts";
 
@@ -148,7 +148,37 @@ export const createPrivateAccess = (
   }
 
   const expectedPassword = digest(dependencies.password);
-  const sessions = new Map<string, number>();
+  // Sessions used to live in a Map, so every restart signed everyone out and a
+  // deploy cost a login. The cookie now carries its own expiry and a signature
+  // over it, keyed off the configured password, so a fresh process recognises
+  // a session it never issued. Rotating the password invalidates every
+  // outstanding session, which the Map did not do.
+  const sessionKey = createHmac("sha256", dependencies.password)
+    .update("gafu-session-key-v1")
+    .digest();
+  const sign = (payload: string): string =>
+    createHmac("sha256", sessionKey).update(payload).digest("base64url");
+  const issue = (token: string, expiresAt: number): string => {
+    const payload = `${token}.${expiresAt}`;
+    return Buffer.from(`${payload}.${sign(payload)}`).toString("base64url");
+  };
+  const openSession = (cookie: string, observedAt: number): string | null => {
+    const decoded = Buffer.from(cookie, "base64url").toString("utf8");
+    const parts = decoded.split(".");
+    if (parts.length !== 3) return null;
+    const [token, expiry, signature] = parts as [string, string, string];
+    const expected = sign(`${token}.${expiry}`);
+    if (signature.length !== expected.length) return null;
+    if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const expiresAt = Number(expiry);
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= observedAt) return null;
+    return token;
+  };
+  // Logout still revokes immediately, for as long as this process lives. A
+  // restart forgets it, so a signed-out cookie would be honoured again until
+  // its expiry; the cookie is cleared, so that needs the cookie to have been
+  // captured before signing out.
+  const revoked = new Map<string, number>();
   const failedAttempts = new Map<string, FailedAttempts>();
 
   const now = (): number | null => {
@@ -161,8 +191,8 @@ export const createPrivateAccess = (
   };
 
   const prune = (observedAt: number): void => {
-    for (const [key, expiresAt] of sessions) {
-      if (expiresAt <= observedAt) sessions.delete(key);
+    for (const [key, expiresAt] of revoked) {
+      if (expiresAt <= observedAt) revoked.delete(key);
     }
     for (const [key, attempt] of failedAttempts) {
       if (
@@ -180,10 +210,11 @@ export const createPrivateAccess = (
   };
 
   const authenticatedToken = (request: Request, observedAt: number): string | null => {
-    const token = cookieValue(request);
+    const cookie = cookieValue(request);
+    if (cookie === null) return null;
+    const token = openSession(cookie, observedAt);
     if (token === null) return null;
-    const expiresAt = sessions.get(digest(token).toString("hex"));
-    return expiresAt !== undefined && expiresAt > observedAt ? token : null;
+    return revoked.has(digest(token).toString("hex")) ? null : token;
   };
 
   const login = async (request: Request, observedAt: number): Promise<Response> => {
@@ -240,8 +271,8 @@ export const createPrivateAccess = (
     if (!/^[A-Za-z0-9_-]{32,512}$/u.test(token)) {
       return loginPage("Sign-in is temporarily unavailable.", 503);
     }
-    sessions.set(digest(token).toString("hex"), observedAt + sessionTtlMs);
-    return redirect("/", sessionCookie(token, sessionTtlMs));
+    const expiresAt = observedAt + sessionTtlMs;
+    return redirect("/", sessionCookie(issue(token, expiresAt), sessionTtlMs));
   };
 
   return ok({
@@ -278,8 +309,11 @@ export const createPrivateAccess = (
         if (request.method !== "POST") {
           return { kind: "respond", response: new Response(null, { status: 405 }) };
         }
-        const token = cookieValue(request);
-        if (token !== null) sessions.delete(digest(token).toString("hex"));
+        const cookie = cookieValue(request);
+        const token = cookie === null ? null : openSession(cookie, observedAt);
+        if (token !== null) {
+          revoked.set(digest(token).toString("hex"), observedAt + sessionTtlMs);
+        }
         return { kind: "respond", response: redirect("/login", expiredCookie()) };
       }
       if (authenticated !== null) return { kind: "continue" };
