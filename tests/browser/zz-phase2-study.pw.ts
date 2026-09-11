@@ -153,9 +153,10 @@ test("configures a key and teaches before the first generated review", async ({
   });
 
   // Work through in whatever order the queue serves. A review shows the
-  // scene and the sentence with the target coloured, asks honestly, and only
-  // then shows the breakdown. The first grade holds the answer request to
-  // prove the buttons stay disabled until it resolves.
+  // scene and the sentence with the target coloured; the explanation opens
+  // on request, and only then is the Card marked correct or incorrect. The
+  // first grade holds the answer request to prove the buttons stay disabled
+  // until it resolves.
   let releaseAnswer = (): void => {};
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
@@ -165,26 +166,31 @@ test("configures a key and teaches before the first generated review", async ({
     await route.continue();
   });
   const worked: string[] = [];
+  const grades = ["Correct", "Incorrect"] as const;
   for (let round = 0; round < 2; round += 1) {
     await review.getByRole("button", { name: "Review", exact: true }).click();
     await expect(review.getByText("review", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
-    // Nothing to recall from: no answer up front, and the target word stands
-    // out in the sentence.
+    // Nothing to recall from, and the target word stands out.
     await expect(review.getByTestId("material-answer")).toHaveCount(0);
     await expect(review.locator(".japanese .target").first()).toBeVisible();
-    await review.getByRole("button", { name: round === 0 ? "Yes" : "No" }).click();
+    await review.getByRole("button", { name: "Explanation" }).click();
+    const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
+    worked.push(shown.includes("cat") ? "cat" : "bird");
+    const grade = grades[round];
+    if (grade === undefined) throw new Error("missing grade");
+    await review.getByRole("button", { name: grade, exact: true }).click();
     if (round === 0) {
-      await expect(review.getByRole("button", { name: "Yes" })).toBeDisabled();
-      await expect(review.getByRole("button", { name: "No" })).toBeDisabled();
+      await expect(
+        review.getByRole("button", { name: "Correct", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        review.getByRole("button", { name: "Incorrect", exact: true }),
+      ).toBeDisabled();
       releaseAnswer();
     }
     await expect(page.getByRole("status")).toContainText("next due time is saved");
-    const shown = (await review.getByTestId("material-feedback").textContent()) ?? "";
-    worked.push(shown.includes("cat") ? "cat" : "bird");
-    await review.getByRole("button", { name: "Next" }).click();
-    await expect(review.getByTestId("material-feedback")).toHaveCount(0);
   }
   expect(worked.sort()).toEqual(["bird", "cat"]);
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
