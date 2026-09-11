@@ -348,6 +348,16 @@ label {
   letter-spacing: 0.02em;
 }
 
+.presentation .japanese .target {
+  /* The Card's own word, so the eye lands on what is being tested. */
+  color: #f2c14e;
+  font-weight: 700;
+}
+
+.presentation .japanese .target rt {
+  color: #c8a75a;
+}
+
 .presentation .answer {
   margin: 1rem 0;
   padding: 1rem;
@@ -359,6 +369,11 @@ label {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.6rem;
+}
+
+.grades p {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .provider-settings {

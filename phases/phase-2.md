@@ -13,8 +13,7 @@ Gafu's local validation authority may make it displayable or issue the one-use
 Presentation Permit that lets Study record an answer.
 
 At the end of this phase a learner can configure an OpenAI API key in normal
-settings, start Study, learn a new Grammar or Vocabulary Card, reveal the
-answer, grade recall, and repeat the Card with materially different Japanese.
+settings, start Study, learn a new Grammar or Vocabulary Card, answer honestly, grade comprehension, and repeat the Card with materially different Japanese.
 Malformed, unsafe, repetitive, unavailable, or unsupported material never
 advances SRS.
 
@@ -33,7 +32,7 @@ advances SRS.
   outages.
 - A teach acknowledgement before the first graded review of a new Card.
 - A target-bound, expiring, one-use Presentation Permit accepted by Study.
-- A minimum Study browser flow: start, teach or recall, reveal, and grade.
+- A minimum Study browser flow: start, teach or recall, answer, and grade.
 - Safe development inspection of the exact provider request without the API
   key or provider response body appearing in ordinary logs.
 
@@ -72,7 +71,7 @@ sequence:
    consumes the permit in the same transaction as its Review Event and FSRS
    transition.
 
-Generation, validation, teaching acknowledgement, reveal, and grading are
+Generation, validation, teaching acknowledgement, answering, and grading are
 separate events. Refreshing, retrying, double-clicking, or losing an HTTP
 response cannot manufacture a Review Event. A failed generation leaves the
 Card due.
@@ -134,9 +133,11 @@ a formation hint. These repeated target fields are checked against the Card;
 they are not trusted merely because the provider emitted them.
 
 In `teach` mode the browser initially shows the target, reading, meaning or
-function, example, and explanation. In `review` mode it shows the situation,
-prompt, and Japanese before reveal; the answer, reading, explanation, and grade
-controls appear only after reveal.
+function, example, and explanation. In `review` mode it shows the situation
+and the Japanese sentence with the target word coloured, then asks plainly
+whether the sentence was understood — yes maps to `good`, no maps to
+`again`, and the scheduler never sees a third option. Only after grading
+does it show the answer, explanation, and usage note as feedback.
 
 ### Variation and fallback
 
@@ -290,8 +291,8 @@ Messages never contain request bodies, generated private text, or credentials.
 ## Server and browser flow
 
 The local server adds narrow endpoints for provider status/key intents, starting
-or continuing the first due study item, acknowledging teaching, revealing only
-browser-owned state, and grading through Study. It re-reads the authoritative
+or continuing the first due study item, acknowledging teaching, and grading
+through Study. It re-reads the authoritative
 queue and Card before each transition; the browser cannot nominate a staged,
 known, suspended, or not-due Card for a review.
 
@@ -300,19 +301,20 @@ The browser has three explicit states:
 ```text
 idle -> preparing -> teaching -> idle
                   \-> unavailable
-idle -> preparing -> recall -> revealed -> grading
+idle -> preparing -> recall -> grading -> feedback -> idle
                              \-> unavailable
 ```
 
 A new Card travels the first line; its first review travels the second on a
-later start, when the Card is due.
+later start, when the Card is due. Recall asks for an honest yes or no about
+the sentence just read; grading records it; feedback shows the breakdown.
 
 Only `grading` invokes Study's `answer`. Leaving or refreshing any earlier state
-does not change SRS. Grade buttons are disabled until reveal, and repeated
-submissions reuse the same permit so Study's existing idempotent rejection
-protects the schedule. A Card with no stored teaching lands in `unavailable`
-with an import instruction instead of holding the session open on the
-provider.
+does not change SRS. The comprehension buttons disable while the grade is in
+flight, and repeated submissions reuse the same permit so Study's existing
+idempotent rejection protects the schedule. A Card with no stored teaching
+lands in `unavailable` with an import instruction instead of holding the
+session open on the provider.
 
 ## Patch plan
 
@@ -358,7 +360,7 @@ an unshown validated reserve; restart preserves teaching and variation history.
 ### Patch 2.5 — Study workflow and browser slice
 
 Compose Study and Learning Material in the local server. Add provider settings,
-start/continue Study, teach, recall, reveal, and grade UI states without moving
+start/continue Study, teach, recall, answer, feedback, and grade UI states without moving
 domain rules into the browser.
 
 **Gate:** browser automation configures a fake/test key path, teaches a new
@@ -437,7 +439,7 @@ changes; they simply happen at the first review instead of inside first
 exposure.
 
 **Gate:** the study journey sees teach, marks it seen, returns to idle, then
-starts again into a live-generated review with the full reveal/grade flow;
+starts again into a live-generated review with the full answer/grade flow;
 module tests still cover permits, idempotency, and the outage reserve; the
 full required validation passes.
 
@@ -479,7 +481,7 @@ completed ones with the existing per-card answer flow.
   dispatched provider id across processes (the #49 treatment for material) is
   a defined follow-up, not v1.
 - The browser shows batch progress, then works through completed
-  presentations with the unchanged recall/reveal/grade flow, one permit per
+  presentations with the unchanged recall/answer/grade flow, one permit per
   presentation. Failed cards stay due and are listed, not hidden.
 
 **Gate:** unit tests for select/advance/skip/resume; a journey dispatches a
@@ -507,7 +509,8 @@ The implementation and tests must answer these without caller-side workarounds:
 14. The provider times out after one successful batch left reserve material.
 15. The provider fails and no safe reserve remains.
 16. A permit is used for another Card, after expiry, or twice.
-17. The browser refreshes before reveal and after reveal but before grade.
+17. The browser refreshes before answering and after answering but before
+continuing.
 18. The server restarts after teaching and before the first review.
 19. The environment supplies a key the provider rejects, or none at all.
 20. An API key-shaped value appears in a provider exception.
@@ -558,6 +561,21 @@ are a subset of new accepts, so stored reserves stay valid.
 **Backfill:** restore the suspended compound, な-adjective, and suffix-grammar
 cards after deploy, attach teaching for the blocked staged cards through the
 CLI, and probe one live review generation per class.
+
+### Patch 2.13 — Reviews ask understood-or-not
+
+A review is a comprehension check, not a recall ceremony. It shows the
+situation and the Japanese sentence with the target word coloured, then asks
+plainly whether the sentence was understood — yes maps to `good`, no maps to
+`again`, and the scheduler never sees a third option. Answer, explanation,
+and usage note appear only afterwards, as feedback. Colouring is per
+segment: segments fully inside the target span colour exactly, anything else
+falls back to overlapping segments, and sentences whose segments do not
+rejoin stay uncoloured rather than mis-coloured.
+
+**Gate:** the journey reviews with nothing to recall from, answers yes on one
+Card and no on the other, sees the breakdown after each, and records both;
+module grades are untouched; the full required validation passes.
 
 ## Exit gate
 

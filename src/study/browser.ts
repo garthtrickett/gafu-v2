@@ -6,7 +6,6 @@ import type {
 } from "../learning-material/generated-contracts.ts";
 import { mutationHeaders } from "../local-api.ts";
 import type {
-  AnswerGrade,
   CardContent,
   CardStateCommand,
   CardSummary,
@@ -28,7 +27,7 @@ type BrowserModel = {
   snapshot: BrowserSnapshot | null;
   provider: ProviderStatus | null;
   presentation: PreparedMaterial | null;
-  revealed: boolean;
+  feedback: PreparedMaterial | null;
   busy: boolean;
   batch: {
     id: string;
@@ -137,23 +136,57 @@ const editForm = (
   return html``;
 };
 
-const rubyText = (material: PreparedMaterial["material"]): TemplateResult[] =>
-  material.readingSegments.map((segment) => {
-    const { before, body, over, after } = splitFurigana(
-      segment.written,
-      segment.reading,
-    );
-    return body === ""
-      ? html`${before}`
-      : html`${before}<ruby>${body}<rt>${over}</rt></ruby>${after}`;
+const rubyText = (
+  material: PreparedMaterial["material"],
+  targetSpan: { start: number; end: number } | null,
+): TemplateResult[] => {
+  // Colouring by character offset is only sound when the segments rejoin
+  // into exactly the sentence. Otherwise show the sentence uncoloured
+  // rather than colouring the wrong word. Whole segments fully inside the
+  // span colour exactly; anything else falls back to overlapping segments so
+  // model-shaped segmentations still mark the word.
+  const colourable =
+    targetSpan !== null &&
+    material.readingSegments.map((segment) => segment.written).join("") ===
+      material.japanese;
+  let offset = 0;
+  const located = material.readingSegments.map((segment) => {
+    const start = offset;
+    offset += segment.written.length;
+    return { segment, start, end: offset };
   });
+  const inside = located.filter(
+    (item) =>
+      targetSpan !== null &&
+      item.start >= targetSpan.start &&
+      item.end <= targetSpan.end,
+  );
+  const overlapping = located.filter(
+    (item) =>
+      targetSpan !== null && item.start < targetSpan.end && item.end > targetSpan.start,
+  );
+  const coloured = new Set(
+    colourable ? (inside.length > 0 ? inside : overlapping) : [],
+  );
+  return located.map((item) => {
+    const { before, body, over, after } = splitFurigana(
+      item.segment.written,
+      item.segment.reading,
+    );
+    const ruby =
+      body === ""
+        ? html`${before}`
+        : html`${before}<ruby>${body}<rt>${over}</rt></ruby>${after}`;
+    return coloured.has(item) ? html`<span class="target">${ruby}</span>` : ruby;
+  });
+};
 
 export const mountStudyApp = (root: HTMLElement): void => {
   const model: BrowserModel = {
     snapshot: null,
     provider: null,
     presentation: null,
-    revealed: false,
+    feedback: null,
     busy: true,
     batch: null,
     message: "Loading your Card bank…",
@@ -319,10 +352,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }
         throw cause;
       }
-      model.revealed = false;
+      model.feedback = null;
       return model.presentation.mode === "teach"
         ? "Learn this target. It goes back in the queue for review."
-        : "Recall the target, then reveal the answer.";
+        : "Read the sentence, then say honestly whether you understood it.";
     });
   };
 
@@ -402,12 +435,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }),
       });
       model.presentation = null;
-      model.revealed = false;
       return "Teaching seen. The Card goes back in the queue for review.";
     });
   };
 
-  const answer = (grade: AnswerGrade): void => {
+  // A review is a comprehension check, not a recall ceremony: understood
+  // maps to good, anything else maps to again, and the scheduler never sees
+  // a third option.
+  const answer = (understood: boolean): void => {
     if (model.busy) return;
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
@@ -416,14 +451,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
         method: "POST",
         body: JSON.stringify({
           cardId: current.cardId,
-          grade,
+          grade: understood ? "good" : "again",
           permit: current.permit?.token,
         }),
       });
+      model.feedback = current;
       model.presentation = null;
-      model.revealed = false;
-      return "Review recorded once. The Card's next due time is saved.";
+      return understood
+        ? "Review recorded once. The Card's next due time is saved."
+        : "Marked for sooner. The Card's next due time is saved.";
     });
+  };
+
+  const dismissFeedback = (): void => {
+    model.feedback = null;
+    draw();
   };
 
   const draw = (): void => {
@@ -501,35 +543,39 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 }
                 ${
                   model.presentation === null
-                    ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
+                    ? model.feedback === null
+                      ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
+                      : html`<article class="presentation presentation--review" data-testid="material-feedback">
+                          <span class="pill">reviewed</span>
+                          <div class="answer">
+                            <strong>${model.feedback.material.answer}</strong>
+                            <p class="answer-copy">${model.feedback.material.explanation}</p>
+                            <p class="answer-copy">${model.feedback.material.usageNote}</p>
+                          </div>
+                          <button type="button" @click=${dismissFeedback} ?disabled=${model.busy}>Next</button>
+                        </article>`
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
                         <p class="context">${model.presentation.material.context}</p>
-                        <p class="prompt">${model.presentation.material.prompt}</p>
-                        <p class="japanese" lang="ja">${rubyText(model.presentation.material)}</p>
                         ${
-                          model.presentation.mode === "teach" || model.revealed
+                          model.presentation.mode === "teach"
+                            ? html`<p class="prompt">${model.presentation.material.prompt}</p>`
+                            : ""
+                        }
+                        <p class="japanese" lang="ja">${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
+                        ${
+                          model.presentation.mode === "teach"
                             ? html`<div class="answer" data-testid="material-answer">
                                 <strong>${model.presentation.material.answer}</strong>
                                 <p class="answer-copy">${model.presentation.material.explanation}</p>
                                 <p class="answer-copy">${model.presentation.material.usageNote}</p>
+                              </div>
+                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — back to the queue</button>`
+                            : html`<div class="grades" aria-label="Comprehension grade">
+                                <p>Did you understand this sentence?</p>
+                                <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)}>Yes</button>
+                                <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)}>No</button>
                               </div>`
-                            : html`<button type="button" @click=${() => {
-                                model.revealed = true;
-                                draw();
-                              }}>Reveal answer</button>`
-                        }
-                        ${
-                          model.presentation.mode === "teach"
-                            ? html`<button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — back to the queue</button>`
-                            : model.revealed
-                              ? html`<div class="grades" aria-label="Recall grade">
-                                  ${(["again", "hard", "good", "easy"] as const).map(
-                                    (grade) =>
-                                      html`<button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(grade)}>${grade}</button>`,
-                                  )}
-                                </div>`
-                              : ""
                         }
                       </article>`
                 }
