@@ -35,6 +35,7 @@ const completeBackup = (
       verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
     },
     knownWordSeed,
+    grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
   const card = study.value.createCard({

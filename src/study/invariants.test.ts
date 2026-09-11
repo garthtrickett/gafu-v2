@@ -73,6 +73,7 @@ describe("Phase 1 bounded property invariants", () => {
         nextId: sequentialIds(),
         permitVerifier: testPermitVerifier,
         knownWordSeed: testSeed,
+        grammarTargetSupported: () => true,
       });
       if (!opened.ok) throw new Error(JSON.stringify(opened.error));
       const study = opened.value;

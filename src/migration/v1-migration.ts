@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { supportsGrammarTarget } from "../learning-material/declared-grammar.ts";
 import type { Logger } from "../log.ts";
 import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import { err, ok, type Result } from "../result.ts";
@@ -49,6 +50,7 @@ export const initializeMigrationDestination = (
         }),
     },
     knownWordSeed: unavailableKaishiSeed,
+    grammarTargetSupported: supportsGrammarTarget,
   });
   if (!opened.ok) {
     return err({ kind: "applyFailed", detail: opened.error.kind });

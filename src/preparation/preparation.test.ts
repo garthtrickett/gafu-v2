@@ -56,6 +56,7 @@ const setup = (providerOverride?: TestProvider) => {
     nextId: ids,
     permitVerifier: testPermitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
   const open = () =>

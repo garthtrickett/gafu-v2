@@ -193,6 +193,16 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
   const createCard = (input: CreateCard): Result<CreateCardOutcome, StudyFailure> => {
     const canonical = canonicalizeCard(input);
     if (!canonical.ok) return canonical;
+    if (
+      input.type === "grammar" &&
+      !dependencies.grammarTargetSupported(input.content.canonicalForm)
+    ) {
+      return err({
+        kind: "invalidCard",
+        field: "canonicalForm",
+        detail: `No material can be generated for ${input.content.canonicalForm}.`,
+      });
+    }
     const now = safeNow(dependencies.clock);
     if (!now.ok) return now;
     try {

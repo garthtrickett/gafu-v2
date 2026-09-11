@@ -27,6 +27,7 @@ test("health reports only operational counts and flags unfinished preparation", 
         verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
       },
       knownWordSeed: unavailableKaishiSeed,
+      grammarTargetSupported: () => true,
     });
     if (!study.ok) throw new Error(study.error.kind);
     const created = study.value.createCard({

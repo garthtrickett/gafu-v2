@@ -122,6 +122,7 @@ const setup = () => {
     nextId: sequentialIds(),
     permitVerifier: testPermitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
   return { study: study.value, databasePath, clock };

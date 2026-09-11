@@ -21,6 +21,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
     clock: clock.now,
     permitVerifier: testPermitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
   };
   try {
     const opened = openStudy({ ...shared, nextId: sequentialIds() });

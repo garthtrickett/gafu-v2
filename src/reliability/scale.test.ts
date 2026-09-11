@@ -95,6 +95,7 @@ describe("Phase 6 release scale", () => {
           verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
         },
         knownWordSeed: unavailableKaishiSeed,
+        grammarTargetSupported: () => true,
       });
       if (!initial.ok) throw new Error(initial.error.kind);
       initial.value.close();
@@ -135,6 +136,7 @@ describe("Phase 6 release scale", () => {
           verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
         },
         knownWordSeed: unavailableKaishiSeed,
+        grammarTargetSupported: () => true,
       });
       if (!opened.ok) throw new Error(opened.error.kind);
       const listed = await duration(() => opened.value.listCards());

@@ -308,6 +308,13 @@ export type StudyDependencies = Readonly<{
   nextId: () => string;
   permitVerifier: PresentationPermitVerifier;
   knownWordSeed: KnownWordSeed;
+  /**
+   * Whether material can be generated for a Grammar Card naming this form.
+   * Checked when the Card is created, because the generator checks it too and
+   * a Card that fails there is not merely unteachable: it stops the session
+   * that reaches it, so one unstudiable Card blocks the whole queue.
+   */
+  grammarTargetSupported: (canonicalForm: string) => boolean;
 }>;
 
 export const asCardId = (value: string): CardId => value as CardId;

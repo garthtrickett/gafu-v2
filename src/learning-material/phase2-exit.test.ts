@@ -68,6 +68,7 @@ const harness = (provider = createDeterministicMaterialProvider()) => {
     nextId: sequentialIds(),
     permitVerifier: material.value.permitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
   return {
@@ -220,6 +221,7 @@ describe("Phase 2 generated study lifecycle", () => {
       nextId: sequentialIds(),
       permitVerifier: restartedMaterial.value.permitVerifier,
       knownWordSeed: testSeed,
+      grammarTargetSupported: () => true,
     });
     if (!restartedStudy.ok) throw new Error(restartedStudy.error.kind);
     const nextQueue = restartedStudy.value.studyQueue();
