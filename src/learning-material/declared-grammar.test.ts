@@ -51,6 +51,21 @@ describe("which Grammar Cards material can be generated for", () => {
     }
   });
 
+  test("accepts a declared construction written at another character width", () => {
+    // The V1 migration created these with an ASCII tilde and halfwidth
+    // brackets; the declared forms use the fullwidth pair. They are the same
+    // constructions, and a literal comparison left four Cards in the deck
+    // that would have stopped the session that reached them.
+    for (const form of [
+      "Verb[\u305b\u308b\u30fb\u3055\u305b\u308b]",
+      "~\u3066\u3082~\u306a\u304f\u3066\u3082",
+      "\u3059\u3053\u3057\u3082~\u306a\u3044",
+      "\u3068\u304b~\u3068\u304b",
+    ]) {
+      expect(supportsGrammarTarget(form)).toBe(true);
+    }
+  });
+
   test("refuses a construction that was never declared", () => {
     // Idioms and patterns outside the declared set. Accepting one stores a
     // Card that cannot be taught, and the session that reaches it fails.
