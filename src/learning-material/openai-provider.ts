@@ -308,7 +308,7 @@ const requestBody = (options: Options, request: MaterialProviderRequest): unknow
   store: false,
   reasoning: { effort: "low" },
   instructions:
-    "Create exactly three materially different Japanese learning presentations for the one target Card. Use only the supplied supporting vocabulary and grammar. The English context describes the situation and must not translate the Japanese answer. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. Reading segments must reconstruct Japanese exactly. Do not include another learning target.",
+    "Create exactly three materially different Japanese learning presentations for the one target Card. Use only the supplied supporting vocabulary and grammar. The English context describes the situation and must not translate the Japanese answer. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct Japanese exactly. Do not include another learning target.",
   input: JSON.stringify(promptInput(request)),
   text: {
     format: {

@@ -230,3 +230,49 @@ describe("a Card taught from a sentence written when it was made", () => {
     expect(built).toHaveProperty("reason");
   });
 });
+
+describe("compound and copula-lemmatized targets", () => {
+  test("a compound target tiles its tokens", async () => {
+    const built = await buildTeaching(
+      analyzer,
+      {
+        type: "vocabulary",
+        lemma: "飼育員",
+        reading: "しいくいん",
+        partOfSpeech: "noun",
+        meaning: "a zookeeper",
+        usageNotes: "",
+        example: "飼育員は多い。",
+      },
+      {
+        vocabulary: [{ lemma: "多い", reading: "おおい", partOfSpeech: "adjective" }],
+        grammar: new Set(["は"]),
+      },
+    );
+    expect(built).not.toHaveProperty("reason");
+    if ("reason" in built) throw new Error(built.reason);
+    expect(built.value["targetSpan"]).toMatchObject({ start: 0, end: 3 });
+  });
+
+  test("a な-adjective stem meets its だ-lemmatized token", async () => {
+    const built = await buildTeaching(
+      analyzer,
+      {
+        type: "vocabulary",
+        lemma: "肝心",
+        reading: "かんじん",
+        partOfSpeech: "adjective",
+        meaning: "the crucial thing",
+        usageNotes: "",
+        example: "これは肝心だ。",
+      },
+      {
+        vocabulary: [{ lemma: "これ", reading: "これ", partOfSpeech: "noun" }],
+        grammar: new Set(["は", "だ", "これ"]),
+      },
+    );
+    expect(built).not.toHaveProperty("reason");
+    if ("reason" in built) throw new Error(built.reason);
+    expect(built.value["targetSpan"]).toMatchObject({ start: 3, end: 5 });
+  });
+});

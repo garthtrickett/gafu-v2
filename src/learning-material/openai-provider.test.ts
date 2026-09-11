@@ -86,6 +86,9 @@ describe("OpenAI Learning Material adapter", () => {
     expect(body["model"]).toBe("gpt-5.6-luna");
     expect(body["background"]).toBe(true);
     expect(body["store"]).toBe(false);
+    // The model spans the whole grammar word; the detector only ever matches
+    // its suffix, so the instructions say the detected form falls inside.
+    expect(String(body["instructions"])).toContain("falls inside");
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
     expect(JSON.stringify(material.inspectLastRequest())).not.toContain("sk-private");

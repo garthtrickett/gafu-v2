@@ -1,3 +1,4 @@
+import type { AnalyzedToken } from "../analysis/contracts.ts";
 import { classifyKnownVocabulary } from "../analysis/known-vocabulary.ts";
 import { normalizeJapanese } from "../analysis/normalization.ts";
 import { err, ok } from "../result.ts";
@@ -12,11 +13,6 @@ import { decodePresentation } from "./decode.ts";
 
 const unique = (values: readonly string[]): readonly string[] => [...new Set(values)];
 
-const sameSpan = (
-  left: DecodedPresentation["targetSpan"],
-  right: DecodedPresentation["targetSpan"],
-): boolean => left.start === right.start && left.end === right.end;
-
 const insideSpan = (
   inner: DecodedPresentation["targetSpan"],
   outer: DecodedPresentation["targetSpan"],
@@ -30,8 +26,49 @@ const grammarContainsTarget = (
   evidence.some(
     (item) =>
       item.canonicalForm === canonicalForm &&
-      item.spans.some((span) => sameSpan(span, targetSpan)),
+      // The model spans the whole target word; the detector only ever matches
+      // the construction's suffix, so containment — not equality — is the
+      // evidence the target is there.
+      item.spans.some((span) => insideSpan(span, targetSpan)),
   );
+
+/**
+ * Kuromoji lemmatizes a な-adjective stem with its copula (肝心だ), while a
+ * Card claims the bare stem (肝心). Strip one trailing だ for the comparison
+ * so the claim and the analysis can meet. Anything else compares verbatim.
+ */
+export const adjectiveLemma = (lemma: string): string =>
+  lemma.length > 1 && lemma.endsWith("だ") ? lemma.slice(0, -1) : lemma;
+
+/**
+ * Token sequences tiling the target span exactly: first starts where the
+ * span starts, each next starts where the previous ends, last ends where the
+ * span ends. A compound target (飼育員 as 飼育|員) tiles; a span cutting
+ * through a token admits no tiling at all. Exported for the cards CLI, which
+ * locates the target with the same rule before sending.
+ */
+export const tilings = (
+  tokens: readonly AnalyzedToken[],
+  span: DecodedPresentation["targetSpan"],
+): AnalyzedToken[][] => {
+  const found: AnalyzedToken[][] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const first = tokens[index];
+    if (first === undefined || first.span.start !== span.start) continue;
+    const tiling = [first];
+    let end = first.span.end;
+    if (end === span.end) found.push([...tiling]);
+    for (let next = index + 1; next < tokens.length && end < span.end; next += 1) {
+      const token = tokens[next];
+      if (token === undefined || token.span.start !== end) break;
+      tiling.push(token);
+      end = token.span.end;
+      if (end === span.end) found.push([...tiling]);
+      if (end > span.end) break;
+    }
+  }
+  return found;
+};
 
 const analysisFailure = (kind: string, cause: string): ValidationError =>
   kind === "degraded"
@@ -83,22 +120,45 @@ export const createLearningMaterialValidator = (
 
     const grammar = dependencies.grammar.detect(normalizedJapanese);
     if (target.kind === "vocabulary") {
-      const observed = analyzed.value.tokens.find((token) =>
-        sameSpan(token.span, span),
-      );
-      if (observed === undefined) {
+      const covering = tilings(analyzed.value.tokens, span);
+      if (covering.length === 0) {
         reasons.push({ kind: "targetAbsent" });
       } else {
-        const formMatches =
-          observed.lemma === target.lemma &&
-          observed.reading === target.reading &&
-          observed.broadPartOfSpeech === target.partOfSpeech;
-        if (!formMatches) reasons.push({ kind: "wrongTargetIdentity" });
-        const senses = dependencies.senses.resolve(observed, normalizedJapanese);
-        if (senses.length !== 1) reasons.push({ kind: "ambiguousTargetIdentity" });
-        else if (senses[0] !== target.senseId) {
+        const matching = covering.find((tiling) => {
+          const lemma = tiling
+            .map((token) =>
+              target.partOfSpeech === "adjective"
+                ? adjectiveLemma(token.lemma)
+                : token.lemma,
+            )
+            .join("");
+          const reading = tiling.map((token) => token.reading ?? "").join("");
+          if (lemma !== target.lemma || reading !== target.reading) return false;
+          // One token keeps the old part-of-speech check. A compound has no
+          // single part of speech across its parts (間が悪い tiles noun,
+          // particle, adjective), so its concatenated lemma and reading are
+          // the whole identity claim.
+          if (tiling.length !== 1) return true;
+          const only = tiling[0];
+          return only !== undefined && only.broadPartOfSpeech === target.partOfSpeech;
+        });
+        if (matching === undefined) {
           reasons.push({ kind: "wrongTargetIdentity" });
+        } else if (matching.length === 1) {
+          const observed = matching[0];
+          if (observed === undefined) {
+            reasons.push({ kind: "targetAbsent" });
+          } else {
+            const senses = dependencies.senses.resolve(observed, normalizedJapanese);
+            if (senses.length !== 1) reasons.push({ kind: "ambiguousTargetIdentity" });
+            else if (senses[0] !== target.senseId) {
+              reasons.push({ kind: "wrongTargetIdentity" });
+            }
+          }
         }
+        // A multi-token tiling carries no per-component sense: the Card's
+        // identity claim covers the whole, and components resolve no
+        // independent sense. Form equality above is the whole check.
       }
     } else if (!grammarContainsTarget(grammar, target.canonicalForm, span)) {
       reasons.push({ kind: "targetAbsent" });
@@ -120,8 +180,12 @@ export const createLearningMaterialValidator = (
         if (dependencies.policy.transparentPartOfSpeech.has(token.broadPartOfSpeech)) {
           return false;
         }
+        // A token inside the target span is the target word's own morphology,
+        // not supporting language — whether the target is one token or a
+        // compound tiling the span.
         const isVocabularyTarget =
-          target.kind === "vocabulary" && sameSpan(token.span, presentation.targetSpan);
+          target.kind === "vocabulary" &&
+          insideSpan(token.span, presentation.targetSpan);
         const isGrammarTargetComponent =
           target.kind === "grammar" && insideSpan(token.span, presentation.targetSpan);
         return !isVocabularyTarget && !isGrammarTargetComponent && status !== "known";
@@ -138,13 +202,14 @@ export const createLearningMaterialValidator = (
       .filter(
         (item) =>
           !(target.kind === "grammar" && item.canonicalForm === target.canonicalForm) &&
-          // A vocabulary target's own morphology is not supporting language.
-          // 詰める is a plain る-verb, and the potential-form patterns match its
-          // める tail, so a sentence teaching 詰める would be refused for
-          // leaning on 可能形 it never used. A pattern found only inside the
-          // target says nothing about what the learner must already know.
+          // A pattern found only inside the target is the target word's own
+          // morphology, not language the learner must already have. 詰める is
+          // a plain る-verb, and the potential-form patterns match its める
+          // tail, so a sentence teaching 詰める would be refused for leaning
+          // on 可能形 it never used; a れた tail inside a passive span is the
+          // same shape. A pattern found only inside the target says nothing
+          // about what the learner must already know.
           !(
-            target.kind === "vocabulary" &&
             item.spans.length > 0 &&
             item.spans.every((span) => insideSpan(span, presentation.targetSpan))
           ) &&

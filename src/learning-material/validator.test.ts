@@ -367,3 +367,134 @@ describe("i/i+1 learning-material validator", () => {
     expect(rejectedGrammar).toBe(adversarialManifest.invalidGrammar.length);
   }, 20_000);
 });
+
+describe("target span containment", () => {
+  const candidate = (
+    japanese: string,
+    start: number,
+    end: number,
+  ): DecodedPresentation => ({
+    japanese,
+    targetSurface: japanese.normalize("NFKC").slice(start, end),
+    targetSpan: { start, end, unit: "utf16-code-unit", normalization: "nfkc-v1" },
+    readingSegments: [{ written: japanese, reading: "" }],
+  });
+  const word = (
+    lemma: string,
+    reading: string,
+    partOfSpeech: BroadPartOfSpeech,
+  ): KnownVocabularyEntry => ({
+    lemma,
+    reading,
+    partOfSpeech,
+    scope: { kind: "allSenses" },
+  });
+
+  test("a grammar target spanned whole-word contains its detected form", async () => {
+    // The detector only ever matches the れた suffix; the model spans the
+    // whole verb. Overlapping た-forms sit inside the span and are the
+    // target's own morphology, not supporting language.
+    const japanese = "昨日買われた本が高い。";
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 2, 6),
+      { kind: "grammar", canonicalForm: "受身形" },
+      {
+        vocabulary: [
+          word("昨日", "きのう", "adverb"),
+          word("本", "ほん", "noun"),
+          word("高い", "たかい", "adjective"),
+        ],
+        grammar: new Set(["が"]),
+      },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("a construction outside the target span still needs support", async () => {
+    const japanese = "昨日買われた本が高い。";
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 2, 6),
+      { kind: "grammar", canonicalForm: "受身形" },
+      {
+        vocabulary: [
+          word("昨日", "きのう", "adverb"),
+          word("本", "ほん", "noun"),
+          word("高い", "たかい", "adjective"),
+        ],
+        grammar: new Set(),
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reasons.map((reason) => reason.kind)).toContain(
+        "unknownGrammar",
+      );
+    }
+  });
+
+  test("a compound vocabulary target tiles its tokens", async () => {
+    // 飼育員 analyzes as 飼育|員; no token spans the word, but the tiling
+    // concatenates to its lemma and reading.
+    const japanese = "飼育員は多い。";
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 0, 3),
+      {
+        kind: "vocabulary",
+        lemma: "飼育員",
+        reading: "しいくいん",
+        partOfSpeech: "noun",
+        senseId: "sense:飼育員",
+      },
+      {
+        vocabulary: [word("多い", "おおい", "adjective")],
+        grammar: new Set(["は"]),
+      },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("a な-adjective stem meets its だ-lemmatized token", async () => {
+    // Kuromoji lemmatizes the stem with its copula (肝心だ); the Card claims
+    // the bare stem (肝心).
+    const japanese = "これは肝心だ。";
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 3, 5),
+      {
+        kind: "vocabulary",
+        lemma: "肝心",
+        reading: "かんじん",
+        partOfSpeech: "adjective",
+        senseId: "sense:肝心だ",
+      },
+      {
+        vocabulary: [word("これ", "これ", "noun")],
+        grammar: new Set(["は", "だ", "これ"]),
+      },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("a covered span with the wrong form is still wrong identity", async () => {
+    const japanese = "猫がいる。";
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 0, 1),
+      {
+        kind: "vocabulary",
+        lemma: "猫",
+        reading: "ねこ!",
+        partOfSpeech: "noun",
+        senseId: "sense:猫",
+      },
+      {
+        vocabulary: [word("いる", "いる", "verb")],
+        grammar: new Set(["が", "がいる"]),
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reasons.map((reason) => reason.kind)).toEqual([
+        "wrongTargetIdentity",
+      ]);
+    }
+  });
+});

@@ -14,6 +14,7 @@
  */
 import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../src/analysis/contracts.ts";
 import { declaredGrammarDetector } from "../src/learning-material/declared-grammar.ts";
+import { adjectiveLemma } from "../src/learning-material/validator.ts";
 import { splitFurigana } from "../src/study/furigana.ts";
 
 export type AuthoredCard = Readonly<{
@@ -129,20 +130,45 @@ export const buildTeaching = async (
   };
 
   if (card.type === "vocabulary") {
-    // The validator compares all three, so find the token that already agrees
-    // rather than assuming the first occurrence of the surface is the target.
-    const token = analyzed.value.tokens.find(
-      (item) =>
-        item.lemma === card.lemma &&
-        item.reading === card.reading &&
-        item.broadPartOfSpeech === card.partOfSpeech,
-    );
-    if (token === undefined) {
+    // The validator compares concatenated lemma and reading over whatever
+    // tokens tile the span, so find the tiling that already agrees rather
+    // than assuming the target is one token. A な-adjective stem lemmatizes
+    // with its copula (肝心だ), which the validator strips for the
+    // comparison; a compound (飼育員 as 飼育|員) matches by concatenation.
+    const tokens = analyzed.value.tokens;
+    let span: { start: number; end: number } | null = null;
+    for (let begin = 0; begin < tokens.length && span === null; begin += 1) {
+      const tiling: (typeof tokens)[number][] = [];
+      for (let end = begin; end < tokens.length; end += 1) {
+        const token = tokens[end];
+        const previous = tiling[tiling.length - 1];
+        if (token === undefined) break;
+        if (previous !== undefined && token.span.start !== previous.span.end) break;
+        tiling.push(token);
+        const lemma = tiling
+          .map((part) =>
+            card.partOfSpeech === "adjective" ? adjectiveLemma(part.lemma) : part.lemma,
+          )
+          .join("");
+        const reading = tiling.map((part) => part.reading ?? "").join("");
+        if (lemma !== card.lemma || reading !== card.reading) continue;
+        if (tiling.length === 1) {
+          const only = tiling[0];
+          if (only === undefined || only.broadPartOfSpeech !== card.partOfSpeech)
+            continue;
+        }
+        const first = tiling[0];
+        if (first === undefined) continue;
+        span = { start: first.span.start, end: token.span.end };
+        break;
+      }
+    }
+    if (span === null) {
       return {
         reason: `no token in the sentence reads as ${card.lemma}/${card.reading}/${card.partOfSpeech}`,
       };
     }
-    const missing = unsupported(analyzed.value.tokens, japanese, knowledge, token.span);
+    const missing = unsupported(analyzed.value.tokens, japanese, knowledge, span);
     if (missing.length > 0) {
       return { reason: `leans on language not yet known: ${missing.join(", ")}` };
     }
@@ -152,8 +178,13 @@ export const buildTeaching = async (
         context: `${card.lemma} in use.`,
         prompt: `${card.lemma} (${card.reading}) — ${card.meaning}.`,
         targetKind: "vocabulary",
-        targetSurface: token.surface,
-        targetSpan: token.span,
+        targetSurface: japanese.slice(span.start, span.end),
+        targetSpan: {
+          start: span.start,
+          end: span.end,
+          unit: "utf16-code-unit",
+          normalization: "nfkc-v1",
+        },
         answer: `${card.lemma}（${card.reading}）— ${card.meaning}`,
         explanation: card.meaning,
         target: {
