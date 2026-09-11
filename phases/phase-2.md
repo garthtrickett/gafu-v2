@@ -353,6 +353,58 @@ restart/fallback/replay behavior, publish evidence, and update the parent plan.
 interfaces. A paid OpenAI smoke is recorded when a developer key is available;
 its absence is an explicit external closure item, never replaced by fake proof.
 
+### Patch 2.7 — Grammar-target span containment
+
+Teach/review generation for suffix-morphology grammar targets cannot
+validate. Proven for 受身形, same detector structure in 使役形, suspected in
+可能形. Two consecutive production sessions after #63 (57.5s, 65.7s, no
+timeout) returned `validationRejected` on every candidate, and a local run
+through the real validator, analyzer, and production knowledge snapshot shows
+the pair is unsatisfiable, not unlucky:
+
+- Target presence (`grammarContainsTarget` in
+  `src/learning-material/validator.ts`) requires the model-emitted
+  `targetSpan` to EQUAL a detector regex match (e.g. `れた`, 4–6, in
+  昨日買われた本が高い。). The provider prompt never states this; a
+  model-natural whole-word span (買われた, 2–6) yields `targetAbsent` every
+  time.
+- The grammar-target-component exclusion only covers tokens INSIDE that
+  two-character span, but the verb stem token (買われ, 2–5, reading かわれ)
+  necessarily extends left of it, and its inflected reading never equals the
+  dictionary reading (かう) — so the detector-exact span yields
+  `unknownVocabulary` every time.
+
+Change, in `src/learning-material/validator.ts`:
+
+1. A grammar target is present when the emitted span CONTAINS a detector
+   match for the target construction (`insideSpan(match, targetSpan)`), not
+   only when equal.
+2. Exclude any detected construction whose every span lies inside the target
+   span, whatever its form — mirroring the vocabulary-target rule for a
+   target word's own morphology. The same-form-anywhere exclusion stays, and
+   a partially overlapping construction (e.g. 〜ている reaching past a
+   passive span) still requires support-ready.
+3. Document the convention in the Responses instructions (span the whole
+   target word; the construction's detected form must fall inside it) and
+   assert the sentence in the provider test.
+
+Non-goals: the vocabulary path is untouched; `formationHint` exactness is
+unchanged; the analyzer-tokenisation identity class (癒やし系, モテる, …) is
+a different mechanism and stays out.
+
+**Gate:** whole-word span accepted on an otherwise-clean sentence;
+detector-exact span still accepted; a span containing no match still
+`targetAbsent`; fully-inside different-form excluded; partially-overlapping
+different-form still required (rejected when not support-ready, accepted when
+it is). Then the full required validation (`bun run check`, `bun test`,
+`bun run build`, `bun run test:browser`, `git diff --check`). No migration:
+old accepts are a subset of new accepts, so stored reserves stay valid.
+
+**Backfill:** 受身形 is suspended. After merge and deploy, restore it alone
+and run one timed session probe; on a 200 generated result, probe 使役形 and
+可能形 (never suspended) the same way. Vocabulary identity-class suspensions
+are a separate piece and stay suspended.
+
 ## Refinement scenarios
 
 The implementation and tests must answer these without caller-side workarounds:
