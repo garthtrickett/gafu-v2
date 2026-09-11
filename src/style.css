@@ -326,9 +326,26 @@ label {
 }
 
 .presentation .japanese {
-  margin: 1.5rem 0;
-  font-size: clamp(2rem, 7vw, 4.5rem);
-  line-height: 1.35;
+  /* Large enough to read the kanji, small enough that a sentence stays on one
+     or two lines and the glyphs render cleanly. The previous ceiling of
+     4.5rem magnified the fallback rasterisation. */
+  margin: 2rem 0;
+  font-size: clamp(1.5rem, 3.5vw, 2.25rem);
+  /* Ruby needs room above every line, not just the first. */
+  line-height: 2.1;
+}
+
+.presentation .japanese ruby {
+  ruby-position: over;
+  ruby-align: center;
+}
+
+.presentation .japanese rt {
+  font-size: 0.45em;
+  /* The reading supports the writing; it should not compete with it. */
+  color: #aeb5aa;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 
 .presentation .answer {
