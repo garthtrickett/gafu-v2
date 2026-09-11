@@ -30,7 +30,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "GAFU_DATABASE_PATH=:memory: GAFU_FAKE_AI=1 GAFU_KAISHI_SEED_PATH= GAFU_VITE_MODE=preview bun run dev",
+      "GAFU_DATABASE_PATH=:memory: GAFU_FAKE_AI=1 GAFU_KAISHI_SEED_PATH= GAFU_VITE_MODE=preview OPENAI_API_KEY=browser-test-key bun run dev",
     url: "http://127.0.0.1:4173",
     // Never attach destructive browser journeys to an arbitrary developer
     // server: these tests create, review, and delete durable learner data.

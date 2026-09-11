@@ -13,7 +13,6 @@ import type {
   LearningMaterial,
   MaterialFailure,
   MaterialProvider,
-  MaterialProviderFailure,
   PreparedMaterial,
   ProviderStatus,
 } from "./generated-contracts.ts";
@@ -128,15 +127,6 @@ const migrate = (
     return err({ kind: "migrationFailed", detail: detail(cause) });
   }
 };
-
-const providerFailureFromKey = (
-  failure: Awaited<ReturnType<ProviderKeyCustody["replace"]>> extends Result<
-    void,
-    infer Failure
-  >
-    ? Failure
-    : never,
-): MaterialProviderFailure => failure;
 
 export const openLearningMaterial = (
   options: OpenLearningMaterialOptions,
@@ -395,14 +385,6 @@ export const openLearningMaterial = (
       }
     },
     providerStatus: status,
-    replaceProviderKey: async (key, signal) => {
-      const replaced = await options.keyCustody.replace(key, signal);
-      return replaced.ok ? ok(status()) : err(providerFailureFromKey(replaced.error));
-    },
-    removeProviderKey: () => {
-      options.keyCustody.remove();
-      return status();
-    },
     inspectLastRequest: () => {
       if (!options.inspectionEnabled) return err({ kind: "inspectionDisabled" });
       const request = options.provider.inspectLastRequest();

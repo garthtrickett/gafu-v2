@@ -273,29 +273,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
-  const replaceProviderKey = (event: SubmitEvent): void => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const fields = new FormData(form);
-    void run(async () => {
-      model.provider = await requestJson<ProviderStatus>("/api/provider/key", {
-        method: "PUT",
-        body: JSON.stringify({ apiKey: value(fields, "apiKey") }),
-      });
-      form.reset();
-      return "OpenAI API key verified and held in server memory.";
-    });
-  };
-
-  const removeProviderKey = (): void => {
-    void run(async () => {
-      model.provider = await requestJson<ProviderStatus>("/api/provider/key", {
-        method: "DELETE",
-      });
-      return "Provider API key removed.";
-    });
-  };
-
   const startStudy = (): void => {
     void run(async () => {
       model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
@@ -484,16 +461,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   <div class="provider-settings">
                     <h3>AI provider</h3>
                     <p>${model.provider?.provider ?? "OpenAI"} · ${model.provider?.model ?? "gpt-5.6-luna"}</p>
-                    <p>${model.provider?.configured ? "API key configured until server restart." : "No API key configured."}</p>
-                    <form @submit=${replaceProviderKey}>
-                      <label>OpenAI API key <input name="apiKey" type="password" autocomplete="off" required /></label>
-                      <button type="submit" ?disabled=${model.busy}>Verify and use key</button>
-                    </form>
-                    ${
+                    <p>${
                       model.provider?.configured
-                        ? html`<button type="button" class="secondary" @click=${removeProviderKey}>Remove API key</button>`
-                        : ""
-                    }
+                        ? "API key supplied by the server environment."
+                        : "No API key. Set OPENAI_API_KEY on the server and restart."
+                    }</p>
                     <p class="privacy-note">Card content and the supporting-language allowlist are sent to OpenAI. Gafu requests no response storage, but OpenAI's retention and abuse-monitoring policies still apply. Video and audio are never sent.</p>
                   </div>
                   <div class="baseline baseline--${snapshot.knowledge.baseline.availability}">

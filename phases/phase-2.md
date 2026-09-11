@@ -24,8 +24,8 @@ advances SRS.
 
 - One provider-independent Learning Material workflow and typed failure union.
 - An OpenAI Responses adapter and a deterministic scripted fake.
-- In-memory server custody for API keys with configure, verify, replace, and
-  remove operations in the browser.
+- In-memory server custody for the API key, supplied by the server environment
+  and verified on first use.
 - Structured teaching and review material for both Card types.
 - Local validation of structure, readings, target identity and span, supporting
   vocabulary, declared supporting grammar, and recent-copy distance.
@@ -174,10 +174,15 @@ rate-limited, unauthenticated, and forbidden responses become distinct local
 failures.
 
 The model is a server-side configuration value with an explicit default and is
-shown in settings. The API key is entered over the same-origin local server,
-verified before replacing the current key, retained only in process memory,
-and removed on request. Restart therefore requires re-entry. The key never
-appears in JSON responses, SQLite, backups, model prompts, errors, or logs.
+shown in settings. The API key is a deployment value: it is read from the
+server environment at startup, retained only in process memory, and verified
+against the provider on first use rather than at boot, so an unusable key is
+reported where it is acted on instead of preventing the server from starting.
+Settings report which provider and model are configured and whether the
+environment supplied a key; there is no route, form, or session copy that could
+disagree with the environment. Changing the key is a deployment operation. The
+key never appears in JSON responses, SQLite, backups, model prompts, errors, or
+logs.
 
 Development inspection returns the exact redacted request body that would be
 sent, including target and known-language constraints, but never returns
@@ -196,8 +201,6 @@ type LearningMaterial = {
   prepare(input: PrepareMaterial): Promise<Result<PreparedMaterial, MaterialFailure>>;
   acknowledgeTeaching(input: AcknowledgeTeaching): Result<void, MaterialFailure>;
   providerStatus(): ProviderStatus;
-  replaceProviderKey(key: string, signal?: AbortSignal): Promise<Result<ProviderStatus, MaterialFailure>>;
-  removeProviderKey(): ProviderStatus;
   inspectLastRequest(): Result<RedactedProviderRequest, MaterialFailure>;
   permitVerifier: PresentationPermitVerifier;
   close(): void;
@@ -362,11 +365,11 @@ The implementation and tests must answer these without caller-side workarounds:
 16. A permit is used for another Card, after expiry, or twice.
 17. The browser refreshes before reveal and after reveal but before grade.
 18. The server restarts after teaching and before the first review.
-19. A key replacement fails verification while a working key is configured.
+19. The environment supplies a key the provider rejects, or none at all.
 20. An API key-shaped value appears in a provider exception.
 21. The response has output text after a non-message output item.
 22. OpenAI returns failed, incomplete, refusal, 401, 403, 429, or invalid JSON.
-23. The learner removes the key during a session with reserve material.
+23. The environment supplies no key during a session with reserve material.
 24. Backup is taken after generation and searched for credential fragments.
 25. The Card is marked known or suspended while material generation is pending.
 

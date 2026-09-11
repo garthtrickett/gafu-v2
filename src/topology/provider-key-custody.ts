@@ -15,12 +15,13 @@ export type ProviderKeyVerifier = Readonly<{
   ) => Promise<Result<void, KeyVerificationFailure>>;
 }>;
 
+/**
+ * The key is supplied by the server environment and is read-only at runtime.
+ * It is held in process memory only; nothing writes it to SQLite, a backup, a
+ * response, or a log. Changing it is a deployment operation, so there is no
+ * route, form, or session copy that could disagree with the environment.
+ */
 export type ProviderKeyCustody = Readonly<{
-  replace: (
-    candidate: string,
-    signal?: AbortSignal,
-  ) => Promise<Result<void, KeyVerificationFailure>>;
-  remove: () => void;
   isConfigured: () => boolean;
   /**
    * Whether the current key is usable, verifying it once if it arrived without
@@ -40,46 +41,19 @@ export type KeyVerificationFetch = (
 
 export const createProviderKeyCustody = (
   verifier: ProviderKeyVerifier,
-  initialCandidate: string | null = null,
+  candidate: string | null = null,
 ): ProviderKeyCustody => {
-  const initialKey = initialCandidate?.trim() ?? "";
-  let apiKey: string | null = initialKey === "" ? null : initialKey;
-  let revision = 0;
-  // Null until this key's usability is known. An environment-seeded key starts
-  // unknown; `replace` only stores a key it has already verified.
+  const trimmed = candidate?.trim() ?? "";
+  const apiKey: string | null = trimmed === "" ? null : trimmed;
+  // Null until the provider has been asked. Verified once and remembered,
+  // because the scope panel is drawn on every preflight.
   let usable: boolean | null = null;
   return {
-    replace: async (candidate, signal) => {
-      const operationRevision = ++revision;
-      const trimmed = candidate.trim();
-      if (trimmed === "") {
-        return err({ kind: "authentication", detail: "API key is empty" });
-      }
-      const verified = await verifier.verify(trimmed, signal);
-      if (!verified.ok) return verified;
-      if (operationRevision !== revision) {
-        return err({
-          kind: "cancelled",
-          detail: "A newer key change superseded this one",
-        });
-      }
-      apiKey = trimmed;
-      usable = true;
-      return ok(undefined);
-    },
-    remove: () => {
-      revision += 1;
-      apiKey = null;
-      usable = null;
-    },
     isConfigured: () => apiKey !== null,
     ensureUsable: async (signal) => {
-      const candidate = apiKey;
-      if (candidate === null) return false;
+      if (apiKey === null) return false;
       if (usable !== null) return usable;
-      const operationRevision = revision;
-      const verified = await verifier.verify(candidate, signal);
-      if (operationRevision !== revision) return apiKey !== null && usable !== false;
+      const verified = await verifier.verify(apiKey, signal);
       if (verified.ok) {
         usable = true;
         return true;
