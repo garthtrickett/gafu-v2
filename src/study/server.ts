@@ -54,6 +54,7 @@ import type {
   PreferenceChange,
   Study,
   StudyFailure,
+  StudyQueue,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
 import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.ts";
@@ -191,6 +192,8 @@ const materialFailureStatus = (failure: MaterialFailure): number => {
       return 422;
     case "inspectionDisabled":
       return 404;
+    case "reviewBatchNotFound":
+      return 404;
     case "cancelled":
       return 409;
     case "offline":
@@ -249,6 +252,28 @@ const snapshot = (study: Study): Response => {
 };
 
 /**
+ * Splits due Cards into the two session modes: untaught new Cards for learn,
+ * everything else due for review. The taught check is a read; selecting
+ * prepares nothing.
+ */
+const splitDue = (
+  due: StudyQueue["due"],
+  material: LearningMaterial,
+): Result<
+  { untaught: StudyQueue["due"]; review: StudyQueue["due"] },
+  MaterialFailure
+> => {
+  const untaught: StudyQueue["due"][number][] = [];
+  const review: StudyQueue["due"][number][] = [];
+  for (const item of due) {
+    const taught = material.hasTeaching(item.card.id);
+    if (!taught.ok) return taught;
+    (item.card.schedulePhase === "new" && !taught.value ? untaught : review).push(item);
+  }
+  return ok({ untaught, review });
+};
+
+/**
  * Serves the first due Card matching the session mode: any due Card for a
  * mixed session, the first untaught new Card for learn, or the first due
  * Card that is not an untaught new Card for review. The taught check is a
@@ -264,15 +289,14 @@ const serveFirst = async (
   const knowledge = study.knowledgeSnapshot();
   if (!knowledge.ok) return failureResponse(knowledge.error);
   let selected: (typeof queue.value.due)[number]["card"] | null = null;
-  for (const item of queue.value.due) {
-    if (wantUntaught !== null) {
-      const taught = material.hasTeaching(item.card.id);
-      if (!taught.ok) return materialResponse(taught);
-      const untaughtNew = item.card.schedulePhase === "new" && !taught.value;
-      if (untaughtNew !== wantUntaught) continue;
-    }
-    selected = item.card;
-    break;
+  if (wantUntaught === null) {
+    const first = queue.value.due[0];
+    if (first !== undefined) selected = first.card;
+  } else {
+    const split = splitDue(queue.value.due, material);
+    if (!split.ok) return materialResponse(split);
+    const first = (wantUntaught ? split.value.untaught : split.value.review)[0];
+    if (first !== undefined) selected = first.card;
   }
   if (selected === null)
     return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
@@ -309,6 +333,47 @@ const handleApi = async (
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/review") {
     return serveFirst(study, material, false);
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/review-batch") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    let size = 20;
+    if (isRecord(body) && body["size"] !== undefined) {
+      if (typeof body["size"] !== "number" || !Number.isInteger(body["size"])) {
+        return invalidRequest("Batch size must be an integer.");
+      }
+      size = body["size"];
+    }
+    if (size < 1 || size > 20) {
+      return invalidRequest("Batch size must be between 1 and 20.");
+    }
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const split = splitDue(queue.value.due, material);
+    if (!split.ok) return materialResponse(split);
+    const batch = split.value.review.slice(0, size);
+    if (batch.length === 0)
+      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
+    // Dispatch records the batch and returns. Generation happens one card
+    // per status poll, so no single request waits on the whole batch.
+    const begun = material.beginReviewBatch(
+      batch.map((item) => ({ card: item.card, knowledge: knowledge.value })),
+    );
+    if (!begun.ok) return materialResponse(begun);
+    return Response.json(
+      { batchId: begun.value, total: batch.length },
+      { status: 202 },
+    );
+  }
+  const batchMatch = url.pathname.match(/^\/api\/study\/review-batch\/([^/]+)$/u);
+  if (request.method === "GET" && batchMatch !== null) {
+    const batchId = batchMatch[1];
+    if (batchId === undefined || batchId === "") {
+      return invalidRequest("Missing review batch ID.");
+    }
+    return materialResponse(await material.advanceReviewBatch(batchId));
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/teach") {
     const body = await readJson(request);

@@ -11,15 +11,11 @@ import type {
   MaterialValidationInput,
 } from "./generated-contracts.ts";
 import { decodeGeneratedMaterial, parseBroadPartOfSpeech } from "./generated-decode.ts";
-import { adjectiveLemma, createLearningMaterialValidator } from "./validator.ts";
-
-const normalizeReading = (value: string): string =>
-  value
-    .normalize("NFKC")
-    .replace(/[ァ-ヶ]/gu, (character) =>
-      String.fromCodePoint((character.codePointAt(0) ?? 0) - 0x60),
-    )
-    .trim();
+import {
+  adjectiveLemma,
+  createLearningMaterialValidator,
+  normalizeReading,
+} from "./validator.ts";
 
 const normalizeMeaning = (value: string): string =>
   value

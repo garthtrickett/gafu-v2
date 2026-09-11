@@ -2,9 +2,11 @@ import { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../result.ts";
 import type {
   CardId,
+  CardSummary,
   PresentationPermit,
   PresentationPermitFailure,
   PresentationPermitVerifier,
+  KnowledgeSnapshot as StudyKnowledgeSnapshot,
   VerifiedPresentationPermit,
 } from "../study/contracts.ts";
 import type { ProviderKeyCustody } from "../topology/provider-key-custody.ts";
@@ -15,10 +17,12 @@ import type {
   MaterialProvider,
   PreparedMaterial,
   ProviderStatus,
+  ReviewBatchFailure,
+  ReviewBatchProgress,
 } from "./generated-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 1;
+export const MATERIAL_SCHEMA_VERSION = 2;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
 const MAXIMUM_PENDING_PERMITS = 1_024;
@@ -89,8 +93,9 @@ const migrate = (
       if (!applied.every(({ version }, index) => version === index + 1)) {
         throw new Error("Learning Material migration history is not contiguous");
       }
-      if (current.version >= 1) return;
-      database.exec(`
+      if (current.version >= 2) return;
+      if (current.version < 1) {
+        database.exec(`
         CREATE TABLE validated_presentation (
           id TEXT PRIMARY KEY,
           card_id TEXT NOT NULL,
@@ -115,9 +120,32 @@ const migrate = (
           acknowledged_at TEXT NOT NULL
         );
       `);
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (1, ?)",
+          )
+          .run(appliedAt);
+      }
+      // Review batches: one row per card, advanced one card per status poll.
+      // Generation banks reserves without taking, so work-through serves with
+      // fresh permits through the normal path.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS review_batch_item (
+          batch_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          card_id TEXT NOT NULL,
+          input_json TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+          failure_kind TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (batch_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS review_batch_pending_idx
+          ON review_batch_item(batch_id, status, seq);
+      `);
       database
         .query(
-          "INSERT INTO learning_material_migration(version, applied_at) VALUES (1, ?)",
+          "INSERT INTO learning_material_migration(version, applied_at) VALUES (2, ?)",
         )
         .run(appliedAt);
     });
@@ -307,15 +335,32 @@ export const openLearningMaterial = (
     }
   };
 
-  const prepare: LearningMaterial["prepare"] = async (input) => {
-    const taught = hasTeaching(input.card.id);
-    if (!taught.ok) return taught;
-    const mode =
-      input.card.schedulePhase === "new" && !taught.value ? "teach" : "review";
-    const reserve = takeReserve(input.card.id, mode, "reserve");
-    if (!reserve.ok) return reserve;
-    if (reserve.value !== null) return ok(reserve.value);
-    if (mode === "teach") return err({ kind: "teachingNotPrepared" });
+  const hasReserve = (
+    cardId: CardId,
+    mode: "teach" | "review",
+  ): Result<boolean, MaterialFailure> => {
+    try {
+      return ok(
+        database
+          .query(`SELECT 1 FROM validated_presentation
+          WHERE card_id = ? AND mode = ? AND shown_at IS NULL`)
+          .get(cardId, mode) !== null,
+      );
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
+  /**
+   * Runs bounded provider attempts and banks every validated candidate,
+   * without taking. Shared by interactive prepare (which takes next) and
+   * review-batch advances (which leave work-through to the normal path, so
+   * permits stay fresh).
+   */
+  const stockReserve = async (
+    input: Parameters<LearningMaterial["prepare"]>[0],
+    mode: "teach" | "review",
+  ): Promise<Result<void, MaterialFailure>> => {
     const recent = recentJapanese(input.card.id);
     if (!recent.ok) return recent;
     const attempts = options.maximumValidationAttempts ?? 3;
@@ -354,20 +399,153 @@ export const openLearningMaterial = (
         if (!saved.ok) return saved;
         if (saved.value) stored += 1;
       }
-      if (stored > 0) {
-        const prepared = takeReserve(input.card.id, mode, "generated");
-        if (!prepared.ok) return prepared;
-        if (prepared.value !== null) return ok(prepared.value);
-      }
+      if (stored > 0) return ok(undefined);
     }
     return rejectionReasons.length > 0
       ? err({ kind: "validationRejected", reasons: rejectionReasons })
       : err({ kind: "noValidCandidate" });
   };
 
+  const prepare: LearningMaterial["prepare"] = async (input) => {
+    const taught = hasTeaching(input.card.id);
+    if (!taught.ok) return taught;
+    const mode =
+      input.card.schedulePhase === "new" && !taught.value ? "teach" : "review";
+    const reserve = takeReserve(input.card.id, mode, "reserve");
+    if (!reserve.ok) return reserve;
+    if (reserve.value !== null) return ok(reserve.value);
+    if (mode === "teach") return err({ kind: "teachingNotPrepared" });
+    const stocked = await stockReserve(input, mode);
+    if (!stocked.ok) return stocked;
+    const prepared = takeReserve(input.card.id, mode, "generated");
+    if (!prepared.ok) return prepared;
+    if (prepared.value !== null) return ok(prepared.value);
+    return err({ kind: "noValidCandidate" });
+  };
+
   return ok({
     prepare,
     hasTeaching,
+    hasReserve,
+    beginReviewBatch: (cards) => {
+      const observedAt = safeNow(options.clock);
+      if (!observedAt.ok) return observedAt;
+      const batchId = options.nextId();
+      try {
+        const insert = database.transaction(() => {
+          const add = database.query(
+            `INSERT INTO review_batch_item(batch_id, seq, card_id, input_json, status, updated_at)
+             VALUES (?, ?, ?, ?, 'pending', ?)`,
+          );
+          cards.forEach((input, index) => {
+            add.run(
+              batchId,
+              index,
+              input.card.id,
+              JSON.stringify({ card: input.card, knowledge: input.knowledge }),
+              observedAt.value.toISOString(),
+            );
+          });
+        });
+        insert.immediate();
+        return ok(batchId);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    },
+    advanceReviewBatch: async (
+      batchId: string,
+    ): Promise<Result<ReviewBatchProgress, MaterialFailure>> => {
+      const progress = (): Result<ReviewBatchProgress, MaterialFailure> => {
+        try {
+          const rows = database
+            .query(
+              `SELECT card_id, status, failure_kind FROM review_batch_item
+               WHERE batch_id = ? ORDER BY seq`,
+            )
+            .all(batchId) as {
+            card_id: CardId;
+            status: string;
+            failure_kind: string | null;
+          }[];
+          if (rows.length === 0) return err({ kind: "reviewBatchNotFound", batchId });
+          const completed: CardId[] = [];
+          const failed: ReviewBatchFailure[] = [];
+          let pending = 0;
+          for (const row of rows) {
+            if (row.status === "ready") completed.push(row.card_id);
+            else if (row.status === "failed")
+              failed.push({
+                cardId: row.card_id,
+                kind: (row.failure_kind ?? "offline") as ReviewBatchFailure["kind"],
+              });
+            else pending += 1;
+          }
+          const snapshot: ReviewBatchProgress = {
+            batchId,
+            done: pending === 0,
+            pending,
+            completed,
+            failed,
+          };
+          return ok(snapshot);
+        } catch (cause) {
+          return err({ kind: "readFailed", detail: detail(cause) });
+        }
+      };
+      let next: { seq: number; card_id: CardId; input_json: string } | null;
+      try {
+        next = database
+          .query(
+            `SELECT seq, card_id, input_json FROM review_batch_item
+             WHERE batch_id = ? AND status = 'pending' ORDER BY seq LIMIT 1`,
+          )
+          .get(batchId) as typeof next;
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
+      if (next === null) return progress();
+      const item = next;
+      let input: { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
+      try {
+        input = JSON.parse(item.input_json) as typeof input;
+      } catch {
+        return err({ kind: "writeFailed", detail: "review batch input is corrupt" });
+      }
+      const observedAt = safeNow(options.clock);
+      if (!observedAt.ok) return observedAt;
+      const finish = (
+        status: "ready" | "failed",
+        failureKind: string | null,
+      ): Result<ReviewBatchProgress, MaterialFailure> => {
+        try {
+          database
+            .query(
+              `UPDATE review_batch_item SET status = ?, failure_kind = ?, updated_at = ?
+               WHERE batch_id = ? AND seq = ?`,
+            )
+            .run(
+              status,
+              failureKind,
+              observedAt.value.toISOString(),
+              batchId,
+              item.seq,
+            );
+        } catch (cause) {
+          return err({ kind: "writeFailed", detail: detail(cause) });
+        }
+        return progress();
+      };
+      const reserve = hasReserve(item.card_id, "review");
+      if (!reserve.ok) return reserve;
+      if (reserve.value) return finish("ready", null);
+      const stocked = await stockReserve(
+        { card: input.card, knowledge: input.knowledge },
+        "review",
+      );
+      if (!stocked.ok) return finish("failed", stocked.error.kind);
+      return finish("ready", null);
+    },
     acknowledgeTeaching: (cardId, presentationId) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;

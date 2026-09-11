@@ -113,6 +113,7 @@ export type MaterialFailure =
    * so this fails fast instead of holding the session open on the provider.
    */
   | { readonly kind: "teachingNotPrepared" }
+  | { readonly kind: "reviewBatchNotFound"; readonly batchId: string }
   | { readonly kind: "presentationNotFound" }
   | { readonly kind: "presentationAlreadyShown" }
   | { readonly kind: "inspectionDisabled" }
@@ -136,6 +137,19 @@ export type PrepareMaterial = Readonly<{
   signal?: AbortSignal;
 }>;
 
+export type ReviewBatchFailure = Readonly<{
+  cardId: CardSummary["id"];
+  kind: MaterialFailure["kind"];
+}>;
+
+export type ReviewBatchProgress = Readonly<{
+  batchId: string;
+  done: boolean;
+  pending: number;
+  completed: readonly CardSummary["id"][];
+  failed: readonly ReviewBatchFailure[];
+}>;
+
 export type LearningMaterial = Readonly<{
   prepare: (
     input: PrepareMaterial,
@@ -146,6 +160,21 @@ export type LearningMaterial = Readonly<{
    * offer learn and review as separate queues without preparing anything.
    */
   hasTeaching: (cardId: CardSummary["id"]) => Result<boolean, MaterialFailure>;
+  hasReserve: (
+    cardId: CardSummary["id"],
+    mode: MaterialMode,
+  ) => Result<boolean, MaterialFailure>;
+  /**
+   * Records a review batch without generating anything. Each status poll
+   * advances one card (banking reserves, never taking), so progress is
+   * client-pumped and resumable with no daemon.
+   */
+  beginReviewBatch: (
+    cards: readonly PrepareMaterial[],
+  ) => Result<string, MaterialFailure>;
+  advanceReviewBatch: (
+    batchId: string,
+  ) => Promise<Result<ReviewBatchProgress, MaterialFailure>>;
   acknowledgeTeaching: (
     cardId: CardSummary["id"],
     presentationId: string,

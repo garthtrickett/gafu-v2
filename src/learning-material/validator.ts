@@ -13,6 +13,15 @@ import { decodePresentation } from "./decode.ts";
 
 const unique = (values: readonly string[]): readonly string[] => [...new Set(values)];
 
+/** NFKC with katakana folded to hiragana: readings are phonological, so kana variant is irrelevant. Lemmas stay exact. */
+export const normalizeReading = (value: string): string =>
+  value
+    .normalize("NFKC")
+    .replace(/[ァ-ヶ]/gu, (character) =>
+      String.fromCodePoint((character.codePointAt(0) ?? 0) - 0x60),
+    )
+    .trim();
+
 const insideSpan = (
   inner: DecodedPresentation["targetSpan"],
   outer: DecodedPresentation["targetSpan"],
@@ -127,13 +136,26 @@ export const createLearningMaterialValidator = (
         const matching = covering.find((tiling) => {
           const lemma = tiling
             .map((token) =>
-              target.partOfSpeech === "adjective"
+              // A trailing だ on an adjective part is the copula the
+              // analyzer lemmatizes with (清潔だ inside 清潔感); a null
+              // reading is the surface itself (katakana モテ).
+              token.broadPartOfSpeech === "adjective"
                 ? adjectiveLemma(token.lemma)
                 : token.lemma,
             )
             .join("");
-          const reading = tiling.map((token) => token.reading ?? "").join("");
-          if (lemma !== target.lemma || reading !== target.reading) return false;
+          const reading = tiling
+            .map((token) => token.reading ?? token.surface)
+            .join("");
+          if (lemma !== target.lemma) return false;
+          // Readings are phonological: a compound tiling matches across kana
+          // variants (モテる tiled as モテ|る), while one token keeps the old
+          // exact comparison.
+          const readingMatches =
+            tiling.length === 1
+              ? reading === target.reading
+              : normalizeReading(reading) === normalizeReading(target.reading);
+          if (!readingMatches) return false;
           // One token keeps the old part-of-speech check. A compound has no
           // single part of speech across its parts (間が悪い tiles noun,
           // particle, adjective), so its concatenated lemma and reading are

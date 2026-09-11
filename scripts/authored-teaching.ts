@@ -14,7 +14,10 @@
  */
 import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../src/analysis/contracts.ts";
 import { declaredGrammarDetector } from "../src/learning-material/declared-grammar.ts";
-import { adjectiveLemma } from "../src/learning-material/validator.ts";
+import {
+  adjectiveLemma,
+  normalizeReading,
+} from "../src/learning-material/validator.ts";
 import { splitFurigana } from "../src/study/furigana.ts";
 
 export type AuthoredCard = Readonly<{
@@ -147,11 +150,18 @@ export const buildTeaching = async (
         tiling.push(token);
         const lemma = tiling
           .map((part) =>
-            card.partOfSpeech === "adjective" ? adjectiveLemma(part.lemma) : part.lemma,
+            part.broadPartOfSpeech === "adjective"
+              ? adjectiveLemma(part.lemma)
+              : part.lemma,
           )
           .join("");
-        const reading = tiling.map((part) => part.reading ?? "").join("");
-        if (lemma !== card.lemma || reading !== card.reading) continue;
+        const reading = tiling.map((part) => part.reading ?? part.surface).join("");
+        if (lemma !== card.lemma) continue;
+        const readingMatches =
+          tiling.length === 1
+            ? reading === card.reading
+            : normalizeReading(reading) === normalizeReading(card.reading ?? "");
+        if (!readingMatches) continue;
         if (tiling.length === 1) {
           const only = tiling[0];
           if (only === undefined || only.broadPartOfSpeech !== card.partOfSpeech)

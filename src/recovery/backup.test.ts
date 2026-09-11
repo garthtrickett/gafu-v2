@@ -4,7 +4,10 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
-import { openLearningMaterial } from "../learning-material/learning-material.ts";
+import {
+  MATERIAL_SCHEMA_VERSION,
+  openLearningMaterial,
+} from "../learning-material/learning-material.ts";
 import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
 import { createDeterministicPreparationProvider } from "../preparation/deterministic-provider.ts";
 import { createSubtitleImportInspector } from "../preparation/import.ts";
@@ -283,7 +286,7 @@ describe("backup recovery", () => {
       for (const [table, version] of [
         ["schema_migration", 6],
         ["preparation_migration", PREPARATION_SCHEMA_VERSION],
-        ["learning_material_migration", 1],
+        ["learning_material_migration", MATERIAL_SCHEMA_VERSION],
       ] as const) {
         database.exec(
           `CREATE TABLE ${table}(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,

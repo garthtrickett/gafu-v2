@@ -5,10 +5,11 @@ import { loadKuromojiFromDirectory } from "../../src/analysis/loaders.ts";
 import { LOCAL_MUTATION_HEADER, LOCAL_MUTATION_VALUE } from "../../src/local-api.ts";
 
 // This test creates fourteen background Grammar Cards one at a time, marks
-// each known, and then waits for a generated review. It measures 28-29s
-// unloaded, against Playwright's 30s default, so it failed whenever anything
-// else shared the machine. The work is legitimately long; the budget was wrong.
-test.setTimeout(90_000);
+// each known, teaches two Cards from attached sentences, batches their first
+// reviews, and works the batch through. Generation is local and instant, but
+// the fourteen creations dominate; the budget stays generous so shared
+// machines do not flake it.
+test.setTimeout(120_000);
 
 test("configures a key and teaches before the first generated review", async ({
   page,
@@ -32,6 +33,13 @@ test("configures a key and teaches before the first generated review", async ({
   await vocabulary.getByLabel("Part of speech").fill("noun");
   await vocabulary.getByLabel("One meaning").fill("bird");
   await vocabulary.getByLabel("Usage notes").fill("A general word for a bird.");
+  await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
+
+  await vocabulary.getByLabel("Lemma").fill("猫");
+  await vocabulary.getByLabel("Reading").fill("ねこ");
+  await vocabulary.getByLabel("Part of speech").fill("noun");
+  await vocabulary.getByLabel("One meaning").fill("cat");
+  await vocabulary.getByLabel("Usage notes").fill("A general word for a cat.");
   await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
 
   // The deterministic teach/review sentences use background particles the
@@ -79,57 +87,74 @@ test("configures a key and teaches before the first generated review", async ({
       grammar: { canonicalForm: string }[];
     };
   };
-  const tori = studyBody.cards.find((card) => card.content.lemma === "鳥");
-  if (tori === undefined) throw new Error("missing 鳥 card");
   const analyzer = createKuromojiAnalyzer(() =>
     loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
   );
-  const built = await buildTeaching(
-    analyzer,
-    {
-      type: "vocabulary",
-      lemma: "鳥",
-      reading: "とり",
-      partOfSpeech: "noun",
-      meaning: "bird",
-      usageNotes: "A general word for a bird.",
-      example: "鳥かな。",
-    },
-    {
-      vocabulary: studyBody.knowledge.vocabulary,
-      grammar: new Set(studyBody.knowledge.grammar.map((item) => item.canonicalForm)),
-    },
-  );
-  if ("reason" in built) throw new Error(`authored teach: ${built.reason}`);
-  const attached = await page.request.put(`/api/study/cards/${tori.id}/teaching`, {
-    headers: { [LOCAL_MUTATION_HEADER]: LOCAL_MUTATION_VALUE },
-    data: built.value,
-  });
-  if (!attached.ok()) throw new Error(`attach teaching: ${attached.status()}`);
+  const attachTeaching = async (
+    lemma: string,
+    reading: string,
+    meaning: string,
+    usageNotes: string,
+    example: string,
+  ): Promise<void> => {
+    const target = studyBody.cards.find((card) => card.content.lemma === lemma);
+    if (target === undefined) throw new Error(`missing ${lemma} card`);
+    const built = await buildTeaching(
+      analyzer,
+      {
+        type: "vocabulary",
+        lemma,
+        reading,
+        partOfSpeech: "noun",
+        meaning,
+        usageNotes,
+        example,
+      },
+      {
+        vocabulary: studyBody.knowledge.vocabulary,
+        grammar: new Set(studyBody.knowledge.grammar.map((item) => item.canonicalForm)),
+      },
+    );
+    if ("reason" in built) throw new Error(`authored teach: ${built.reason}`);
+    const attached = await page.request.put(`/api/study/cards/${target.id}/teaching`, {
+      headers: { [LOCAL_MUTATION_HEADER]: LOCAL_MUTATION_VALUE },
+      data: built.value,
+    });
+    if (!attached.ok()) throw new Error(`attach teaching: ${attached.status()}`);
+  };
+  await attachTeaching("鳥", "とり", "bird", "A general word for a bird.", "鳥かな。");
+  await attachTeaching("猫", "ねこ", "cat", "A general word for a cat.", "猫かな。");
 
-  await review.getByRole("button", { name: "Learn new" }).click();
-  await expect(review.getByText("teach", { exact: true })).toBeVisible({
-    timeout: 20_000,
-  });
-  await expect(review.getByTestId("material-answer")).toContainText("bird");
-  await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
+  // Queue order is by Card id, so either Card can come first. Teach both,
+  // collecting which meaning each exposure showed.
+  const learned: string[] = [];
+  for (let round = 0; round < 2; round += 1) {
+    await review.getByRole("button", { name: "Learn new" }).click();
+    await expect(review.getByText("teach", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
+    learned.push(taught.includes("cat") ? "cat" : "bird");
+    await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
+    await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
+    await expect(page.getByRole("status")).toContainText("back in the queue");
+  }
+  expect(learned.sort()).toEqual(["bird", "cat"]);
 
-  await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
-  await expect(page.getByRole("status")).toContainText("back in the queue");
-  await expect(review.getByRole("button", { name: "Learn new" })).toBeVisible();
-
-  // The taught Card is no longer learnable: Learn reports an empty queue
-  // while Review picks the same Card up as a review.
+  // Both taught Cards are out of the learn queue now.
   await review.getByRole("button", { name: "Learn new" }).click();
   await expect(page.getByRole("status")).toContainText("nothingDue");
 
-  await review.getByRole("button", { name: "Review" }).click();
-  await expect(review.getByText("review", { exact: true })).toBeVisible({
-    timeout: 20_000,
+  // The review session dispatches one batch through the UI and pumps it to
+  // done; work-through then serves from banked reserves through Review.
+  await review.getByRole("button", { name: "Review batch" }).click();
+  await expect(review.getByTestId("batch-progress")).toContainText("Batch ready: 2", {
+    timeout: 30_000,
   });
-  await expect(review.getByTestId("material-answer")).toHaveCount(0);
-  await review.getByRole("button", { name: "Reveal answer" }).click();
-  await expect(review.getByTestId("material-answer")).toContainText("bird");
+
+  // Work through in whatever order the queue serves, recording each grade
+  // exactly once. The first grade holds the answer request to prove the
+  // buttons stay disabled until it resolves.
   let releaseAnswer = (): void => {};
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
@@ -138,18 +163,34 @@ test("configures a key and teaches before the first generated review", async ({
     await answerGate;
     await route.continue();
   });
-  await review.getByRole("button", { name: "good" }).click();
-  await expect(review.getByRole("button", { name: "again" })).toBeDisabled();
-  await expect(review.getByRole("button", { name: "hard" })).toBeDisabled();
-  await expect(review.getByRole("button", { name: "good" })).toBeDisabled();
-  await expect(review.getByRole("button", { name: "easy" })).toBeDisabled();
-  releaseAnswer();
-  await expect(page.getByRole("status")).toContainText("Review recorded once");
+  const worked: string[] = [];
+  for (let round = 0; round < 2; round += 1) {
+    await review.getByRole("button", { name: "Review", exact: true }).click();
+    await expect(review.getByText("review", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(review.getByTestId("material-answer")).toHaveCount(0);
+    await review.getByRole("button", { name: "Reveal answer" }).click();
+    const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
+    worked.push(shown.includes("cat") ? "cat" : "bird");
+    await review.getByRole("button", { name: "good" }).click();
+    if (round === 0) {
+      await expect(review.getByRole("button", { name: "again" })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "hard" })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "good" })).toBeDisabled();
+      await expect(review.getByRole("button", { name: "easy" })).toBeDisabled();
+      releaseAnswer();
+    }
+    await expect(page.getByRole("status")).toContainText("Review recorded once");
+  }
+  expect(worked.sort()).toEqual(["bird", "cat"]);
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
+  await expect(page.locator(".bank-card", { hasText: "猫" })).toContainText("1 review");
 
   await page.reload();
   await expect(
     page.getByText("API key supplied by the server environment."),
   ).toBeVisible();
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
+  await expect(page.locator(".bank-card", { hasText: "猫" })).toContainText("1 review");
 });
