@@ -14,6 +14,7 @@ import type {
   StudyPreferences,
   StudyStatus,
 } from "./contracts.ts";
+import { splitFurigana } from "./furigana.ts";
 
 type BrowserSnapshot = Readonly<{
   cards: readonly CardSummary[];
@@ -126,6 +127,17 @@ const editForm = (
   }
   return html``;
 };
+
+const rubyText = (material: PreparedMaterial["material"]): TemplateResult[] =>
+  material.readingSegments.map((segment) => {
+    const { before, body, over, after } = splitFurigana(
+      segment.written,
+      segment.reading,
+    );
+    return body === ""
+      ? html`${before}`
+      : html`${before}<ruby>${body}<rt>${over}</rt></ruby>${after}`;
+  });
 
 export const mountStudyApp = (root: HTMLElement): void => {
   const model: BrowserModel = {
@@ -273,6 +285,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  /**
+   * The sentence with a reading over each written form that needs one.
+   *
+   * The material already carries the segments, and the validator requires their
+   * written parts to rejoin into exactly the sentence, so this cannot drop or
+   * duplicate text. A segment whose reading is its own writing is kana already
+   * and takes no ruby: putting が over が is noise that pushes the line apart.
+   */
   const startStudy = (): void => {
     void run(async () => {
       model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
@@ -384,7 +404,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         <span class="pill">${model.presentation.mode}</span>
                         <p class="context">${model.presentation.material.context}</p>
                         <p class="prompt">${model.presentation.material.prompt}</p>
-                        <p class="japanese" lang="ja">${model.presentation.material.japanese}</p>
+                        <p class="japanese" lang="ja">${rubyText(model.presentation.material)}</p>
                         ${
                           model.presentation.mode === "teach" || model.revealed
                             ? html`<div class="answer" data-testid="material-answer">
