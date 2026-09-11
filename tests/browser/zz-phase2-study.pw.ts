@@ -34,6 +34,9 @@ test("configures a key and teaches before the first generated review", async ({
   await vocabulary.getByLabel("One meaning").fill("bird");
   await vocabulary.getByLabel("Usage notes").fill("A general word for a bird.");
   await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
+  // The form resets only when the create round-trips, so wait for it before
+  // filling the next Card — otherwise the reset lands mid-fill and wipes it.
+  await expect(page.getByRole("status")).toContainText("Vocabulary Card created");
 
   await vocabulary.getByLabel("Lemma").fill("猫");
   await vocabulary.getByLabel("Reading").fill("ねこ");
@@ -41,6 +44,7 @@ test("configures a key and teaches before the first generated review", async ({
   await vocabulary.getByLabel("One meaning").fill("cat");
   await vocabulary.getByLabel("Usage notes").fill("A general word for a cat.");
   await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
+  await expect(page.getByRole("status")).toContainText("Vocabulary Card created");
 
   // The deterministic teach/review sentences use background particles the
   // learner is expected to know. A real learner marks them known first; the
