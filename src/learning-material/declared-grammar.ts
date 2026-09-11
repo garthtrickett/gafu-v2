@@ -564,17 +564,23 @@ export const declaredGrammarForms = patterns.map((pattern) => pattern.canonicalF
 /**
  * The declared forms are written for a reader, not for comparison: some carry
  * the placeholder tilde, some a parenthetical sense, some list alternates
- * separated by a slash. `〜てしまう（縮約）` and `てしまう / ちゃう` are both
- * declared, so a Card naming the plain `〜てしまう` names a construction the
- * generator knows and a literal comparison still refuses it.
+ * separated by a slash, and the tilde and brackets appear at both widths.
+ * `〜てしまう（縮約）` and `てしまう / ちゃう` are both declared, so a Card naming
+ * the plain `〜てしまう` names a construction the generator knows and a literal
+ * comparison still refuses it -- as it refused four Cards the V1 migration
+ * created, which differ from their declared forms only in character width.
  */
 const comparable = (form: string): readonly string[] =>
   form
+    .normalize("NFKC")
     .split("/")
     .map((part) =>
       part
         .replace(/[（(][^）)]*[）)]/gu, "")
-        .replace(/^[\uff5e\u301c~]+/u, "")
+        // Tildes are placeholders wherever they appear, and are written three
+        // ways: the V1 Cards carry `~ても~なくても` where the declared form has
+        // `～ても～なくても`, which is the same construction.
+        .replace(/[~\uff5e\u301c]/gu, "")
         .trim(),
     )
     .filter((part) => part !== "");
