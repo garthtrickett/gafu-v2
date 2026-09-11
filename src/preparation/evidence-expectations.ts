@@ -14,8 +14,19 @@ export const contentParts: ReadonlySet<string> = new Set([
   "interjection",
 ]);
 
-export const isContentToken = (broadPartOfSpeech: string): boolean =>
-  contentParts.has(broadPartOfSpeech);
+/**
+ * Kuromoji files an unrecognised run of symbols under 名詞/サ変接続, so `!?`,
+ * `...` and `...♪` arrive as nouns. They are not Japanese to learn, and their
+ * canonicalKey -- `!?:`, a lemma of punctuation plus the empty-reading colon --
+ * is exactly the kind of string a model tidies, which it did: it answered
+ * `!? :` and rejected its whole batch. A token earns a candidate only if it
+ * contains something a word is made of.
+ */
+const wordLike = /[\p{Letter}\p{Number}]/u;
+
+export const earnsCandidate = (
+  token: Readonly<{ surface: string; broadPartOfSpeech: string }>,
+): boolean => contentParts.has(token.broadPartOfSpeech) && wordLike.test(token.surface);
 
 /**
  * A null reading yields a trailing colon. The provider is given this string
@@ -42,7 +53,7 @@ export const expectedAnnotations = (
   const expected = new Map<string, string>();
   for (const cue of cues) {
     for (const token of cue.tokens) {
-      if (!isContentToken(token.broadPartOfSpeech)) continue;
+      if (!earnsCandidate(token)) continue;
       expected.set(
         vocabularyKey(cue.cueId, token.span.start, token.span.end),
         canonicalVocabulary(token.lemma, token.reading),

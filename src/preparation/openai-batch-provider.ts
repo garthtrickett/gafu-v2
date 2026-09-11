@@ -8,7 +8,7 @@ import type {
   ProviderBatchResponse,
   ProviderFailure,
 } from "./batching-contracts.ts";
-import { canonicalVocabulary, isContentToken } from "./evidence-expectations.ts";
+import { canonicalVocabulary, earnsCandidate } from "./evidence-expectations.ts";
 
 export type OpenAiFetch = (
   input: string | URL | Request,
@@ -111,12 +111,10 @@ const labelledBatch = (
       // Only the tokens that earn a candidate, so "one per supplied token"
       // is countable rather than a part-of-speech judgement the model has to
       // reach the same way the validator does.
-      tokens: cue.tokens
-        .filter((token) => isContentToken(token.broadPartOfSpeech))
-        .map((token) => ({
-          ...token,
-          canonicalKey: canonicalVocabulary(token.lemma, token.reading),
-        })),
+      tokens: cue.tokens.filter(earnsCandidate).map((token) => ({
+        ...token,
+        canonicalKey: canonicalVocabulary(token.lemma, token.reading),
+      })),
       grammarEvidence: cue.grammarEvidence.flatMap((item) =>
         item.spans.map((span) => ({
           canonicalKey: item.canonicalForm,
