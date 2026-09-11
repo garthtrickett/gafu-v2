@@ -564,7 +564,13 @@ const materialProvider = fakeAi
       apiKey: keyCustody.readForServerAdapter,
       model: openAiModel,
       promptVersion: "study-v1",
+      // Bounds one HTTP call. Dispatch and each poll are short whatever the
+      // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
+      // Bounds the whole generation: dispatch plus polling to a terminal
+      // status. Material generations were observed around 35s; this is an
+      // unmeasured upper bound, not a calibrated one.
+      completionTimeoutMs: 5 * 60_000,
     });
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),

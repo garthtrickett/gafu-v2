@@ -174,10 +174,14 @@ validator would have refused.
 ### Provider and credential boundary
 
 The production adapter uses the OpenAI Responses API with strict structured
-output. Requests set `store: false`; response output is located by type rather
-than by array position; incomplete, failed, refused, malformed, timed-out,
-rate-limited, unauthenticated, and forbidden responses become distinct local
-failures.
+output. Requests set `store: false` and dispatch with `background: true`, so
+the response id returns as soon as the request is queued and generation is
+read over short polls; `timeoutMs` bounds one HTTP call while
+`completionTimeoutMs` bounds the whole generation. Response output is located
+by type rather than by array position; incomplete, failed, refused, malformed,
+timed-out, rate-limited, unauthenticated, and forbidden responses become
+distinct local failures. A poll that finds the dispatch gone from
+provider-side retention is an offline failure, not a transport failure.
 
 The model is a server-side configuration value with an explicit default and is
 shown in settings. The API key is a deployment value: it is read from the
