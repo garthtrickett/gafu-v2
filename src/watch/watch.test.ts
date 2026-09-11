@@ -83,6 +83,7 @@ const setup = () => {
     nextId: ids,
     permitVerifier: testPermitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
   const watch = createWatch({

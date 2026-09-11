@@ -297,6 +297,7 @@ describe("V1 migration", () => {
         verify: () => err({ kind: "presentationInvalid", detail: "not used" }),
       },
       knownWordSeed: unavailableKaishiSeed,
+      grammarTargetSupported: () => true,
     });
     if (!opened.ok) throw new Error(opened.error.kind);
     const created = opened.value.createCard({

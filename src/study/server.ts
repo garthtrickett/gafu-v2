@@ -13,7 +13,10 @@ import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
 import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
 import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
 import { createPrivateAccess } from "../deployment/private-access.ts";
-import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
+import {
+  declaredGrammarDetector,
+  supportsGrammarTarget,
+} from "../learning-material/declared-grammar.ts";
 import type {
   LearningMaterial,
   MaterialFailure,
@@ -593,6 +596,7 @@ const opened = openStudy({
   nextId: () => crypto.randomUUID(),
   permitVerifier: openedMaterial.value.permitVerifier,
   knownWordSeed,
+  grammarTargetSupported: supportsGrammarTarget,
 });
 
 if (!opened.ok) {

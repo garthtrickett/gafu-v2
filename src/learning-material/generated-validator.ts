@@ -4,7 +4,7 @@ import { normalizeJapanese } from "../analysis/normalization.ts";
 import { err, ok, type Result } from "../result.ts";
 import type { CardSummary } from "../study/contracts.ts";
 import type { ValidationDependencies } from "./contracts.ts";
-import { declaredGrammarForms } from "./declared-grammar.ts";
+import { supportsGrammarTarget } from "./declared-grammar.ts";
 import type {
   GeneratedMaterial,
   MaterialFailure,
@@ -78,7 +78,7 @@ export const createGeneratedMaterialValidator = (
     }
 
     if (card.type === "grammar" && "canonicalForm" in card.content) {
-      if (!declaredGrammarForms.includes(card.content.canonicalForm)) {
+      if (!supportsGrammarTarget(card.content.canonicalForm)) {
         return err({
           kind: "unsupportedGrammarTarget",
           canonicalForm: card.content.canonicalForm,

@@ -561,6 +561,34 @@ const patterns: readonly GrammarPattern[] = [
 
 export const declaredGrammarForms = patterns.map((pattern) => pattern.canonicalForm);
 
+/**
+ * The declared forms are written for a reader, not for comparison: some carry
+ * the placeholder tilde, some a parenthetical sense, some list alternates
+ * separated by a slash. `〜てしまう（縮約）` and `てしまう / ちゃう` are both
+ * declared, so a Card naming the plain `〜てしまう` names a construction the
+ * generator knows and a literal comparison still refuses it.
+ */
+const comparable = (form: string): readonly string[] =>
+  form
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[（(][^）)]*[）)]/gu, "")
+        .replace(/^[\uff5e\u301c~]+/u, "")
+        .trim(),
+    )
+    .filter((part) => part !== "");
+
+const declaredTargets = new Set(declaredGrammarForms.flatMap(comparable));
+
+/**
+ * Whether material can be generated for a Grammar Card naming this form. The
+ * Card route and the material validator both ask here, so a Card that is
+ * accepted can always be taught.
+ */
+export const supportsGrammarTarget = (canonicalForm: string): boolean =>
+  comparable(canonicalForm).some((part) => declaredTargets.has(part));
+
 export const declaredGrammarDetector: GrammarDetector = {
   detect: (normalizedJapanese): readonly DetectedGrammar[] =>
     patterns.flatMap((pattern) =>

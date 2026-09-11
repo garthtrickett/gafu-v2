@@ -58,6 +58,7 @@ const openTestStudy = (
     nextId: sequentialIds(),
     permitVerifier: testPermitVerifier,
     knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
     ...overrides,
   });
   if (!opened.ok) throw new Error(JSON.stringify(opened.error));
@@ -69,6 +70,61 @@ const create = (study: Study, input: CreateCard) => {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 };
+
+describe("a Grammar Card must name a form material can be generated for", () => {
+  test("an undeclared form is refused where it is created, not where it is studied", () => {
+    // The generator rejects an undeclared form too, but by then the Card is
+    // stored and the session that reaches it fails -- one unstudiable Card
+    // stops the whole queue.
+    const { study } = openTestStudy({
+      grammarTargetSupported: (canonicalForm) =>
+        canonicalForm === "\u301c\u3066\u3057\u307e\u3046",
+    });
+    const refused = study.createCard({
+      type: "grammar",
+      content: {
+        canonicalForm: "\u5143\u3082\u5b50\u3082\u306a\u3044",
+        meaning: "to defeat the purpose",
+        formation: "\u5143 \u3082 \u5b50 \u3082 \u306a\u3044",
+        usageNotes: "",
+      },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { kind: "invalidCard", field: "canonicalForm" },
+    });
+    if (!refused.ok && "detail" in refused.error) {
+      expect(refused.error.detail).toContain("\u5143\u3082\u5b50\u3082\u306a\u3044");
+    }
+    expect(study.listCards()).toMatchObject({ ok: true, value: [] });
+  });
+
+  test("a declared form is created as before", () => {
+    const { study } = openTestStudy({
+      grammarTargetSupported: (canonicalForm) =>
+        canonicalForm === "\u301c\u3066\u3057\u307e\u3046",
+    });
+    expect(
+      study.createCard({
+        type: "grammar",
+        content: {
+          canonicalForm: "\u301c\u3066\u3057\u307e\u3046",
+          meaning: "to do something regrettably",
+          formation: "\u3066-form + \u3057\u307e\u3046",
+          usageNotes: "",
+        },
+      }),
+    ).toMatchObject({ ok: true, value: { outcome: "created" } });
+  });
+
+  test("a Vocabulary Card is unaffected", () => {
+    const { study } = openTestStudy({ grammarTargetSupported: () => false });
+    expect(study.createCard(vocabulary)).toMatchObject({
+      ok: true,
+      value: { outcome: "created" },
+    });
+  });
+});
 
 describe("Study Cards and knowledge", () => {
   test("creates each canonical Card once without conflating vocabulary senses", () => {
@@ -163,6 +219,7 @@ describe("Study Cards and knowledge", () => {
       clock: () => new Date("2026-09-08T10:00:00.000Z"),
       nextId: sequentialIds(),
       permitVerifier: testPermitVerifier,
+      grammarTargetSupported: () => true,
     };
     const first = openStudy({ ...dependencies, knownWordSeed: firstSeed });
     if (!first.ok) throw new Error(first.error.kind);
@@ -459,6 +516,7 @@ describe("Study admission and review", () => {
       clock: clock.now,
       permitVerifier: testPermitVerifier,
       knownWordSeed: testSeed,
+      grammarTargetSupported: () => true,
     };
     const first = openStudy({ ...dependencies, nextId: sequentialIds() });
     const second = openStudy({ ...dependencies, nextId: sequentialIds() });
@@ -552,6 +610,7 @@ describe("Study persistence and recovery", () => {
       clock: clock.now,
       permitVerifier: testPermitVerifier,
       knownWordSeed: testSeed,
+      grammarTargetSupported: () => true,
     };
     const first = openStudy({ ...dependencies, nextId: sequentialIds() });
     if (!first.ok) throw new Error(JSON.stringify(first.error));
@@ -636,6 +695,7 @@ describe("Study persistence and recovery", () => {
         nextId: sequentialIds(),
         permitVerifier: testPermitVerifier,
         knownWordSeed: testSeed,
+        grammarTargetSupported: () => true,
       }),
     ).toEqual({
       ok: false,
@@ -653,6 +713,7 @@ describe("Study persistence and recovery", () => {
       nextId: sequentialIds(),
       permitVerifier: testPermitVerifier,
       knownWordSeed: testSeed,
+      grammarTargetSupported: () => true,
     };
     const current = openStudy(dependencies);
     if (!current.ok) throw new Error(current.error.kind);
@@ -712,6 +773,7 @@ describe("Study persistence and recovery", () => {
         nextId: sequentialIds(),
         permitVerifier: testPermitVerifier,
         knownWordSeed: testSeed,
+        grammarTargetSupported: () => true,
       }),
     ).toMatchObject({ ok: false, error: { kind: "migrationFailed" } });
     const inspection = new Database(path, { strict: true });
