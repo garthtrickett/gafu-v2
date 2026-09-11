@@ -55,7 +55,9 @@ advances SRS.
 The application shell coordinates Study and Learning Material through this
 sequence:
 
-1. Ask Study for the due queue and choose its first Card.
+1. Ask Study for the due queue and choose its first Card matching the session
+   mode: the first untaught new Card for learn, the first other due Card for
+   review, or simply the first due Card for a mixed start.
 2. Read one Study-owned knowledge snapshot.
 3. Ask Learning Material to `prepare` the Card using those immutable values.
 4. If the Card's schedule is `new` and it has not been taught, return a

@@ -375,4 +375,92 @@ describe("Phase 2 generated study lifecycle", () => {
     app.study.close();
     app.material.close();
   });
+
+  test("hasTeaching tracks acknowledgement without preparing anything", async () => {
+    const app = harness();
+    const card = app.study.createCard({
+      type: "vocabulary",
+      content: {
+        lemma: "鳥",
+        reading: "とり",
+        partOfSpeech: "noun",
+        meaning: "bird",
+        usageNotes: "",
+      },
+    });
+    if (!card.ok) throw new Error(card.error.kind);
+    // The deterministic teach sentence leans on background particles, mirroring
+    // the main lifecycle test's support-ready set.
+    for (const canonicalForm of [
+      "か",
+      "な",
+      "かな",
+      "で",
+      "も",
+      "だ",
+      "よ",
+      "ね",
+      "〜て",
+      "って",
+      "だけ",
+      "でも",
+      "〜ても・〜でも",
+      "だって / んだって",
+    ]) {
+      const background = app.study.createCard({
+        type: "grammar",
+        content: {
+          canonicalForm,
+          meaning: `background ${canonicalForm}`,
+          formation: canonicalForm,
+          usageNotes: "",
+        },
+      });
+      if (!background.ok || background.value.outcome !== "created")
+        throw new Error(`background ${canonicalForm} setup`);
+      const known = app.study.setCardState({
+        cardId: background.value.card.id,
+        action: "markKnown",
+      });
+      if (!known.ok) throw new Error(`background ${canonicalForm} known`);
+    }
+    const queue = app.study.studyQueue();
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!queue.ok || queue.value.due[0] === undefined || !knowledge.ok)
+      throw new Error("setup");
+    const target = queue.value.due[0].card;
+    expect(app.material.hasTeaching(target.id)).toMatchObject({
+      ok: true,
+      value: false,
+    });
+    const authored = deterministicMaterialResult({
+      mode: "teach",
+      card: target,
+      knowledge: knowledge.value,
+      recentJapanese: [],
+      candidateCount: 3,
+    });
+    if (!authored.ok || authored.value.candidates[0] === undefined)
+      throw new Error("deterministic teach");
+    const stored = await app.material.storeAuthoredTeaching({
+      card: target,
+      knowledge: knowledge.value,
+      value: authored.value.candidates[0],
+    });
+    if (!stored.ok) throw new Error(`authored teach rejected: ${stored.error.kind}`);
+    const taught = await app.material.prepare({
+      card: target,
+      knowledge: knowledge.value,
+    });
+    if (!taught.ok) throw new Error(`teach failed: ${taught.error.kind}`);
+    expect(app.material.acknowledgeTeaching(target.id, taught.value.id)).toMatchObject({
+      ok: true,
+    });
+    expect(app.material.hasTeaching(target.id)).toMatchObject({
+      ok: true,
+      value: true,
+    });
+    app.study.close();
+    app.material.close();
+  });
 });

@@ -248,6 +248,47 @@ const snapshot = (study: Study): Response => {
   });
 };
 
+/**
+ * Serves the first due Card matching the session mode: any due Card for a
+ * mixed session, the first untaught new Card for learn, or the first due
+ * Card that is not an untaught new Card for review. The taught check is a
+ * read; nothing is prepared for a Card the mode skips.
+ */
+const serveFirst = async (
+  study: Study,
+  material: LearningMaterial,
+  wantUntaught: boolean | null,
+): Promise<Response> => {
+  const queue = study.studyQueue();
+  if (!queue.ok) return failureResponse(queue.error);
+  const knowledge = study.knowledgeSnapshot();
+  if (!knowledge.ok) return failureResponse(knowledge.error);
+  let selected: (typeof queue.value.due)[number]["card"] | null = null;
+  for (const item of queue.value.due) {
+    if (wantUntaught !== null) {
+      const taught = material.hasTeaching(item.card.id);
+      if (!taught.ok) return materialResponse(taught);
+      const untaughtNew = item.card.schedulePhase === "new" && !taught.value;
+      if (untaughtNew !== wantUntaught) continue;
+    }
+    selected = item.card;
+    break;
+  }
+  if (selected === null)
+    return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
+  const prepared = await material.prepare({
+    card: selected,
+    knowledge: knowledge.value,
+  });
+  if (!prepared.ok) return materialResponse(prepared);
+  const current = study.studyQueue();
+  if (!current.ok) return failureResponse(current.error);
+  if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
+    return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+  }
+  return Response.json(prepared.value);
+};
+
 const handleApi = async (
   request: Request,
   study: Study,
@@ -261,24 +302,13 @@ const handleApi = async (
     return materialResponse(material.inspectLastRequest());
   }
   if (request.method === "POST" && url.pathname === "/api/study/session") {
-    const queue = study.studyQueue();
-    if (!queue.ok) return failureResponse(queue.error);
-    const first = queue.value.due[0];
-    if (first === undefined)
-      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-    const knowledge = study.knowledgeSnapshot();
-    if (!knowledge.ok) return failureResponse(knowledge.error);
-    const prepared = await material.prepare({
-      card: first.card,
-      knowledge: knowledge.value,
-    });
-    if (!prepared.ok) return materialResponse(prepared);
-    const current = study.studyQueue();
-    if (!current.ok) return failureResponse(current.error);
-    if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
-      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
-    }
-    return Response.json(prepared.value);
+    return serveFirst(study, material, null);
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/learn") {
+    return serveFirst(study, material, true);
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session/review") {
+    return serveFirst(study, material, false);
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/teach") {
     const body = await readJson(request);
