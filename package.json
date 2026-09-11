@@ -19,7 +19,10 @@
     "backup:inspect": "bun run scripts/recover-backup.ts inspect",
     "backup:restore": "bun run scripts/recover-backup.ts restore",
     "health": "bun run scripts/health.ts",
-    "spike:provider": "bun run scripts/phase-0-provider-smoke.ts"
+    "spike:provider": "bun run scripts/phase-0-provider-smoke.ts",
+    "subs:scan": "bun run scripts/scan-subtitles.ts",
+    "subs:context": "bun run scripts/subtitle-context.ts",
+    "cards:add": "bun run scripts/add-cards.ts"
   },
   "dependencies": {
     "@faanau/kuromoji": "0.2.1",

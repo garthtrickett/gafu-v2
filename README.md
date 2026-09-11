@@ -63,6 +63,11 @@ bun run start
 
 For the private Railway deployment, use the parallel-service and persistent
 volume runbook in [`docs/railway-deployment.md`](docs/railway-deployment.md).
+
+Cards can also be prepared by an agent reading the subtitles, instead of through
+the Preparation page. That route, what it delegates to tooling and what it keeps
+for judgement, is written up in
+[`docs/agent-assisted-preparation.md`](docs/agent-assisted-preparation.md).
 The public server refuses to start without its private-access password and
 volume-backed database/Kaishi paths.
 
