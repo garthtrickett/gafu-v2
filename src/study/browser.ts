@@ -295,9 +295,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
    */
   const startStudy = (): void => {
     void run(async () => {
-      model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
-        method: "POST",
-      });
+      try {
+        model.presentation = await requestJson<PreparedMaterial>("/api/study/session", {
+          method: "POST",
+        });
+      } catch (cause) {
+        // New Cards show only what the import stored. Anything else is an
+        // onboarding gap, not something retrying will fix.
+        if (cause instanceof Error && cause.message === "teachingNotPrepared") {
+          throw new Error(
+            "This Card has no teaching yet. Import it with the cards CLI first.",
+          );
+        }
+        throw cause;
+      }
       model.revealed = false;
       return model.presentation.mode === "teach"
         ? "Learn this target before its first recall."

@@ -315,6 +315,7 @@ export const openLearningMaterial = (
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(reserve.value);
+    if (mode === "teach") return err({ kind: "teachingNotPrepared" });
     const recent = recentJapanese(input.card.id);
     if (!recent.ok) return recent;
     const attempts = options.maximumValidationAttempts ?? 3;

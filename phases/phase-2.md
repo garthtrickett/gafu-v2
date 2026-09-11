@@ -155,15 +155,24 @@ concrete lexical near-copy rule, not a claim of semantic similarity. Its
 threshold and signature version are persisted so later changes do not rewrite
 history.
 
-`prepare` first serves an already-validated unshown candidate. If none exists,
-it calls the provider with recent Japanese and variation instructions. It may
-make at most three provider attempts. A successful batch normally leaves two
-validated candidates in reserve. On timeout, rate limit, provider rejection,
-or offline failure, an unshown reserve candidate may be served; invalid output
-does not trigger reuse of a rejected candidate. If no safe reserve remains, the
-workflow returns `temporarilyUnavailable` and the Card stays due.
+`prepare` first serves an already-validated unshown candidate. For `review`,
+if none exists, it calls the provider with recent Japanese and variation
+instructions. It may make at most three provider attempts. A successful batch
+normally leaves two validated candidates in reserve. On timeout, rate limit,
+provider rejection, or offline failure, an unshown reserve candidate may be
+served; invalid output does not trigger reuse of a rejected candidate. If no
+safe reserve remains, the workflow returns `temporarilyUnavailable` and the
+Card stays due.
 
-No validation-bypassing fallback exists. A Card may carry a teaching
+For `teach` there is no provider call at all. First exposure shows only the
+teaching presentation stored when the Card was made, served from the same
+validated reserve. A new Card with nothing stored returns
+`teachingNotPrepared` immediately — a fast, explicit onboarding gap rather
+than a long provider wait that cannot succeed. Teaching is imported with the
+cards CLI, which validates each sentence through the same validator before
+storing it.
+
+No validation-bypassing fallback exists. A Card carries a teaching
 presentation written when it was made, so first exposure shows a sentence
 chosen for it rather than waiting on the provider; it is stored only after
 passing the same validator as generated material, and only for `teach`.
@@ -265,12 +274,13 @@ Learning Material distinguishes at least:
   `offline`, `timeout`, `cancelled`, `refusal`, and `incompleteResponse`;
 - `malformedResponse` and `validationRejected` with safe reason kinds;
 - `tooSimilar` and `noValidCandidate`;
-- `teachingNotAcknowledged`, `presentationNotFound`, and
+- `teachingNotAcknowledged`, `teachingNotPrepared`, `presentationNotFound`, and
   `presentationAlreadyShown`; and
 - migration, read, and write failures.
 
 The browser maps these exhaustively to one action: configure credentials,
-retry, acknowledge teaching, correct an unsupported Card, or try again later.
+retry, acknowledge teaching, import a missing teaching presentation with the
+cards CLI, correct an unsupported Card, or try again later.
 Messages never contain request bodies, generated private text, or credentials.
 
 ## Server and browser flow
@@ -291,7 +301,9 @@ idle -> preparing -> teaching -> preparing -> recall -> revealed -> grading
 Only `grading` invokes Study's `answer`. Leaving or refreshing any earlier state
 does not change SRS. Grade buttons are disabled until reveal, and repeated
 submissions reuse the same permit so Study's existing idempotent rejection
-protects the schedule.
+protects the schedule. A Card with no stored teaching lands in `unavailable`
+with an import instruction instead of holding the session open on the
+provider.
 
 ## Patch plan
 
@@ -434,6 +446,21 @@ The implementation and tests must answer these without caller-side workarounds:
 23. The environment supplies no key during a session with reserve material.
 24. Backup is taken after generation and searched for credential fragments.
 25. The Card is marked known or suspended while material generation is pending.
+26. A new Card with no stored teaching is opened for study.
+
+### Patch 2.8 — Teach is display-only
+
+Study shows first exposure; it never generates it. `prepare` in `teach` mode
+serves only the validated reserve and returns `teachingNotPrepared` when the
+reserve is empty, without calling the provider. The browser maps that failure
+to the `unavailable` state with an instruction to import teaching with the
+cards CLI. Review keeps bounded provider attempts and the outage reserve.
+
+**Gate:** a new Card without stored teaching fails fast with the provider
+never called (pinned by an empty-script provider and a null last request);
+stored teaching still teaches from reserve with no permit; the browser journey
+attaches teaching through the public route and sees teach instantly; the full
+required validation passes.
 
 ## Exit gate
 
