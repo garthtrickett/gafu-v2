@@ -311,7 +311,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       }
       model.revealed = false;
       return model.presentation.mode === "teach"
-        ? "Learn this target before its first recall."
+        ? "Learn this target. It goes back in the queue for review."
         : "Recall the target, then reveal the answer.";
     });
   };
@@ -320,18 +320,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const current = model.presentation;
     if (current === null) return;
     void run(async () => {
-      model.presentation = await requestJson<PreparedMaterial>(
-        "/api/study/session/teach",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            cardId: current.cardId,
-            presentationId: current.id,
-          }),
-        },
-      );
+      await requestJson("/api/study/session/teach", {
+        method: "POST",
+        body: JSON.stringify({
+          cardId: current.cardId,
+          presentationId: current.id,
+        }),
+      });
+      model.presentation = null;
       model.revealed = false;
-      return "Teaching complete. Now recall it in a different sentence.";
+      return "Teaching seen. The Card goes back in the queue for review.";
     });
   };
 
@@ -430,7 +428,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         }
                         ${
                           model.presentation.mode === "teach"
-                            ? html`<button type="button" @click=${finishTeaching} ?disabled=${model.busy}>I've studied this — start recall</button>`
+                            ? html`<button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — back to the queue</button>`
                             : model.revealed
                               ? html`<div class="grades" aria-label="Recall grade">
                                   ${(["again", "hard", "good", "easy"] as const).map(

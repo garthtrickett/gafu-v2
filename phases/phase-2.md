@@ -60,9 +60,11 @@ sequence:
 3. Ask Learning Material to `prepare` the Card using those immutable values.
 4. If the Card's schedule is `new` and it has not been taught, return a
    `teach` presentation without a permit.
-5. After the learner acknowledges the teaching presentation, persist that
-   acknowledgement and prepare a separate `review` presentation.
-6. A review presentation is displayed front-first. Revealing it exposes the
+5. When the learner marks the teaching seen, persist that acknowledgement and
+   end the encounter. The Card goes back in the queue; there is no chained
+   review after first exposure.
+6. A later start serves the taught Card as a `review` presentation, generated
+   live when it is due. A review presentation is displayed front-first. Revealing it exposes the
    answer and grade controls but does not change Study.
 7. The chosen grade and opaque permit are sent to Study. Study verifies and
    consumes the permit in the same transaction as its Review Event and FSRS
@@ -294,9 +296,14 @@ known, suspended, or not-due Card for a review.
 The browser has three explicit states:
 
 ```text
-idle -> preparing -> teaching -> preparing -> recall -> revealed -> grading
-                    \-> unavailable                    \-> unavailable
+idle -> preparing -> teaching -> idle
+                  \-> unavailable
+idle -> preparing -> recall -> revealed -> grading
+                             \-> unavailable
 ```
+
+A new Card travels the first line; its first review travels the second on a
+later start, when the Card is due.
 
 Only `grading` invokes Study's `answer`. Leaving or refreshing any earlier state
 does not change SRS. Grade buttons are disabled until reveal, and repeated
@@ -416,6 +423,20 @@ old accepts are a subset of new accepts, so stored reserves stay valid.
 and run one timed session probe; on a 200 generated result, probe 使役形 and
 可能形 (never suspended) the same way. Vocabulary identity-class suspensions
 are a separate piece and stay suspended.
+
+### Patch 2.9 — No chained review after teaching
+
+Marking teaching seen ends the encounter: the route persists the
+acknowledgement and returns, and the browser drops back to idle. The Card's
+first review is prepared on a later start, when it is due — generated live,
+like every review. Nothing about permits, Review Events, or the scheduler
+changes; they simply happen at the first review instead of inside first
+exposure.
+
+**Gate:** the study journey sees teach, marks it seen, returns to idle, then
+starts again into a live-generated review with the full reveal/grade flow;
+module tests still cover permits, idempotency, and the outage reserve; the
+full required validation passes.
 
 ## Refinement scenarios
 
