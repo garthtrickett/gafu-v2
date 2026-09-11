@@ -45,7 +45,12 @@ const harness = (provider = createDeterministicMaterialProvider()) => {
   directories.push(directory);
   const databasePath = join(directory, "gafu.sqlite");
   const clock = mutableClock("2026-09-08T09:00:00.000Z");
-  const keyCustody = createProviderKeyCustody({ verify: async () => ok(undefined) });
+  // The key is a deployment value: it arrives with the process, not through a
+  // route, so the harness supplies it the way the server environment does.
+  const keyCustody = createProviderKeyCustody(
+    { verify: async () => ok(undefined) },
+    "sk-test",
+  );
   const material = openLearningMaterial({
     databasePath,
     clock: clock.now,
@@ -77,7 +82,6 @@ const harness = (provider = createDeterministicMaterialProvider()) => {
 describe("Phase 2 generated study lifecycle", () => {
   test("teaches, reviews once, varies, and retains an outage reserve", async () => {
     const app = harness();
-    await app.material.replaceProviderKey("sk-test");
     const created = app.study.createCard({
       type: "vocabulary",
       content: {
@@ -242,7 +246,6 @@ describe("Phase 2 generated study lifecycle", () => {
 
   test("supports declared Grammar Cards and never permits invalid output", async () => {
     const app = harness();
-    await app.material.replaceProviderKey("key");
     const grammar = app.study.createCard({
       type: "grammar",
       content: {
@@ -302,7 +305,6 @@ describe("Phase 2 generated study lifecycle", () => {
         err({ kind: "timeout", detail: "provider timed out" }),
       ]),
     );
-    await invalidApp.material.replaceProviderKey("key");
     const card = invalidApp.study.createCard({
       type: "vocabulary",
       content: {

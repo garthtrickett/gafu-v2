@@ -16,11 +16,10 @@ test("configures a key and teaches before the first generated review", async ({
     await earlierStagedGrammar.getByRole("button", { name: "Mark known" }).click();
   }
 
-  await page.getByLabel("OpenAI API key").fill("browser-test-key");
-  await page.getByRole("button", { name: "Verify and use key" }).click();
-  await expect(page.getByRole("status")).toContainText("verified");
+  // The key is a deployment value now, so there is nothing to enter: the
+  // panel reports what the environment supplied.
   await expect(
-    page.getByText("API key configured until server restart."),
+    page.getByText("API key supplied by the server environment."),
   ).toBeVisible();
 
   const vocabulary = page.getByTestId("vocabulary-form");
@@ -97,6 +96,8 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
 
   await page.reload();
-  await expect(page.getByText("No API key configured.")).toHaveCount(0);
+  await expect(
+    page.getByText("API key supplied by the server environment."),
+  ).toBeVisible();
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
 });

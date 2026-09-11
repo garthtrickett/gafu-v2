@@ -253,17 +253,6 @@ const handleApi = async (
   if (request.method === "GET" && url.pathname === "/api/provider") {
     return Response.json(material.providerStatus());
   }
-  if (request.method === "PUT" && url.pathname === "/api/provider/key") {
-    const body = await readJson(request);
-    if (body instanceof Response) return body;
-    if (!isRecord(body) || typeof body["apiKey"] !== "string") {
-      return invalidRequest("apiKey must be a string.");
-    }
-    return materialResponse(await material.replaceProviderKey(body["apiKey"]));
-  }
-  if (request.method === "DELETE" && url.pathname === "/api/provider/key") {
-    return Response.json(material.removeProviderKey());
-  }
   if (request.method === "GET" && url.pathname === "/api/provider/last-request") {
     return materialResponse(material.inspectLastRequest());
   }

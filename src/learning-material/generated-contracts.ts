@@ -139,11 +139,6 @@ export type LearningMaterial = Readonly<{
     presentationId: string,
   ) => Result<void, MaterialFailure>;
   providerStatus: () => ProviderStatus;
-  replaceProviderKey: (
-    key: string,
-    signal?: AbortSignal,
-  ) => Promise<Result<ProviderStatus, MaterialFailure>>;
-  removeProviderKey: () => ProviderStatus;
   inspectLastRequest: () => Result<RedactedProviderRequest, MaterialFailure>;
   permitVerifier: PresentationPermitVerifier;
   close: () => void;
