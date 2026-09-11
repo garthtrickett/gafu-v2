@@ -139,6 +139,20 @@ export type LearningMaterial = Readonly<{
     presentationId: string,
   ) => Result<void, MaterialFailure>;
   providerStatus: () => ProviderStatus;
+  /**
+   * Stores a teaching presentation written when the Card was made, so first
+   * exposure shows the word in a sentence chosen for it rather than waiting on
+   * the provider. It passes the same validator as generated material: authored
+   * is not unvalidated. Review keeps generating, because varying the sentence
+   * is the point of a review.
+   */
+  storeAuthoredTeaching: (
+    input: Readonly<{
+      card: CardSummary;
+      knowledge: StudyKnowledgeSnapshot;
+      value: unknown;
+    }>,
+  ) => Promise<Result<void, MaterialFailure>>;
   inspectLastRequest: () => Result<RedactedProviderRequest, MaterialFailure>;
   permitVerifier: PresentationPermitVerifier;
   close: () => void;

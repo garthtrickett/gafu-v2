@@ -15,6 +15,11 @@ const expectNoHorizontalOverflow = async (page: import("@playwright/test").Page)
     .toBe(true);
 };
 
+// Walks three surfaces in three browsers, importing subtitles on the way, and
+// Firefox is the slow one. It fits Playwright's 30s default unloaded and does
+// not when anything shares the machine; the work is legitimately long.
+test.setTimeout(90_000);
+
 test("Study, Watch, and Prepare stay reachable on the supported critical surface", async ({
   page,
 }) => {

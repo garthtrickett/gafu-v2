@@ -163,7 +163,13 @@ or offline failure, an unshown reserve candidate may be served; invalid output
 does not trigger reuse of a rejected candidate. If no safe reserve remains, the
 workflow returns `temporarilyUnavailable` and the Card stays due.
 
-No authored or validation-bypassing fallback exists.
+No validation-bypassing fallback exists. A Card may carry a teaching
+presentation written when it was made, so first exposure shows a sentence
+chosen for it rather than waiting on the provider; it is stored only after
+passing the same validator as generated material, and only for `teach`.
+Review always generates, because varying the sentence is the point of a
+review. Authored is not unvalidated: nothing reaches a learner that the
+validator would have refused.
 
 ### Provider and credential boundary
 

@@ -385,6 +385,24 @@ export const openLearningMaterial = (
       }
     },
     providerStatus: status,
+    storeAuthoredTeaching: async ({ card, knowledge, value }) => {
+      const validated = await options.validate({
+        card,
+        knowledge,
+        value,
+        mode: "teach",
+      });
+      if (!validated.ok) return validated;
+      const authoredAt = safeNow(options.clock);
+      if (!authoredAt.ok) return authoredAt;
+      const stored = storeCandidate(
+        card.id,
+        "teach",
+        validated.value,
+        authoredAt.value,
+      );
+      return stored.ok ? ok(undefined) : stored;
+    },
     inspectLastRequest: () => {
       if (!options.inspectionEnabled) return err({ kind: "inspectionDisabled" });
       const request = options.provider.inspectLastRequest();
