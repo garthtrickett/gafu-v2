@@ -366,6 +366,30 @@ const handleApi = async (
         : jsonResult(study.deletePlan(planId, "delete"));
     }
   }
+  const teachingMatch = url.pathname.match(/^\/api\/study\/cards\/([^/]+)\/teaching$/u);
+  if (request.method === "PUT" && teachingMatch !== null) {
+    const cardId = teachingMatch[1];
+    if (cardId === undefined) return invalidRequest("Missing Card ID.");
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    const cards = study.listCards();
+    if (!cards.ok) return failureResponse(cards.error);
+    const card = cards.value.find((item) => item.id === cardId);
+    if (card === undefined) {
+      return Response.json(
+        { error: { kind: "cardNotFound", cardId } },
+        { status: 404 },
+      );
+    }
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const stored = await material.storeAuthoredTeaching({
+      card,
+      knowledge: knowledge.value,
+      value: body,
+    });
+    return stored.ok ? new Response(null, { status: 204 }) : materialResponse(stored);
+  }
   if (request.method === "POST" && url.pathname === "/api/study/cards") {
     const body = await readJson(request);
     if (body instanceof Response) return body;

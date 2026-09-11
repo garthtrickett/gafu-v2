@@ -94,6 +94,27 @@ canonical identity, deduplication and scheduling stay with Study. An existing
 Card is reported as `existing`, so re-running is safe and is how to resume a
 partial run.
 
+### 6. What first exposure shows
+
+A proposal entry may carry an `example`: the sentence the Card is first taught
+from. `cards:add` assembles it into a teaching presentation and stores it, so
+first exposure is immediate and costs nothing. Review still generates, because
+varying the sentence is the point of a review.
+
+The sentence is constrained, and the tool reports which constraint it missed:
+
+- The target must appear in a form whose reading identifies the Card. A Card for
+  詰める (つめる) needs 詰める, not 詰めて, whose reading is つめ.
+- Every supporting word must already be known, and in a form whose reading
+  matches its own entry, for the same reason.
+- Every grammar construction outside the target must already be known. A pattern
+  found only inside the target is the target's own morphology and does not
+  count -- 詰める is a plain る-verb whose める tail matches the potential-form
+  patterns.
+
+An entry without an `example`, or whose sentence misses a constraint, simply
+generates its first exposure as before.
+
 ## Choosing what earns a Card
 
 The criterion is what blocks comprehension of *this episode*, which is not the

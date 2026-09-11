@@ -138,6 +138,16 @@ export const createLearningMaterialValidator = (
       .filter(
         (item) =>
           !(target.kind === "grammar" && item.canonicalForm === target.canonicalForm) &&
+          // A vocabulary target's own morphology is not supporting language.
+          // 詰める is a plain る-verb, and the potential-form patterns match its
+          // める tail, so a sentence teaching 詰める would be refused for
+          // leaning on 可能形 it never used. A pattern found only inside the
+          // target says nothing about what the learner must already know.
+          !(
+            target.kind === "vocabulary" &&
+            item.spans.length > 0 &&
+            item.spans.every((span) => insideSpan(span, presentation.targetSpan))
+          ) &&
           !knowledge.grammar.has(item.canonicalForm),
       )
       .map((item) => item.canonicalForm);
