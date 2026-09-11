@@ -54,27 +54,41 @@ const response = (materials: readonly unknown[]) => ({
   ],
 });
 
+const materials = [{}, {}, {}];
+
+const provider = (
+  fetcher: OpenAiMaterialFetch,
+  key = "secret",
+  completionTimeoutMs = 200,
+) =>
+  createOpenAiMaterialProvider({
+    apiKey: () => key,
+    model: "gpt-5.6-luna",
+    promptVersion: "study-v1",
+    timeoutMs: 20,
+    completionTimeoutMs,
+    pollIntervalMs: 1,
+    sleep: async () => {},
+    fetch: fetcher,
+  });
+
 describe("OpenAI Learning Material adapter", () => {
   test("uses Luna structured Responses without storing provider output", async () => {
     let observed: RequestInit | undefined;
-    const provider = createOpenAiMaterialProvider({
-      apiKey: () => "sk-private",
-      model: "gpt-5.6-luna",
-      promptVersion: "study-v1",
-      timeoutMs: 100,
-      fetch: async (_url, init) => {
-        observed = init;
-        return Response.json(response([{}, {}, {}]));
-      },
-    });
-    const result = await provider.generate(request);
+    const material = provider(async (_url, init) => {
+      observed = init;
+      return Response.json(response(materials));
+    }, "sk-private");
+    const result = await material.generate(request);
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.requestId).toBe("resp-1");
     const body = JSON.parse(String(observed?.body)) as Record<string, unknown>;
     expect(body["model"]).toBe("gpt-5.6-luna");
+    expect(body["background"]).toBe(true);
     expect(body["store"]).toBe(false);
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
-    expect(JSON.stringify(provider.inspectLastRequest())).not.toContain("sk-private");
+    expect(JSON.stringify(material.inspectLastRequest())).not.toContain("sk-private");
   });
 
   test.each([
@@ -83,14 +97,9 @@ describe("OpenAI Learning Material adapter", () => {
     [429, "rateLimit"],
     [500, "offline"],
   ] as const)("maps HTTP %i to %s without response content", async (status, kind) => {
-    const provider = createOpenAiMaterialProvider({
-      apiKey: () => "secret",
-      model: "gpt-5.6-luna",
-      promptVersion: "study-v1",
-      timeoutMs: 100,
-      fetch: async () => new Response("private", { status }),
-    });
-    const result = await provider.generate(request);
+    const result = await provider(
+      async () => new Response("private", { status }),
+    ).generate(request);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe(kind);
@@ -100,14 +109,11 @@ describe("OpenAI Learning Material adapter", () => {
   });
 
   test("rejects an oversized provider response before parsing it", async () => {
-    const provider = createOpenAiMaterialProvider({
-      apiKey: () => "secret",
-      model: "gpt-5.6-luna",
-      promptVersion: "study-v1",
-      timeoutMs: 100,
-      fetch: async () => new Response("x".repeat(2 * 1024 * 1024 + 1)),
-    });
-    expect(await provider.generate(request)).toMatchObject({
+    expect(
+      await provider(
+        async () => new Response("x".repeat(2 * 1024 * 1024 + 1)),
+      ).generate(request),
+    ).toMatchObject({
       ok: false,
       error: {
         kind: "malformedResponse",
@@ -123,6 +129,7 @@ describe("OpenAI Learning Material adapter", () => {
         model: "gpt-5.6-luna",
         promptVersion: "study-v1",
         timeoutMs: 10,
+        completionTimeoutMs: 10,
         fetch: fetcher,
       });
     const incomplete = await make(async () =>
@@ -158,5 +165,85 @@ describe("OpenAI Learning Material adapter", () => {
     controller.abort();
     const cancelled = await make(hanging).generate(request, controller.signal);
     expect(cancelled.ok ? "ok" : cancelled.error.kind).toBe("cancelled");
+  });
+
+  test("dispatches in the background and polls until the response is terminal", async () => {
+    const urls: string[] = [];
+    let dispatchBody: Record<string, unknown> = {};
+    let polls = 0;
+    const result = await provider(async (input, init) => {
+      urls.push(String(input));
+      if (init?.method === "POST") {
+        dispatchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Response.json({ id: "resp-1", status: "queued" });
+      }
+      polls += 1;
+      return Response.json(
+        polls < 3 ? { id: "resp-1", status: "in_progress" } : response(materials),
+      );
+    }).generate(request);
+
+    // The long wait happens across short polls, so no single call has to be
+    // sized against the model's thinking time.
+    expect(dispatchBody["background"]).toBe(true);
+    expect(dispatchBody["store"]).toBe(false);
+    expect(polls).toBe(3);
+    expect(urls[0]).toBe("https://api.openai.com/v1/responses");
+    expect(urls[1]).toBe("https://api.openai.com/v1/responses/resp-1");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.requestId).toBe("resp-1");
+  });
+
+  test("reports a dispatch the provider no longer holds as unrecoverable", async () => {
+    const result = await provider(async (_input, init) => {
+      if (init?.method === "POST")
+        return Response.json({ id: "resp-1", status: "queued" });
+      return new Response("", { status: 404 });
+    }).generate(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("offline");
+  });
+
+  test("a generation that outlives its completion budget times out rather than vanishing", async () => {
+    const result = await provider(async (_input, init) =>
+      Response.json({
+        id: "resp-1",
+        status: init?.method === "POST" ? "queued" : "in_progress",
+      }),
+    ).generate(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("timeout");
+  });
+
+  test("maps a provider-cancelled dispatch to cancellation", async () => {
+    const result = await provider(async () =>
+      Response.json({ id: "resp-1", status: "cancelled" }),
+    ).generate(request);
+
+    expect(result.ok ? "ok" : result.error.kind).toBe("cancelled");
+  });
+
+  test("cancels a poll when the caller goes away", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const result = await provider(async (_url, init) => {
+      calls += 1;
+      if (calls === 1) {
+        controller.abort();
+        return Response.json({ id: "resp-1", status: "queued" });
+      }
+      return new Promise((_resolve, reject) => {
+        if (init?.signal?.aborted === true) {
+          reject(new Error("sk-secret"));
+          return;
+        }
+        init?.signal?.addEventListener("abort", () => reject(new Error("sk-secret")));
+      });
+    }).generate(request, controller.signal);
+
+    expect(result.ok ? "ok" : result.error.kind).toBe("cancelled");
+    expect(JSON.stringify(result)).not.toContain("sk-secret");
   });
 });
