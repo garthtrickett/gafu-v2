@@ -438,6 +438,52 @@ starts again into a live-generated review with the full reveal/grade flow;
 module tests still cover permits, idempotency, and the outage reserve; the
 full required validation passes.
 
+### Patch 2.10 — Separate learn-new from review
+
+One Start button mixes first exposures and reviews, so neither flow can be
+framed on its own. The server splits the same due set into two owned queues:
+next untaught admitted (learn) and due taught-or-reviewing (review).
+
+- `POST /api/study/learn` serves the next untaught card's stored teaching, or
+  `teachingNotPrepared` when there is none. It never generates.
+- Review serving is unchanged per card; the browser's Review button asks for
+  the next due card that is not an untaught new card, and reports `nothingDue`
+  when there is none.
+- First-exposure content contract: the authoring agent writes the sentence
+  from the subtitle cue, and the Card meaning carries that subtitle sense, so
+  the first thing seen means what the show meant. The validator cannot prove
+  word sense from Japanese alone (see evidence); anchoring is by author
+  discipline plus the meaning claim, not by a new check.
+
+**Gate:** unit tests for both queue filters; the journey learns one new Card
+through the Learn button and reviews through the Review button; the full
+required validation passes.
+
+### Patch 2.11 — Review batch job
+
+One request per review means a waiting spinner per card. A review session
+dispatches one job for up to 20 due-review cards, then works through the
+completed ones with the existing per-card answer flow.
+
+- `POST /api/study/review-batch` selects up to N due-review cards, records a
+  `pending_review_batch` row (new table, forward-only migration), and returns
+  `202` immediately. No generation happens inbound.
+- `GET /api/study/review-batch/:id` advances the job one card per call —
+  generate, validate, store — and reports
+  `{ status, completed, failed, pending }`. No daemon: like preparation
+  batches, progress is client-pumped and resumable across processes. A step
+  cut short by the edge is retried as a fresh generation; carrying the
+  dispatched provider id across processes (the #49 treatment for material) is
+  a defined follow-up, not v1.
+- The browser shows batch progress, then works through completed
+  presentations with the unchanged recall/reveal/grade flow, one permit per
+  presentation. Failed cards stay due and are listed, not hidden.
+
+**Gate:** unit tests for select/advance/skip/resume; a journey dispatches a
+batch, works it through, and records each grade exactly once; failed cards
+stay due; the full required validation passes. No migration of existing
+tables.
+
 ## Refinement scenarios
 
 The implementation and tests must answer these without caller-side workarounds:
