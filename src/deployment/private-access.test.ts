@@ -24,6 +24,79 @@ describe("private deployment access", () => {
     ).toMatchObject({ ok: false, error: { kind: "invalidConfiguration" } });
   });
 
+  test("a session outlives the process that issued it", async () => {
+    // Sessions lived in a Map, so every deploy signed the owner out. A restart
+    // is a fresh createPrivateAccess with the same configured password.
+    const now = Date.parse("2026-09-09T00:00:00.000Z");
+    const build = (withPassword: string) => {
+      const access = createPrivateAccess({
+        password: withPassword,
+        clock: () => new Date(now),
+        nextToken: () => "a".repeat(43),
+        sessionTtlMs: 60_000,
+      });
+      if (!access.ok) throw new Error(access.error.kind);
+      return access.value;
+    };
+
+    const signIn = await build(password).intercept(formRequest(password));
+    if (signIn.kind !== "respond") throw new Error("expected a response");
+    const cookie = signIn.response.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("__Host-gafu-session=");
+    const carried = cookie.split(";")[0] ?? "";
+
+    const authorized = (access: ReturnType<typeof build>) =>
+      access.intercept(
+        new Request("https://gafu.example/api/provider", {
+          headers: { cookie: carried },
+        }),
+      );
+
+    // The process that issued it, and a restarted one, both accept it.
+    expect(await authorized(build(password))).toEqual({ kind: "continue" });
+
+    // Rotating the password invalidates every outstanding session, which the
+    // Map did not do.
+    const rotated = await authorized(build("a-different-long-password"));
+    expect(rotated.kind).toBe("respond");
+    if (rotated.kind === "respond") expect(rotated.response.status).toBe(401);
+  });
+
+  test("a tampered or expired session cookie is refused", async () => {
+    let now = Date.parse("2026-09-09T00:00:00.000Z");
+    const access = createPrivateAccess({
+      password,
+      clock: () => new Date(now),
+      nextToken: () => "a".repeat(43),
+      sessionTtlMs: 60_000,
+    });
+    if (!access.ok) throw new Error(access.error.kind);
+    const signIn = await access.value.intercept(formRequest(password));
+    if (signIn.kind !== "respond") throw new Error("expected a response");
+    const carried =
+      (signIn.response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+
+    const probe = async (cookie: string) =>
+      access.value.intercept(
+        new Request("https://gafu.example/api/provider", { headers: { cookie } }),
+      );
+
+    // Re-signing is the only way to change the expiry the cookie carries.
+    const [name, value] = carried.split("=") as [string, string];
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    const [token, expiry, signature] = decoded.split(".") as [string, string, string];
+    const extended = Buffer.from(
+      `${token}.${Number(expiry) + 86_400_000}.${signature}`,
+    ).toString("base64url");
+    const tampered = await probe(`${name}=${extended}`);
+    expect(tampered.kind).toBe("respond");
+
+    expect(await probe(carried)).toEqual({ kind: "continue" });
+    now += 120_000;
+    const stale = await probe(carried);
+    expect(stale.kind).toBe("respond");
+  });
+
   test("protects documents and APIs, then issues one secure private session", async () => {
     let now = Date.parse("2026-09-09T00:00:00.000Z");
     const access = createPrivateAccess({
