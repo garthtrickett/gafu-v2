@@ -26,7 +26,7 @@ import type {
 } from "./preparation/batching-contracts.ts";
 import {
   canonicalVocabulary,
-  isContentToken,
+  earnsCandidate,
 } from "./preparation/evidence-expectations.ts";
 import { createInMemoryCheckpointStore } from "./preparation/in-memory-checkpoint-store.ts";
 import { err, ok, type Result } from "./result.ts";
@@ -178,23 +178,21 @@ const diagnosticProvider = (
       const response: ProviderBatchResponse = {
         providerRequestId: `diagnostic:${requestKey}`,
         candidates: batch.cues.flatMap((cue) => [
-          ...cue.tokens
-            .filter((token) => isContentToken(token.broadPartOfSpeech))
-            .map((token) => ({
-              kind: "vocabulary" as const,
-              canonicalKey: canonicalVocabulary(token.lemma, token.reading),
-              cueId: cue.cueId,
-              surface: token.surface,
-              span: token.span,
-              meaning:
-                candidates.get(cue.cueId)?.surface === token.surface
-                  ? (candidates.get(cue.cueId)?.meaning ?? "diagnostic meaning")
-                  : "diagnostic meaning",
-              senseId: `diagnostic:${canonicalVocabulary(token.lemma, token.reading)}`,
-              impact: "helpful" as const,
-              confidence: 1,
-              ambiguity: [],
-            })),
+          ...cue.tokens.filter(earnsCandidate).map((token) => ({
+            kind: "vocabulary" as const,
+            canonicalKey: canonicalVocabulary(token.lemma, token.reading),
+            cueId: cue.cueId,
+            surface: token.surface,
+            span: token.span,
+            meaning:
+              candidates.get(cue.cueId)?.surface === token.surface
+                ? (candidates.get(cue.cueId)?.meaning ?? "diagnostic meaning")
+                : "diagnostic meaning",
+            senseId: `diagnostic:${canonicalVocabulary(token.lemma, token.reading)}`,
+            impact: "helpful" as const,
+            confidence: 1,
+            ambiguity: [],
+          })),
           ...cue.grammarEvidence.flatMap((grammar) =>
             grammar.spans.map((span) => ({
               kind: "grammar" as const,

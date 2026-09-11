@@ -613,11 +613,12 @@ const preparationProvider = fakeAi
   : createOpenAiBatchProvider({
       apiKey: keyCustody.readForServerAdapter,
       model: openAiModel,
-      // v3 supplies canonicalKey and pre-filters tokens. The bump is required,
-      // not cosmetic: batches completed under v2 were never checked for
-      // canonicalKey, because that was only compared once a run was whole, so
-      // leaving them completed would let them bypass the per-batch check.
-      promptVersion: "preparation-v3",
+      // Bumped whenever what the provider is asked for changes, because a
+      // batch completed under an older ask is not re-checked. v3 supplied
+      // canonicalKey and pre-filtered tokens; v4 stopped asking for
+      // punctuation, so v3 batches hold candidates v4 does not expect and
+      // would read as invented evidence.
+      promptVersion: "preparation-v4",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,

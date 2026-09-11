@@ -1,7 +1,7 @@
 import { ok } from "../result.ts";
 import type { BatchProvider, CandidateEvidence } from "./batching-contracts.ts";
+import { earnsCandidate } from "./evidence-expectations.ts";
 
-const contentParts = new Set(["noun", "verb", "adjective", "adverb", "interjection"]);
 const fixtureMeanings: Readonly<Record<string, string>> = {
   猫: "cat",
   犬: "domestic dog",
@@ -40,21 +40,18 @@ export const createDeterministicPreparationProvider = (): BatchProvider & {
         return ok(existing);
       }
       const candidates: CandidateEvidence[] = batch.cues.flatMap((cue) => [
-        ...cue.tokens
-          .filter((token) => contentParts.has(token.broadPartOfSpeech))
-          .map((token) => ({
-            kind: "vocabulary" as const,
-            canonicalKey: `${token.lemma}:${token.reading ?? ""}`,
-            cueId: cue.cueId,
-            surface: token.surface,
-            span: token.span,
-            meaning:
-              fixtureMeanings[token.lemma] ?? `fixture meaning for ${token.lemma}`,
-            senseId: `fixture:${token.lemma}:${token.reading ?? ""}:1`,
-            impact: "helpful" as const,
-            confidence: 0.95,
-            ambiguity: [],
-          })),
+        ...cue.tokens.filter(earnsCandidate).map((token) => ({
+          kind: "vocabulary" as const,
+          canonicalKey: `${token.lemma}:${token.reading ?? ""}`,
+          cueId: cue.cueId,
+          surface: token.surface,
+          span: token.span,
+          meaning: fixtureMeanings[token.lemma] ?? `fixture meaning for ${token.lemma}`,
+          senseId: `fixture:${token.lemma}:${token.reading ?? ""}:1`,
+          impact: "helpful" as const,
+          confidence: 0.95,
+          ambiguity: [],
+        })),
         ...cue.grammarEvidence.flatMap((grammar) =>
           grammar.spans.map((span) => ({
             kind: "grammar" as const,
