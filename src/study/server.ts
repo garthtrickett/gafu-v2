@@ -50,10 +50,12 @@ import type {
   AnswerGrade,
   CardContent,
   CardStateCommand,
+  CardSummary,
   CreateCard,
   PreferenceChange,
   Study,
   StudyFailure,
+  KnowledgeSnapshot as StudyKnowledgeSnapshot,
   StudyQueue,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
@@ -300,10 +302,20 @@ const serveFirst = async (
   }
   if (selected === null)
     return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-  const prepared = await material.prepare({
-    card: selected,
-    knowledge: knowledge.value,
-  });
+  return finishServe(study, material, knowledge.value, selected);
+};
+
+/**
+ * Prepares one Card and re-checks it is still due before serving. Shared by
+ * mode serving and batch work-through so both hand out the same guarantees.
+ */
+const finishServe = async (
+  study: Study,
+  material: LearningMaterial,
+  knowledge: StudyKnowledgeSnapshot,
+  card: CardSummary,
+): Promise<Response> => {
+  const prepared = await material.prepare({ card, knowledge });
   if (!prepared.ok) return materialResponse(prepared);
   const current = study.studyQueue();
   if (!current.ok) return failureResponse(current.error);
@@ -374,6 +386,28 @@ const handleApi = async (
       return invalidRequest("Missing review batch ID.");
     }
     return materialResponse(await material.advanceReviewBatch(batchId));
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session/prepare") {
+    // Serves one named Card for batch work-through. Unlike the mode routes
+    // it takes no queue position: the Card must be due right now.
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      typeof body["cardId"] !== "string" ||
+      body["cardId"] === ""
+    ) {
+      return invalidRequest("Card ID is invalid.");
+    }
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const found = queue.value.due.find((item) => item.card.id === body["cardId"]);
+    if (found === undefined) {
+      return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+    }
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    return finishServe(study, material, knowledge.value, found.card);
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/teach") {
     const body = await readJson(request);

@@ -482,7 +482,11 @@ completed ones with the existing per-card answer flow.
   a defined follow-up, not v1.
 - The browser shows batch progress, then works through completed
   presentations with the unchanged recall/answer/grade flow, one permit per
-  presentation. Failed cards stay due and are listed, not hidden.
+  presentation. After each grade it serves the next batched Card on its own
+  through a per-card prepare route (due check included), skipping anything
+  already answered elsewhere; failed batch Cards are never attempted there.
+  When none remains the batch closes. Failed cards stay due and listed, not
+  hidden.
 
 **Gate:** unit tests for select/advance/skip/resume; a journey dispatches a
 batch, works it through, and records each grade exactly once; failed cards
