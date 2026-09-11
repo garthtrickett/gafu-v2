@@ -1,0 +1,268 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mutableClock, sequentialIds, testSeed } from "../../tests/support/study.ts";
+import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
+import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
+import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
+import { err, ok } from "../result.ts";
+import type { CardSummary } from "../study/contracts.ts";
+import { openStudy } from "../study/study.ts";
+import { createProviderKeyCustody } from "../topology/provider-key-custody.ts";
+import { declaredGrammarDetector } from "./declared-grammar.ts";
+import type { MaterialProvider } from "./generated-contracts.ts";
+import { createGeneratedMaterialValidator } from "./generated-validator.ts";
+import { openLearningMaterial } from "./learning-material.ts";
+import {
+  createDeterministicMaterialProvider,
+  createScriptedMaterialProvider,
+  deterministicMaterialResult,
+} from "./scripted-provider.ts";
+
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true });
+});
+
+const backgroundForms = [
+  "か",
+  "な",
+  "かな",
+  "で",
+  "も",
+  "だ",
+  "よ",
+  "ね",
+  "〜て",
+  "って",
+  "だけ",
+  "でも",
+  "〜ても・〜でも",
+  "だって / んだって",
+];
+
+const harness = (provider: MaterialProvider) => {
+  const directory = mkdtempSync(join(tmpdir(), "gafu-batch-"));
+  directories.push(directory);
+  const databasePath = join(directory, "gafu.sqlite");
+  const clock = mutableClock("2026-09-08T09:00:00.000Z");
+  const transparentPartOfSpeech = new Set<BroadPartOfSpeech>([
+    "particle",
+    "auxiliary",
+    "copula",
+    "symbol",
+  ]);
+  const material = openLearningMaterial({
+    databasePath,
+    clock: clock.now,
+    nextId: sequentialIds(),
+    nextToken: sequentialIds(),
+    provider,
+    keyCustody: createProviderKeyCustody(
+      { verify: async () => ok(undefined) },
+      "sk-test",
+    ),
+    validate: createGeneratedMaterialValidator({
+      analyzer: createKuromojiAnalyzer(() =>
+        loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
+      ),
+      grammar: declaredGrammarDetector,
+      senses: { resolve: () => [] },
+      policy: { transparentPartOfSpeech },
+    }),
+    inspectionEnabled: false,
+  });
+  if (!material.ok) throw new Error(material.error.kind);
+  const study = openStudy({
+    databasePath,
+    clock: clock.now,
+    nextId: sequentialIds(),
+    permitVerifier: material.value.permitVerifier,
+    knownWordSeed: testSeed,
+    grammarTargetSupported: () => true,
+  });
+  if (!study.ok) throw new Error(study.error.kind);
+  return { material: material.value, study: study.value };
+};
+
+const createWord = (
+  study: ReturnType<typeof harness>["study"],
+  lemma: string,
+  reading: string,
+  meaning: string,
+) => {
+  const created = study.createCard({
+    type: "vocabulary",
+    content: { lemma, reading, partOfSpeech: "noun", meaning, usageNotes: "" },
+  });
+  if (!created.ok || created.value.outcome !== "created") throw new Error("create");
+  return created.value.card;
+};
+
+const markBackgroundKnown = (study: ReturnType<typeof harness>["study"]) => {
+  for (const canonicalForm of backgroundForms) {
+    const background = study.createCard({
+      type: "grammar",
+      content: {
+        canonicalForm,
+        meaning: `background ${canonicalForm}`,
+        formation: canonicalForm,
+        usageNotes: "",
+      },
+    });
+    if (!background.ok || background.value.outcome !== "created")
+      throw new Error("background setup");
+    const known = study.setCardState({
+      cardId: background.value.card.id,
+      action: "markKnown",
+    });
+    if (!known.ok) throw new Error("background known");
+  }
+};
+
+const teachCard = async (
+  app: ReturnType<typeof harness>,
+  card: CardSummary,
+): Promise<void> => {
+  const knowledge = app.study.knowledgeSnapshot();
+  if (!knowledge.ok) throw new Error(knowledge.error.kind);
+  const authored = deterministicMaterialResult({
+    mode: "teach",
+    card,
+    knowledge: knowledge.value,
+    recentJapanese: [],
+    candidateCount: 3,
+  });
+  if (!authored.ok || authored.value.candidates[0] === undefined)
+    throw new Error("deterministic teach");
+  const stored = await app.material.storeAuthoredTeaching({
+    card,
+    knowledge: knowledge.value,
+    value: authored.value.candidates[0],
+  });
+  if (!stored.ok) throw new Error(`authored rejected: ${stored.error.kind}`);
+  const taught = await app.material.prepare({ card, knowledge: knowledge.value });
+  if (!taught.ok) throw new Error(`teach failed: ${taught.error.kind}`);
+  const acknowledged = app.material.acknowledgeTeaching(card.id, taught.value.id);
+  if (!acknowledged.ok) throw new Error("ack failed");
+};
+
+describe("review batch job", () => {
+  test("advances one card per call and serves banked reviews without new calls", async () => {
+    let calls = 0;
+    const inner = createDeterministicMaterialProvider();
+    const provider: MaterialProvider = {
+      ...inner,
+      generate: (async (request, signal) => {
+        calls += 1;
+        return inner.generate(request, signal);
+      }) as MaterialProvider["generate"],
+    };
+    const app = harness(provider);
+    const createdFirst = createWord(app.study, "鳥", "とり", "bird");
+    const createdSecond = createWord(app.study, "猫", "ねこ", "cat");
+    markBackgroundKnown(app.study);
+    // Admission is what gives a Card its schedule phase; teach only applies
+    // to admitted new Cards, so work with the queue Cards from here on.
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const dueCard = (id: string) => {
+      const found = admitted.value.due.find((item) => item.card.id === id);
+      if (found === undefined) throw new Error(`card not due: ${id}`);
+      return found.card;
+    };
+    const first = dueCard(createdFirst.id);
+    const second = dueCard(createdSecond.id);
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, first);
+    await teachCard(app, second);
+
+    const begun = app.material.beginReviewBatch([
+      { card: first, knowledge: knowledge.value },
+      { card: second, knowledge: knowledge.value },
+    ]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+
+    const one = await app.material.advanceReviewBatch(begun.value);
+    expect(one).toMatchObject({ ok: true, value: { done: false, pending: 1 } });
+    const two = await app.material.advanceReviewBatch(begun.value);
+    expect(two).toMatchObject({
+      ok: true,
+      value: { done: true, pending: 0, completed: [first.id, second.id], failed: [] },
+    });
+    // A third advance reports the finished batch instead of working.
+    const three = await app.material.advanceReviewBatch(begun.value);
+    expect(three).toMatchObject({ ok: true, value: { done: true } });
+
+    // Work-through serves from the banked reserves with no new calls.
+    const banked = calls;
+    for (const card of [first, second]) {
+      const prepared = await app.material.prepare({ card, knowledge: knowledge.value });
+      expect(prepared).toMatchObject({ ok: true, value: { mode: "review" } });
+    }
+    expect(calls).toBe(banked);
+    app.study.close();
+    app.material.close();
+  });
+
+  test("a failing card is recorded and stays out of the way", async () => {
+    const app = harness(
+      createScriptedMaterialProvider([
+        (request) =>
+          request.card.id === ("bad-card" as CardSummary["id"])
+            ? err({ kind: "timeout", detail: "provider timed out" })
+            : deterministicMaterialResult(request),
+      ]),
+    );
+    const createdFirst = createWord(app.study, "鳥", "とり", "bird");
+    markBackgroundKnown(app.study);
+    // Admission is what gives a Card its schedule phase; teach only applies
+    // to admitted new Cards, so work with the queue Card from here on.
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const dueCard = (id: string) => {
+      const found = admitted.value.due.find((item) => item.card.id === id);
+      if (found === undefined) throw new Error(`card not due: ${id}`);
+      return found.card;
+    };
+    const first = dueCard(createdFirst.id);
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, first);
+
+    const bad = { ...first, id: "bad-card" as CardSummary["id"] };
+    const begun = app.material.beginReviewBatch([
+      { card: first, knowledge: knowledge.value },
+      { card: bad, knowledge: knowledge.value },
+    ]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    await app.material.advanceReviewBatch(begun.value);
+    const done = await app.material.advanceReviewBatch(begun.value);
+    expect(done).toMatchObject({
+      ok: true,
+      value: {
+        done: true,
+        pending: 0,
+        completed: [first.id],
+        failed: [{ kind: "timeout" }],
+      },
+    });
+    if (done.ok)
+      expect(done.value.failed[0]?.cardId).toBe("bad-card" as CardSummary["id"]);
+    app.study.close();
+    app.material.close();
+  });
+
+  test("an unknown batch id is not found", async () => {
+    const app = harness(createDeterministicMaterialProvider());
+    const missing = await app.material.advanceReviewBatch("no-such-batch");
+    expect(missing).toMatchObject({
+      ok: false,
+      error: { kind: "reviewBatchNotFound" },
+    });
+    app.study.close();
+    app.material.close();
+  });
+});

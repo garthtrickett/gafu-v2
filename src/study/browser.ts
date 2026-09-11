@@ -2,6 +2,7 @@ import { html, render, type TemplateResult } from "lit-html";
 import type {
   PreparedMaterial,
   ProviderStatus,
+  ReviewBatchProgress,
 } from "../learning-material/generated-contracts.ts";
 import { mutationHeaders } from "../local-api.ts";
 import type {
@@ -29,6 +30,14 @@ type BrowserModel = {
   presentation: PreparedMaterial | null;
   revealed: boolean;
   busy: boolean;
+  batch: {
+    id: string;
+    total: number;
+    completed: number;
+    failed: number;
+    pending: number;
+    done: boolean;
+  } | null;
   message: string;
   messageKind: "neutral" | "success" | "error";
   search: string;
@@ -146,6 +155,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     presentation: null,
     revealed: false,
     busy: true,
+    batch: null,
     message: "Loading your Card bank…",
     messageKind: "neutral",
     search: "",
@@ -320,6 +330,66 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const startReview = (): void => startSession("/api/study/session/review");
 
+  const pollReviewBatch = (batchId: string): void => {
+    // Each status poll advances the batch one Card, so polling is the pump:
+    // no daemon, resumable across processes, every call bounded by one
+    // generation. Failures are informational here; the batch keeps whatever
+    // it already banked and the next poll retries.
+    const poller = window.setInterval(() => {
+      if (model.batch?.id !== batchId) {
+        window.clearInterval(poller);
+        return;
+      }
+      void requestJson<ReviewBatchProgress>(
+        `/api/study/review-batch/${encodeURIComponent(batchId)}`,
+        { method: "GET" },
+      )
+        .then((progress) => {
+          if (model.batch?.id !== batchId) return;
+          model.batch = {
+            id: batchId,
+            total:
+              progress.completed.length + progress.failed.length + progress.pending,
+            completed: progress.completed.length,
+            failed: progress.failed.length,
+            pending: progress.pending,
+            done: progress.done,
+          };
+          if (progress.done) {
+            window.clearInterval(poller);
+            model.message =
+              progress.failed.length === 0
+                ? `Batch ready: ${progress.completed.length} to review.`
+                : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
+            model.messageKind = "success";
+          }
+          draw();
+        })
+        .catch(() => {});
+    }, 3_000);
+  };
+
+  const startReviewBatch = (): void => {
+    if (model.batch !== null && !model.batch.done) return;
+    void run(async () => {
+      const dispatched = await requestJson<{ batchId: string; total: number }>(
+        "/api/study/review-batch",
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      model.batch = {
+        id: dispatched.batchId,
+        total: dispatched.total,
+        completed: 0,
+        failed: 0,
+        pending: dispatched.total,
+        done: false,
+      };
+      draw();
+      pollReviewBatch(dispatched.batchId);
+      return `Review batch started for ${dispatched.total} Cards.`;
+    });
+  };
+
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
@@ -411,10 +481,24 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           <button type="button" @click=${startReview} ?disabled=${model.busy}>
                             Review
                           </button>
+                          <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
+                            Review batch
+                          </button>
                         </div>`
                       : ""
                   }
                 </div>
+                ${
+                  model.batch !== null
+                    ? html`<p data-testid="batch-progress">
+                        ${
+                          model.batch.done
+                            ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Press Review to work through.`
+                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}…`
+                        }
+                      </p>`
+                    : ""
+                }
                 ${
                   model.presentation === null
                     ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
