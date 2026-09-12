@@ -61,6 +61,7 @@ import type {
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
 import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.ts";
+import { countSessionModes, wantsTeaching } from "./session-split.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -237,7 +238,7 @@ const readJson = async (request: Request): Promise<unknown | Response> => {
       );
 };
 
-const snapshot = (study: Study): Response => {
+const snapshot = (study: Study, material: LearningMaterial): Response => {
   const cards = study.listCards();
   if (!cards.ok) return failureResponse(cards.error);
   const preferences = study.preferences();
@@ -246,11 +247,21 @@ const snapshot = (study: Study): Response => {
   if (!knowledge.ok) return failureResponse(knowledge.error);
   const status = study.status();
   if (!status.ok) return failureResponse(status.error);
+  // The due tile alone cannot show that Seen it did anything: teaching moves
+  // a Card between session modes, not between states. Count the modes from
+  // the listing already in hand, at the instant the status was read.
+  const session = countSessionModes(
+    cards.value,
+    material.hasTeaching,
+    status.value.observedAt,
+  );
+  if (!session.ok) return materialResponse(session);
   return Response.json({
     cards: cards.value,
     preferences: preferences.value,
     knowledge: knowledge.value,
     status: status.value,
+    session: session.value,
   });
 };
 
@@ -271,7 +282,7 @@ const splitDue = (
   for (const item of due) {
     const taught = material.hasTeaching(item.card.id);
     if (!taught.ok) return taught;
-    (item.card.schedulePhase === "new" && !taught.value ? untaught : review).push(item);
+    (wantsTeaching(item.card, taught.value) ? untaught : review).push(item);
   }
   return ok({ untaught, review });
 };
@@ -479,7 +490,7 @@ const handleApi = async (
     );
   }
   if (request.method === "GET" && url.pathname === "/api/study") {
-    return snapshot(study);
+    return snapshot(study, material);
   }
   if (request.method === "GET" && url.pathname === "/api/study/plans") {
     return jsonResult(study.listPlans());
