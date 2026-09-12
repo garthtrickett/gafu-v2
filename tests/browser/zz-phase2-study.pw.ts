@@ -147,6 +147,40 @@ test("configures a key and teaches before the first generated review", async ({
     });
     const toLearn = await tile("learn");
     const toReview = await tile("review");
+    if (round === 0) {
+      // The authored sentence is spoken too: the clip is filled in on first
+      // serve, the Listen button appears, and the clip itself is real audio.
+      const listen = review.getByTestId("listen");
+      await expect(listen).toBeVisible();
+      const audioUrl = (await listen.getAttribute("data-audio-url")) ?? "";
+      expect(audioUrl).toMatch(/^\/api\/study\/presentations\/.+\/audio$/u);
+      const clip = await page.request.get(audioUrl);
+      expect(clip.status()).toBe(200);
+      expect(clip.headers()["content-type"]).toBe("audio/wav");
+      expect((await clip.body()).byteLength).toBeGreaterThan(44);
+      // Highlighting a word in the sentence opens Jisho for it. The selection
+      // is made the way a drag ends: a range over the target's kanji with the
+      // furigana excluded, then mouseup on the document.
+      await page.evaluate(() => {
+        const target = document.querySelector("[data-japanese-sentence] .target");
+        if (target === null) throw new Error("no target span");
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      });
+      const lookup = page.getByTestId("jisho-lookup");
+      await expect(lookup).toBeVisible();
+      await expect(lookup).toContainText("deterministic sense of");
+      await expect(lookup.getByRole("link", { name: /jisho\.org/u })).toHaveAttribute(
+        "href",
+        /^https:\/\/jisho\.org\/search\//u,
+      );
+      await page.keyboard.press("Escape");
+      await expect(lookup).toHaveCount(0);
+    }
     const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
     learned.push(taught.includes("cat") ? "cat" : "bird");
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
@@ -198,6 +232,8 @@ test("configures a key and teaches before the first generated review", async ({
     // Nothing to recall from, and the target word stands out.
     await expect(review.getByTestId("material-answer")).toHaveCount(0);
     await expect(review.locator(".japanese .target").first()).toBeVisible();
+    // Generated reviews were spoken when they were banked.
+    await expect(review.getByTestId("listen")).toBeVisible();
     await review.getByRole("button", { name: "Explanation" }).click();
     const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
     worked.push(shown.includes("cat") ? "cat" : "bird");
