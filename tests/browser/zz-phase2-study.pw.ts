@@ -243,10 +243,17 @@ test("configures a key and teaches before the first generated review", async ({
     page.locator(".bank-card", { hasText: "no teaching yet" }).first(),
   ).toBeVisible();
 
+  // The offline shell: once the worker controls the page, a reload passes
+  // through it and the signed-in page and its assets are kept.
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await page.reload();
+  await expect(page.getByTestId("tile-learn")).toBeVisible();
+  await expect(page.locator(".bank-card", { hasText: "鳥" })).toBeVisible();
+
   // The review session dispatches one batch through the UI and pumps it to
   // done; work-through then serves from banked reserves on its own. A ready
   // batch is the review session: the first Card is served without another
-  // press, and the second arrives chained after the grade. The first serve is
+  // press, and the second is already in hand after the grade. The serve is
   // held, with the hold armed before dispatch, so the waiting state can be
   // seen and named.
   let releaseFirst = (): void => {};
@@ -265,21 +272,10 @@ test("configures a key and teaches before the first generated review", async ({
   // Work through in whatever order the session arrived. A review shows the
   // scene and the sentence with the target coloured; the explanation opens
   // on request, and only then is the Card marked correct or incorrect. The
-  // grade goes to the outbox and the next Card shows at once; when none
-  // remains the batch closes. The first grade is held to prove the second
-  // Card is on screen before the server has recorded it.
-  let releaseAnswer = (): void => {};
-  const answerGate = new Promise<void>((resolve) => {
-    releaseAnswer = resolve;
-  });
-  let answerHeld = false;
-  await page.route("**/api/study/session/answer", async (route) => {
-    if (!answerHeld) {
-      answerHeld = true;
-      await answerGate;
-    }
-    await route.continue();
-  });
+  // grade goes to the outbox and the next Card shows at once. The first grade
+  // is given with the network gone: it waits in the outbox, the page is
+  // reloaded from the worker's cache, the session resumes from this device,
+  // and the grade is sent when the network returns.
   const worked: string[] = [];
   const reviewOne = async (grade: "Correct" | "Incorrect"): Promise<void> => {
     await expect(review.getByText("review", { exact: true })).toBeVisible({
@@ -300,13 +296,29 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(progress.locator(".pending-elapsed")).toHaveText(/^\d+s$/u);
   releaseFirst();
   await expect(progress).toHaveCount(0);
+  // The next clip is fetched ahead while online, so it plays after the reload.
+  await page.context().setOffline(true);
+  await expect(page.getByTestId("offline")).toBeVisible();
   await reviewOne("Correct");
-  // The second review is already showing and the grade is queued behind it.
+  // The second review is already showing and the grade waits in the outbox.
   await expect(page.getByRole("status")).toContainText("Next Card");
   await expect(review.getByText("review", { exact: true })).toBeVisible();
   await expect(review.getByTestId("material-answer")).toHaveCount(0);
-  await expect(page.getByTestId("syncing")).toContainText("Syncing 1");
-  releaseAnswer();
+  await expect(page.getByTestId("offline")).toContainText("1 update will sync");
+  const secondSentence = (await review.locator(".japanese").textContent()) ?? "";
+
+  // Reload with no network: the worker serves the page, the device supplies
+  // the bank, the session, and the queued grade.
+  await page.reload();
+  await expect(review.getByText("review", { exact: true })).toBeVisible();
+  expect((await review.locator(".japanese").textContent()) ?? "").toBe(secondSentence);
+  await expect(page.getByRole("status")).toContainText("Offline");
+  await expect(page.getByTestId("offline")).toContainText("1 update will sync");
+  await expect(page.locator(".bank-card", { hasText: "鳥" })).toBeVisible();
+
+  // The network returns: the grade goes up on its own.
+  await page.context().setOffline(false);
+  await expect(page.getByTestId("offline")).toHaveCount(0);
   await expect(page.getByTestId("syncing")).toHaveCount(0);
   await reviewOne("Incorrect");
   await expect(page.getByRole("status")).toContainText("Batch complete.");

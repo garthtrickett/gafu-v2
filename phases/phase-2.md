@@ -865,6 +865,38 @@ first acknowledgement and the first grade and sees the next Card on screen
 with "Syncing 1" before either is released; the full required validation
 passes.
 
+### Patch 2.26 — The device remembers
+
+Patch 2.25 made clicks instant while the tab lived; a reload or a lost
+connection still lost the session and its queued writes. Now the device
+keeps them, and a session already downloaded works with no network.
+
+- The outbox is plain data in IndexedDB until each write is sent; a new page
+  restores and sends what the old one left. When the browser reports itself
+  offline the outbox stalls at once instead of retrying, and resumes on the
+  `online` event or a half-minute check. A refused write is still recorded,
+  never resent.
+- The session in progress and the last bank snapshot are saved too. A load
+  paints from the saved bank at once, resumes the saved session at its Card,
+  restores the outbox, then asks the server for the latest; a load with no
+  network says so and keeps what is here.
+- A service worker keeps the signed-in page, its hashed assets, the analyzer
+  dictionary, and every spoken clip fetched. Navigation prefers the network
+  so a deploy shows up; everything else immutable is cache-first. API calls
+  are never cached: the server stays authoritative.
+- A grade's answer updates the bank Card in place; the bank is no longer
+  refetched when the outbox drains, only the tile counts.
+- The outbox delivers at least once, so Study answers a replay — the same
+  grade for the same Card on a permit already spent — as the first time did
+  and records nothing; a different grade on a spent permit is still refused.
+  Study's own permit lifetime, formerly a separate ten minutes, is the shared
+  twelve hours.
+
+**Gate:** outbox tests for stall-and-resume and for restoring a queue from
+the store; the journey grades with the network gone, reloads from the worker
+with the second Card and the queued grade intact, and sees the grade sent
+when the network returns; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

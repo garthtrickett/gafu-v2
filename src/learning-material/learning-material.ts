@@ -9,6 +9,7 @@ import type {
   KnowledgeSnapshot as StudyKnowledgeSnapshot,
   VerifiedPresentationPermit,
 } from "../study/contracts.ts";
+import { PRESENTATION_PERMIT_LIFETIME_MS } from "../study/contracts.ts";
 import type { ProviderKeyCustody } from "../topology/provider-key-custody.ts";
 import type {
   GeneratedMaterial,
@@ -26,12 +27,8 @@ import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
 export const MATERIAL_SCHEMA_VERSION = 6;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
-/**
- * A session is handed to the browser whole, so a permit must outlive the
- * time a learner takes to reach its Card: hours, not minutes. It stays
- * single-use (Review Events hold the permit id uniquely) and target-bound.
- */
-const PRESENTATION_PERMIT_TTL_MS = 12 * 60 * 60 * 1_000;
+// One lifetime, owned by Study's contract, enforced here and there.
+const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
 const MAXIMUM_PENDING_PERMITS = 1_024;
 
 type MaterialRow = Readonly<{

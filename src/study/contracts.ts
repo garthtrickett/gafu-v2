@@ -127,6 +127,14 @@ export type StudyStatus = Readonly<{
 
 export type PresentationPermit = Readonly<{ token: string }>;
 
+/**
+ * How long a presentation permit stays answerable. A session is handed to
+ * the browser whole and may be worked through hours later, or after a
+ * reload; the permit stays single-use and target-bound throughout. Study
+ * and Learning Material both enforce this one value.
+ */
+export const PRESENTATION_PERMIT_LIFETIME_MS = 12 * 60 * 60 * 1_000;
+
 export type VerifiedPresentationPermit = Readonly<{
   id: string;
   cardId: CardId;
