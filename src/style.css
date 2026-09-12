@@ -263,6 +263,10 @@ label {
   margin-bottom: 0.8rem;
 }
 
+.metrics--study {
+  grid-template-columns: repeat(5, 1fr);
+}
+
 .metrics article {
   display: flex;
   align-items: baseline;

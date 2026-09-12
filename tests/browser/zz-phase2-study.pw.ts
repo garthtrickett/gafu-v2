@@ -130,18 +130,33 @@ test("configures a key and teaches before the first generated review", async ({
   await attachTeaching("猫", "ねこ", "cat", "A general word for a cat.", "猫かな。");
 
   // Queue order is by Card id, so either Card can come first. Teach both,
-  // collecting which meaning each exposure showed.
+  // collecting which meaning each exposure showed. Seen it changes no state
+  // and no schedule, so the only visible proof it landed is the Card moving
+  // from the "to learn" tile to the "to review" tile. The baseline is read
+  // after Learn opens, because admission happens on that first press.
+  const tile = async (name: string): Promise<number> =>
+    Number(
+      (await page.getByTestId(`tile-${name}`).locator("strong").textContent()) ?? "",
+    );
   const learned: string[] = [];
   for (let round = 0; round < 2; round += 1) {
     await review.getByRole("button", { name: "Learn new" }).click();
     await expect(review.getByText("teach", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
+    const toLearn = await tile("learn");
+    const toReview = await tile("review");
     const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
     learned.push(taught.includes("cat") ? "cat" : "bird");
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
     await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
     await expect(page.getByRole("status")).toContainText("back in the queue");
+    await expect(page.getByTestId("tile-learn").locator("strong")).toHaveText(
+      String(toLearn - 1),
+    );
+    await expect(page.getByTestId("tile-review").locator("strong")).toHaveText(
+      String(toReview + 1),
+    );
   }
   expect(learned.sort()).toEqual(["bird", "cat"]);
 

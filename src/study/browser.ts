@@ -15,12 +15,14 @@ import type {
   StudyStatus,
 } from "./contracts.ts";
 import { splitFurigana } from "./furigana.ts";
+import type { SessionCounts } from "./session-split.ts";
 
 type BrowserSnapshot = Readonly<{
   cards: readonly CardSummary[];
   preferences: StudyPreferences;
   knowledge: KnowledgeSnapshot;
   status: StudyStatus;
+  session: SessionCounts;
 }>;
 
 type BrowserModel = {
@@ -545,11 +547,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
           snapshot === null
             ? html`<section class="panel"><p>Opening the local Study database…</p></section>`
             : html`
-              <section class="metrics" aria-label="Study status">
-                <article><strong>${snapshot.status.stagedCount}</strong><span>staged</span></article>
-                <article><strong>${snapshot.status.activeCount}</strong><span>active</span></article>
-                <article><strong>${snapshot.status.dueCount}</strong><span>due</span></article>
-                <article><strong>${snapshot.status.knownCount}</strong><span>known</span></article>
+              <section class="metrics metrics--study" aria-label="Study status">
+                <article data-testid="tile-staged"><strong>${snapshot.status.stagedCount}</strong><span>staged</span></article>
+                <article data-testid="tile-active"><strong>${snapshot.status.activeCount}</strong><span>active</span></article>
+                <article data-testid="tile-learn"><strong>${snapshot.session.learnCount}</strong><span>to learn</span></article>
+                <article data-testid="tile-review"><strong>${snapshot.session.reviewCount}</strong><span>to review</span></article>
+                <article data-testid="tile-known"><strong>${snapshot.status.knownCount}</strong><span>known</span></article>
               </section>
 
               <section class="panel review-panel" data-testid="review-panel">
