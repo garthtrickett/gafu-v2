@@ -610,6 +610,25 @@ three buckets cover exactly the active set and that a failed teaching read
 fails the count; the journey watches one Card move from "to learn" to "to
 review" on each Seen it; the full required validation passes.
 
+### Patch 2.15 — Seen it serves the next Card to learn
+
+Every Seen it dropped the learner back to the buttons, so working through a
+day's new Cards was one Learn press per Card. Seen it now records the
+acknowledgement and, in the same run, asks Learn for the next untaught Card
+and shows it. Patch 2.9 stands: the taught Card is never chained into its
+own review; only the next first exposure follows.
+
+- When Learn has nothing teachable left (`teachingNotPrepared`), the chain
+  ends on the buttons with "Nothing more to learn right now." That is the
+  end of the session, not a failure.
+- Any other failure after the acknowledgement surfaces as an error with the
+  buttons back; the acknowledgement itself is already durable.
+- The button reads "Seen it — next Card".
+
+**Gate:** the journey presses Learn once and teaches two Cards through Seen
+it alone, watching the tiles move each time, then lands on the buttons with
+the end-of-session message; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
