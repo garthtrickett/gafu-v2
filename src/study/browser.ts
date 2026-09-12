@@ -39,14 +39,19 @@ const needsTeaching = (card: BankCard): boolean =>
 type BrowserSnapshot = Readonly<{
   cards: readonly BankCard[];
   preferences: StudyPreferences;
-  knowledge: KnowledgeSnapshot;
   status: StudyStatus;
   session: SessionCounts;
+  baseline: Readonly<{
+    availability: "available" | "unavailable";
+    enabledCount: number;
+  }>;
 }>;
 
 type BrowserModel = {
   snapshot: BrowserSnapshot | null;
   provider: ProviderStatus | null;
+  /** The full knowledge snapshot, loaded only when the baseline panel opens. */
+  knowledge: KnowledgeSnapshot | null;
   presentation: PreparedMaterial | null;
   revealed: boolean;
   busy: boolean;
@@ -230,6 +235,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const model: BrowserModel = {
     snapshot: null,
     provider: null,
+    knowledge: null,
     presentation: null,
     revealed: false,
     busy: true,
@@ -249,9 +255,34 @@ export const mountStudyApp = (root: HTMLElement): void => {
     ]);
   };
 
+  // Session actions change counts, not the bank, so they refetch only the
+  // tiles: one small call instead of the whole Card listing.
+  const refreshStatus = async (): Promise<void> => {
+    if (model.snapshot === null) return refresh();
+    const counts =
+      await requestJson<Pick<BrowserSnapshot, "status" | "session">>(
+        "/api/study/status",
+      );
+    const before = model.snapshot.status;
+    // A moved staged or active count means admission changed Card states,
+    // which the bank listing also shows; only then is the full fetch owed.
+    if (
+      counts.status.stagedCount !== before.stagedCount ||
+      counts.status.activeCount !== before.activeCount
+    ) {
+      return refresh();
+    }
+    model.snapshot = { ...model.snapshot, ...counts };
+  };
+
+  const loadKnowledge = async (): Promise<void> => {
+    model.knowledge = await requestJson<KnowledgeSnapshot>("/api/study/knowledge");
+  };
+
   const run = async (
     operation: () => Promise<string>,
     pending?: { label: string; detail?: string },
+    scope: "bank" | "status" = "bank",
   ): Promise<void> => {
     model.busy = true;
     let ticker: ReturnType<typeof setInterval> | null = null;
@@ -266,7 +297,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     draw();
     try {
       const message = await operation();
-      await refresh();
+      await (scope === "status" ? refreshStatus() : refresh());
       model.message = message;
       model.messageKind = "success";
     } catch (cause) {
@@ -383,6 +414,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         method: "POST",
         body: JSON.stringify({ enabled }),
       });
+      await loadKnowledge();
       return enabled
         ? "Baseline word restored to the Known Word Bank."
         : "Baseline word disabled. It will no longer count as known.";
@@ -513,6 +545,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
           // New Cards show only what the import stored. Anything else is an
           // onboarding gap, not something retrying will fix.
           if (cause instanceof Error && cause.message === "teachingNotPrepared") {
+            // The names come from the bank listing, which admission may have
+            // just changed; read it fresh before saying which Cards.
+            await refresh();
             throw new Error(untaughtMessage());
           }
           throw cause;
@@ -521,6 +556,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         return "Learn this target. It goes back in the queue for review.";
       },
       { label: "Opening the next Card to learn…" },
+      "status",
     );
   };
 
@@ -538,6 +574,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         return "Read the sentence, then check the explanation and mark yourself.";
       },
       { label: "Opening the first review…" },
+      "status",
     );
   };
 
@@ -606,6 +643,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         return `Review batch started for ${dispatched.total} Cards.`;
       },
       { label: "Starting a review batch…" },
+      "status",
     );
   };
 
@@ -642,6 +680,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         return "Teaching seen. Here is the next Card to learn.";
       },
       { label: "Teaching seen. Opening the next Card…" },
+      "status",
     );
   };
 
@@ -708,6 +747,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
           ? "Review recorded once. The Card's next due time is saved."
           : "Marked for sooner. The Card's next due time is saved.";
       },
+      // A review event changes the bank listing (review counts), so the
+      // bank is refetched here; the tiles alone would go stale.
       { label: "Saving your answer…" },
     );
   };
@@ -973,15 +1014,24 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     }</p>
                     <p class="privacy-note">Card content and the supporting-language allowlist are sent to OpenAI. Gafu requests no response storage, but OpenAI's retention and abuse-monitoring policies still apply. Video and audio are never sent.</p>
                   </div>
-                  <div class="baseline baseline--${snapshot.knowledge.baseline.availability}">
+                  <div class="baseline baseline--${snapshot.baseline.availability}">
                     <h3>Known Word baseline</h3>
                     ${
-                      snapshot.knowledge.baseline.availability === "available"
-                        ? html`<p>${snapshot.knowledge.baseline.enabledCount} baseline words enabled.</p>
-                            <details class="baseline-words">
+                      snapshot.baseline.availability === "available"
+                        ? html`<p>${snapshot.baseline.enabledCount} baseline words enabled.</p>
+                            <details class="baseline-words" @toggle=${(
+                              event: Event,
+                            ) => {
+                              if (
+                                (event.currentTarget as HTMLDetailsElement).open &&
+                                model.knowledge === null
+                              ) {
+                                void loadKnowledge().then(draw, draw);
+                              }
+                            }}>
                               <summary>Correct baseline words</summary>
                               <div>
-                                ${snapshot.knowledge.baseline.entries.map(
+                                ${(model.knowledge?.baseline.entries ?? []).map(
                                   (word) => html`<p>
                                       <span>${word.lemma} · ${word.reading} · ${word.meaning}</span>
                                       <button

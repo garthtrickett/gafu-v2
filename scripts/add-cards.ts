@@ -110,21 +110,22 @@ const cookie = await signIn();
 
 // The validator only accepts a teaching sentence whose supporting language the
 // learner already knows, so the same knowledge is checked here before sending.
-const studyResponse = await fetch(`${baseUrl}/api/study`, { headers: { cookie } });
-if (!studyResponse.ok) throw new Error(`Study read failed: ${studyResponse.status}`);
-const study = (await studyResponse.json()) as {
-  knowledge: {
-    vocabulary: readonly {
-      lemma: string;
-      reading: string;
-      partOfSpeech: string | null;
-    }[];
-    grammar: readonly { canonicalForm: string }[];
-  };
+const knowledgeResponse = await fetch(`${baseUrl}/api/study/knowledge`, {
+  headers: { cookie },
+});
+if (!knowledgeResponse.ok)
+  throw new Error(`Knowledge read failed: ${knowledgeResponse.status}`);
+const studyKnowledge = (await knowledgeResponse.json()) as {
+  vocabulary: readonly {
+    lemma: string;
+    reading: string;
+    partOfSpeech: string | null;
+  }[];
+  grammar: readonly { canonicalForm: string }[];
 };
 const knowledge = {
-  vocabulary: study.knowledge.vocabulary,
-  grammar: new Set(study.knowledge.grammar.map((item) => item.canonicalForm)),
+  vocabulary: studyKnowledge.vocabulary,
+  grammar: new Set(studyKnowledge.grammar.map((item) => item.canonicalForm)),
 };
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),

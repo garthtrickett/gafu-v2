@@ -188,9 +188,18 @@ describe("public deployment composition", () => {
         headers: { cookie: cookie ?? "" },
       });
       expect(study.status).toBe(200);
+      // The bank snapshot carries only the baseline summary; the words
+      // themselves are behind their own route, also login-gated.
       expect(await study.json()).toMatchObject({
         status: { knownCount: 0 },
-        knowledge: { baseline: { availability: "available", enabledCount: 1 } },
+        baseline: { availability: "available", enabledCount: 1 },
+      });
+      const knowledge = await fetch(`${origin}/api/study/knowledge`, {
+        headers: { cookie: cookie ?? "" },
+      });
+      expect(knowledge.status).toBe(200);
+      expect(await knowledge.json()).toMatchObject({
+        baseline: { availability: "available", enabledCount: 1, entries: [{}] },
       });
     } finally {
       child.kill("SIGTERM");

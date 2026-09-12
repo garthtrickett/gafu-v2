@@ -86,10 +86,16 @@ test("configures a key and teaches before the first generated review", async ({
   if (!studyState.ok()) throw new Error(`study read: ${studyState.status()}`);
   const studyBody = (await studyState.json()) as {
     cards: { id: string; content: { lemma?: string } }[];
-    knowledge: {
-      vocabulary: { lemma: string; reading: string; partOfSpeech: string | null }[];
-      grammar: { canonicalForm: string }[];
-    };
+    knowledge?: unknown;
+  };
+  // Knowledge is no longer in the bank snapshot; it has its own route.
+  expect(studyBody.knowledge).toBeUndefined();
+  const knowledgeState = await page.request.get("/api/study/knowledge");
+  if (!knowledgeState.ok())
+    throw new Error(`knowledge read: ${knowledgeState.status()}`);
+  const knowledgeBody = (await knowledgeState.json()) as {
+    vocabulary: { lemma: string; reading: string; partOfSpeech: string | null }[];
+    grammar: { canonicalForm: string }[];
   };
   const analyzer = createKuromojiAnalyzer(() =>
     loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
@@ -115,8 +121,8 @@ test("configures a key and teaches before the first generated review", async ({
         example,
       },
       {
-        vocabulary: studyBody.knowledge.vocabulary,
-        grammar: new Set(studyBody.knowledge.grammar.map((item) => item.canonicalForm)),
+        vocabulary: knowledgeBody.vocabulary,
+        grammar: new Set(knowledgeBody.grammar.map((item) => item.canonicalForm)),
       },
     );
     if ("reason" in built) throw new Error(`authored teach: ${built.reason}`);

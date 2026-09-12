@@ -47,7 +47,7 @@ import { handlePreparationApi } from "../preparation/server.ts";
 import { asPlanId } from "../preparation-plan-contracts.ts";
 import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import type { Result } from "../result.ts";
-import { ok } from "../result.ts";
+import { err, ok } from "../result.ts";
 import {
   createOpenAiKeyVerifier,
   createProviderKeyCustody,
@@ -65,10 +65,15 @@ import type {
   StudyFailure,
   KnowledgeSnapshot as StudyKnowledgeSnapshot,
   StudyQueue,
+  StudyStatus,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
 import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.ts";
-import { countSessionModes, wantsTeaching } from "./session-split.ts";
+import {
+  countSessionModes,
+  type SessionCounts,
+  wantsTeaching,
+} from "./session-split.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -245,6 +250,34 @@ const readJson = async (request: Request): Promise<unknown | Response> => {
       );
 };
 
+/** The counts the tiles show: cheap, and refetched after every session action. */
+const statusSnapshot = (
+  study: Study,
+  material: LearningMaterial,
+): Result<{ status: StudyStatus; session: SessionCounts }, Response> => {
+  const cards = study.listCards();
+  if (!cards.ok) return err(failureResponse(cards.error));
+  const status = study.status();
+  if (!status.ok) return err(failureResponse(status.error));
+  const flags = material.teachingFlags();
+  if (!flags.ok) return err(materialResponse(flags));
+  // The due tile alone cannot show that Seen it did anything: teaching moves
+  // a Card between session modes, not between states. Count the modes from
+  // the listing already in hand, at the instant the status was read.
+  const session = countSessionModes(
+    cards.value,
+    (cardId) => ok(flags.value.taught.has(cardId)),
+    status.value.observedAt,
+  );
+  if (!session.ok) return err(materialResponse(session));
+  return ok({ status: status.value, session: session.value });
+};
+
+/**
+ * The bank snapshot. Knowledge is not in it: the 1,437-word baseline is
+ * four-fifths of a megabyte and only the baseline panel reads it, so it has
+ * its own route and loads when that panel opens.
+ */
 const snapshot = (study: Study, material: LearningMaterial): Response => {
   const cards = study.listCards();
   if (!cards.ok) return failureResponse(cards.error);
@@ -252,34 +285,27 @@ const snapshot = (study: Study, material: LearningMaterial): Response => {
   if (!preferences.ok) return failureResponse(preferences.error);
   const knowledge = study.knowledgeSnapshot();
   if (!knowledge.ok) return failureResponse(knowledge.error);
-  const status = study.status();
-  if (!status.ok) return failureResponse(status.error);
-  // The due tile alone cannot show that Seen it did anything: teaching moves
-  // a Card between session modes, not between states. Count the modes from
-  // the listing already in hand, at the instant the status was read.
-  const session = countSessionModes(
-    cards.value,
-    material.hasTeaching,
-    status.value.observedAt,
-  );
-  if (!session.ok) return materialResponse(session);
+  const counts = statusSnapshot(study, material);
+  if (!counts.ok) return counts.error;
+  const flags = material.teachingFlags();
+  if (!flags.ok) return materialResponse(flags);
   // Whether each Card has been taught (acknowledged) or can be taught from a
   // banked sentence. Learn walks past a Card with neither; without these the
   // bank cannot say which, and the learner is left guessing what to author.
-  const bank: (CardSummary & { taught: boolean; teachable: boolean })[] = [];
-  for (const card of cards.value) {
-    const taught = material.hasTeaching(card.id);
-    if (!taught.ok) return materialResponse(taught);
-    const teachable = material.canTeach(card.id);
-    if (!teachable.ok) return materialResponse(teachable);
-    bank.push({ ...card, taught: taught.value, teachable: teachable.value });
-  }
+  const bank = cards.value.map((card) => ({
+    ...card,
+    taught: flags.value.taught.has(card.id),
+    teachable: flags.value.teachable.has(card.id),
+  }));
   return Response.json({
     cards: bank,
     preferences: preferences.value,
-    knowledge: knowledge.value,
-    status: status.value,
-    session: session.value,
+    status: counts.value.status,
+    session: counts.value.session,
+    baseline: {
+      availability: knowledge.value.baseline.availability,
+      enabledCount: knowledge.value.baseline.enabledCount,
+    },
   });
 };
 
@@ -506,6 +532,13 @@ const handleApi = async (
   }
   if (request.method === "GET" && url.pathname === "/api/study") {
     return snapshot(study, material);
+  }
+  if (request.method === "GET" && url.pathname === "/api/study/status") {
+    const counts = statusSnapshot(study, material);
+    return counts.ok ? Response.json(counts.value) : counts.error;
+  }
+  if (request.method === "GET" && url.pathname === "/api/study/knowledge") {
+    return jsonResult(study.knowledgeSnapshot());
   }
   if (request.method === "GET" && url.pathname === "/api/study/plans") {
     return jsonResult(study.listPlans());

@@ -65,6 +65,12 @@ const studyResponse = await fetch(`${baseUrl}/api/study`, { headers: { cookie } 
 if (!studyResponse.ok)
   throw new Error(`Study read failed: HTTP ${studyResponse.status}`);
 const study = (await studyResponse.json()) as StudySnapshot;
+const knowledgeResponse = await fetch(`${baseUrl}/api/study/knowledge`, {
+  headers: { cookie },
+});
+if (!knowledgeResponse.ok)
+  throw new Error(`Knowledge read failed: ${knowledgeResponse.status}`);
+const knowledge = (await knowledgeResponse.json()) as StudySnapshot["knowledge"];
 
 /**
  * Matched on lemma and part of speech, deliberately not on reading.
@@ -105,9 +111,7 @@ const cardedGrammar = new Set(
   ),
 );
 const known = new Set(
-  study.knowledge.vocabulary.map((entry) =>
-    formKey(entry.lemma, entry.partOfSpeech ?? null),
-  ),
+  knowledge.vocabulary.map((entry) => formKey(entry.lemma, entry.partOfSpeech ?? null)),
 );
 
 const analyzer = createKuromojiAnalyzer(() =>
