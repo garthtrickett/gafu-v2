@@ -761,6 +761,33 @@ shown teach presentation, so Seen it on the re-served one works unchanged.
 the same presentation again, then acknowledges and moves to review; a Card
 with nothing stored still fails fast; the full required validation passes.
 
+### Patch 2.22 — One request for the whole batch
+
+Patch 2.11 advanced a review batch one Card per poll, each poll running a
+full generation: 20 Cards took about 12 minutes of strictly serial work. V1
+sent one 15-Card request and dropped any Card that came back wrong, which was
+rare. V2 does the same.
+
+- The provider gains whole-batch generation: `dispatch` sends one background
+  request naming every pending Card, with the learner's knowledge attached
+  once and two candidates asked for per Card; `poll` checks on it. The first
+  batch advance dispatches and records the provider job (`review_batch_job`,
+  forward-only migration); later advances poll; the completing advance
+  validates and banks every Card's candidates, marks each ready or failed,
+  and speaks the banked sentences three at a time. No browser call outlives
+  the generation.
+- A Card the provider returns nothing usable for, or whose candidates all
+  fail validation, fails alone with its reason and stays due. A provider-level
+  failure fails every pending Card with its kind, so the learner batches
+  again; nothing is retried inside the batch.
+- Cards already holding a review reserve are marked ready without generation.
+- A provider without whole-batch generation falls back to one Card per advance.
+
+**Gate:** provider tests for the single request's shape and for dropping a
+malformed item; batch tests for dispatch-then-complete, a dropped Card, and
+banked reviews serving with no further calls; the journey unchanged; the full
+required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

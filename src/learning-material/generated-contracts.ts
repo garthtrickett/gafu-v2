@@ -79,6 +79,40 @@ export type RedactedProviderRequest = Readonly<{
   body: unknown;
 }>;
 
+/** One Card in a batch generation; knowledge is shared across the batch. */
+export type MaterialBatchTarget = Readonly<{
+  mode: MaterialMode;
+  card: CardSummary;
+  recentJapanese: readonly string[];
+}>;
+
+export type MaterialBatchItem = Readonly<{
+  cardId: CardSummary["id"];
+  candidates: readonly unknown[];
+}>;
+
+export type MaterialBatchPoll =
+  | { readonly status: "pending" }
+  | { readonly status: "complete"; readonly items: readonly MaterialBatchItem[] };
+
+/**
+ * Whole-batch generation: one provider request for every Card, dispatched
+ * in the background and polled to completion across separate calls, so no
+ * single HTTP call from the browser has to outlive the generation. A Card
+ * the provider returns nothing usable for is dropped, not the batch.
+ */
+export type MaterialBatch = Readonly<{
+  dispatch: (
+    targets: readonly MaterialBatchTarget[],
+    knowledge: StudyKnowledgeSnapshot,
+    signal?: AbortSignal,
+  ) => Promise<Result<{ jobId: string }, MaterialProviderFailure>>;
+  poll: (
+    jobId: string,
+    signal?: AbortSignal,
+  ) => Promise<Result<MaterialBatchPoll, MaterialProviderFailure>>;
+}>;
+
 export type MaterialProvider = Readonly<{
   identity: Readonly<{ provider: string; model: string; promptVersion: string }>;
   generate: (
@@ -86,6 +120,8 @@ export type MaterialProvider = Readonly<{
     signal?: AbortSignal,
   ) => Promise<Result<MaterialProviderResult, MaterialProviderFailure>>;
   inspectLastRequest: () => RedactedProviderRequest | null;
+  /** Absent means the review batch falls back to one Card per advance. */
+  batch?: MaterialBatch | undefined;
 }>;
 
 export type ProviderStatus = Readonly<{

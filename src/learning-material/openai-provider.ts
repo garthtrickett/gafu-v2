@@ -1,6 +1,9 @@
 import { readBoundedBody } from "../local-api.ts";
 import { err, ok, type Result } from "../result.ts";
+import type { KnowledgeSnapshot as StudyKnowledgeSnapshot } from "../study/contracts.ts";
 import type {
+  MaterialBatchItem,
+  MaterialBatchTarget,
   MaterialProvider,
   MaterialProviderFailure,
   MaterialProviderRequest,
@@ -27,6 +30,12 @@ type Options = Readonly<{
   pollIntervalMs?: number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   fetch?: OpenAiMaterialFetch;
+  /**
+   * Candidates per Card in a whole-batch request; default 2. Fewer than the
+   * three of a single generation keeps a 20-Card answer inside the output
+   * budget while leaving one spare for validation to reject.
+   */
+  batchCandidateCount?: number;
 }>;
 
 const maximumProviderResponseBytes = 2 * 1024 * 1024;
@@ -182,6 +191,72 @@ type DecodedMaterial =
   | { readonly result: MaterialDispatch }
   | { readonly failure: MaterialProviderFailure };
 
+type DecodedJson =
+  | { readonly pending: true; readonly responseId: string }
+  | { readonly value: unknown; readonly responseId: string }
+  | { readonly failure: MaterialProviderFailure };
+
+/** Terminal-status handling shared by single and batch responses. */
+const decodeTerminalJson = (body: unknown): DecodedJson => {
+  if (!isRecord(body) || typeof body["id"] !== "string") {
+    return {
+      failure: { kind: "malformedResponse", detail: "OpenAI response had no ID" },
+    };
+  }
+  const status = body["status"];
+  if (typeof status === "string" && !terminalStatuses.has(status)) {
+    return { pending: true, responseId: body["id"] };
+  }
+  if (status === "cancelled") {
+    return { failure: { kind: "cancelled", detail: "OpenAI cancelled the response" } };
+  }
+  if (status === "incomplete") {
+    return {
+      failure: { kind: "incompleteResponse", detail: "OpenAI response was incomplete" },
+    };
+  }
+  if (status === "failed" || body["error"] != null) {
+    return { failure: { kind: "refusal", detail: "OpenAI response failed" } };
+  }
+  if (hasRefusal(body)) {
+    return { failure: { kind: "refusal", detail: "OpenAI refused the request" } };
+  }
+  const text = outputText(body);
+  if (text === null) {
+    return {
+      failure: {
+        kind: "malformedResponse",
+        detail: "OpenAI response had no output text",
+      },
+    };
+  }
+  try {
+    return { value: JSON.parse(text), responseId: body["id"] };
+  } catch {
+    return {
+      failure: { kind: "malformedResponse", detail: "OpenAI output text was not JSON" },
+    };
+  }
+};
+
+/**
+ * A whole-batch answer. Each item names its Card; an item that is not an
+ * object, names no Card, or carries no materials is dropped on its own.
+ */
+const decodeBatchItems = (value: unknown): readonly MaterialBatchItem[] => {
+  if (!isRecord(value) || !Array.isArray(value["items"])) return [];
+  const items: MaterialBatchItem[] = [];
+  for (const item of value["items"]) {
+    if (!isRecord(item) || typeof item["cardId"] !== "string") continue;
+    if (!Array.isArray(item["materials"]) || item["materials"].length === 0) continue;
+    items.push({
+      cardId: item["cardId"] as MaterialBatchItem["cardId"],
+      candidates: item["materials"],
+    });
+  }
+  return items;
+};
+
 const decodeTerminal = (body: unknown, options: Options): DecodedMaterial => {
   if (!isRecord(body) || typeof body["id"] !== "string") {
     return {
@@ -332,11 +407,78 @@ const requestBody = (options: Options, request: MaterialProviderRequest): unknow
   },
 });
 
+const batchRequestBody = (
+  options: Options,
+  targets: readonly MaterialBatchTarget[],
+  knowledge: StudyKnowledgeSnapshot,
+): unknown => {
+  const perCard = options.batchCandidateCount ?? 2;
+  return {
+    model: options.model,
+    background: true,
+    store: false,
+    reasoning: { effort: "low" },
+    instructions: `For every target Card in "targets", create exactly ${perCard} materially different Japanese learning presentations. Return one item per target, in the same order, with cardId copied exactly. Use only the supplied supporting vocabulary and grammar, shared by all targets. The English context describes the situation and must not translate the Japanese answer. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct Japanese exactly. Do not include another learning target in any sentence.`,
+    input: JSON.stringify({
+      targets: targets.map((target) => {
+        const { usageNotes: _cue, ...contentWithoutCue } = target.card.content;
+        return {
+          cardId: target.card.id,
+          mode: target.mode,
+          target: { ...target.card, content: contentWithoutCue },
+          recentJapaneseToAvoid: target.recentJapanese,
+        };
+      }),
+      allowedSupportingVocabulary: knowledge.vocabulary.map((word) => ({
+        lemma: word.lemma,
+        reading: word.reading,
+        meaning: word.meaning,
+      })),
+      allowedSupportingGrammar: knowledge.grammar.map(
+        (grammar) => grammar.canonicalForm,
+      ),
+      candidateCountPerTarget: perCard,
+    }),
+    text: {
+      format: {
+        type: "json_schema",
+        name: "gafu_learning_material_batch",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["items"],
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["cardId", "materials"],
+                properties: {
+                  cardId: { type: "string" },
+                  materials: {
+                    type: "array",
+                    minItems: perCard,
+                    maxItems: perCard,
+                    items: materialSchema,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+};
+
 export const createOpenAiMaterialProvider = (options: Options): MaterialProvider => {
   const send = options.fetch ?? fetch;
   const sleep = options.sleep ?? defaultSleep;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
   let lastRequest: RedactedProviderRequest | null = null;
+  const finishedBatches = new Map<string, readonly MaterialBatchItem[]>();
 
   /**
    * One bounded HTTP call. `notFound` distinguishes a dispatch that aged out
@@ -483,6 +625,59 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
       if ("failure" in decoded) return err(decoded.failure);
       if ("result" in decoded) return ok(decoded.result);
       return poll(decoded.responseId, deadline, outerSignal);
+    },
+    batch: {
+      dispatch: async (targets, knowledge, outerSignal) => {
+        const body = batchRequestBody(options, targets, knowledge);
+        lastRequest = { endpoint: "https://api.openai.com/v1/responses", body };
+        const created = await call(
+          "https://api.openai.com/v1/responses",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          outerSignal,
+        );
+        if (!created.ok) return created;
+        if ("notFound" in created.value) {
+          return err({
+            kind: "offline",
+            detail: "OpenAI responses endpoint is unavailable",
+          });
+        }
+        const decoded = decodeTerminalJson(created.value.value);
+        if ("failure" in decoded) return err(decoded.failure);
+        // A create that is already terminal is kept for the first poll, so
+        // the caller sees one shape whatever the provider did.
+        if ("value" in decoded) {
+          finishedBatches.set(decoded.responseId, decodeBatchItems(decoded.value));
+        }
+        return ok({ jobId: decoded.responseId });
+      },
+      poll: async (jobId, outerSignal) => {
+        const finished = finishedBatches.get(jobId);
+        if (finished !== undefined) {
+          finishedBatches.delete(jobId);
+          return ok({ status: "complete", items: finished });
+        }
+        const polled = await call(
+          `https://api.openai.com/v1/responses/${encodeURIComponent(jobId)}`,
+          { method: "GET" },
+          outerSignal,
+        );
+        if (!polled.ok) return polled;
+        if ("notFound" in polled.value) {
+          return err({
+            kind: "offline",
+            detail: "OpenAI discarded the dispatched batch before it was read",
+          });
+        }
+        const decoded = decodeTerminalJson(polled.value.value);
+        if ("failure" in decoded) return err(decoded.failure);
+        if ("pending" in decoded) return ok({ status: "pending" });
+        return ok({ status: "complete", items: decodeBatchItems(decoded.value) });
+      },
     },
   };
 };

@@ -857,7 +857,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         ${
                           model.batch.done
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
-                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Each Card gets a fresh sentence, generated, checked, and spoken, usually 20 to 60 seconds apiece.`
+                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go and land together, usually within a minute or two; then each is checked and spoken.`
                         }
                       </p>`
                     : ""
