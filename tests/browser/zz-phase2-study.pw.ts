@@ -146,6 +146,21 @@ test("configures a key and teaches before the first generated review", async ({
       (await page.getByTestId(`tile-${name}`).locator("strong").textContent()) ?? "",
     );
   const learned: string[] = [];
+  // Seen it is instant: the acknowledgement goes to the outbox and the next
+  // Card shows before the server has answered. The first acknowledgement is
+  // held to prove it, and the syncing indicator names the queued write.
+  let releaseTeach = (): void => {};
+  const teachGate = new Promise<void>((resolve) => {
+    releaseTeach = resolve;
+  });
+  let teachHeld = false;
+  await page.route("**/api/study/session/teach", async (route) => {
+    if (!teachHeld) {
+      teachHeld = true;
+      await teachGate;
+    }
+    await route.continue();
+  });
   await review.getByRole("button", { name: "Learn new" }).click();
   for (let round = 0; round < 2; round += 1) {
     await expect(review.getByText("teach", { exact: true })).toBeVisible({
@@ -192,6 +207,17 @@ test("configures a key and teaches before the first generated review", async ({
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
     await review.getByRole("button", { name: "Seen it — next Card" }).click();
     await expect(page.getByRole("status")).toContainText("Teaching seen");
+    if (round === 0) {
+      // The second Card is on screen while the first acknowledgement is
+      // still held; the tiles cannot have moved yet.
+      await expect(review.getByText("teach", { exact: true })).toBeVisible();
+      const next = (await review.getByTestId("material-answer").textContent()) ?? "";
+      expect(next.includes("cat") ? "cat" : "bird").not.toBe(learned[0]);
+      await expect(page.getByTestId("syncing")).toContainText("Syncing 1");
+      expect(await tile("learn")).toBe(toLearn);
+      releaseTeach();
+      await expect(page.getByTestId("syncing")).toHaveCount(0);
+    }
     await expect(page.getByTestId("tile-learn").locator("strong")).toHaveText(
       String(toLearn - 1),
     );
@@ -227,12 +253,8 @@ test("configures a key and teaches before the first generated review", async ({
   const firstGate = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
-  let held = false;
-  await page.route("**/api/study/session/prepare", async (route) => {
-    if (!held) {
-      held = true;
-      await firstGate;
-    }
+  await page.route("**/api/study/session/review-all", async (route) => {
+    await firstGate;
     await route.continue();
   });
   await review.getByRole("button", { name: "Review batch" }).click();
@@ -240,18 +262,22 @@ test("configures a key and teaches before the first generated review", async ({
     timeout: 30_000,
   });
 
-  // Work through in whatever order the queue serves. A review shows the
+  // Work through in whatever order the session arrived. A review shows the
   // scene and the sentence with the target coloured; the explanation opens
-  // on request, and only then is the Card marked correct or incorrect. After
-  // each grade the next batched Card arrives on its own; when none remains
-  // the batch closes. The first grade holds the answer request to prove the
-  // buttons stay disabled until it resolves.
+  // on request, and only then is the Card marked correct or incorrect. The
+  // grade goes to the outbox and the next Card shows at once; when none
+  // remains the batch closes. The first grade is held to prove the second
+  // Card is on screen before the server has recorded it.
   let releaseAnswer = (): void => {};
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
   });
+  let answerHeld = false;
   await page.route("**/api/study/session/answer", async (route) => {
-    await answerGate;
+    if (!answerHeld) {
+      answerHeld = true;
+      await answerGate;
+    }
     await route.continue();
   });
   const worked: string[] = [];
@@ -270,23 +296,22 @@ test("configures a key and teaches before the first generated review", async ({
     await review.getByRole("button", { name: grade, exact: true }).click();
   };
   const progress = page.getByTestId("session-progress");
-  await expect(progress).toContainText("Opening the first review");
+  await expect(progress).toContainText("Opening the reviews");
   await expect(progress.locator(".pending-elapsed")).toHaveText(/^\d+s$/u);
   releaseFirst();
   await expect(progress).toHaveCount(0);
   await reviewOne("Correct");
-  await expect(
-    review.getByRole("button", { name: "Correct", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    review.getByRole("button", { name: "Incorrect", exact: true }),
-  ).toBeDisabled();
+  // The second review is already showing and the grade is queued behind it.
+  await expect(page.getByRole("status")).toContainText("Next Card");
+  await expect(review.getByText("review", { exact: true })).toBeVisible();
+  await expect(review.getByTestId("material-answer")).toHaveCount(0);
+  await expect(page.getByTestId("syncing")).toContainText("Syncing 1");
   releaseAnswer();
-  await expect(page.getByRole("status")).toContainText("Next batched Card");
+  await expect(page.getByTestId("syncing")).toHaveCount(0);
   await reviewOne("Incorrect");
   await expect(page.getByRole("status")).toContainText("Batch complete.");
   expect(worked.sort()).toEqual(["bird", "cat"]);
-  expect(worked.sort()).toEqual(["bird", "cat"]);
+  // Once the outbox drains the bank is refetched and shows both reviews.
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
   await expect(page.locator(".bank-card", { hasText: "猫" })).toContainText("1 review");
 

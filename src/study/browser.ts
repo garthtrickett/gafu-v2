@@ -20,6 +20,7 @@ import type {
   StudyStatus,
 } from "./contracts.ts";
 import { splitFurigana } from "./furigana.ts";
+import { createOutbox, type OutboxState } from "./outbox.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
 import type { SessionCounts } from "./session-split.ts";
 
@@ -86,6 +87,17 @@ type BrowserModel = {
    * read as a hang. Ticks every second while set.
    */
   pending: { label: string; detail: string | null; startedAt: number } | null;
+  /**
+   * The session the browser is walking: every Card's presentation arrived at
+   * once, so moving between them costs no round trip. Writes go to the
+   * outbox and the next Card shows immediately.
+   */
+  session: {
+    kind: "learn" | "review";
+    items: readonly PreparedMaterial[];
+    index: number;
+  } | null;
+  sync: OutboxState;
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
@@ -246,6 +258,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
     typeFilter: "all",
     lookup: null,
     pending: null,
+    session: null,
+    sync: { pending: 0, failed: [] },
   };
 
   const refresh = async (): Promise<void> => {
@@ -421,6 +435,25 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  // Writes the session produces go here and are sent in order behind the
+  // learner's back. A transport failure is retried; a refusal is recorded.
+  // When the queue drains the bank is refetched, since grades change it.
+  const outbox = createOutbox({
+    isRetryable: (error) => error instanceof TypeError,
+    onChange: (state) => {
+      const drained = state.pending === 0 && model.sync.pending > 0;
+      model.sync = state;
+      draw();
+      if (drained) void refresh().then(draw, draw);
+    },
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (model.sync.pending > 0) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+
   // One pronunciation at a time. A rejected play() is the browser's autoplay
   // policy, not a fault: the Listen button is right there.
   let audio: HTMLAudioElement | null = null;
@@ -439,6 +472,39 @@ export const mountStudyApp = (root: HTMLElement): void => {
     model.presentation = prepared;
     model.revealed = false;
     if (prepared.audioUrl !== null) playAudio(prepared.audioUrl);
+    // The clip after this one is fetched now, so the next Card speaks at once.
+    const next = model.session?.items[model.session.index + 1];
+    if (next?.audioUrl) {
+      const ahead = new Audio(next.audioUrl);
+      ahead.preload = "auto";
+      ahead.load();
+    }
+  };
+
+  const beginSession = (
+    kind: "learn" | "review",
+    items: readonly PreparedMaterial[],
+  ): void => {
+    const first = items[0];
+    if (first === undefined) return;
+    model.session = { kind, items, index: 0 };
+    present(first);
+  };
+
+  /** Moves to the next Card in the session, or ends it. Returns whether one showed. */
+  const advanceSession = (): boolean => {
+    const session = model.session;
+    if (session === null) return false;
+    const next = session.items[session.index + 1];
+    if (next === undefined) {
+      model.session = null;
+      model.presentation = null;
+      model.revealed = false;
+      return false;
+    }
+    model.session = { ...session, index: session.index + 1 };
+    present(next);
+    return true;
   };
 
   const closeLookup = (): void => {
@@ -536,11 +602,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const startLearn = (): void => {
     void run(
       async () => {
-        let prepared: PreparedMaterial;
+        let items: readonly PreparedMaterial[];
         try {
-          prepared = await requestJson<PreparedMaterial>("/api/study/learn", {
-            method: "POST",
-          });
+          ({ items } = await requestJson<{ items: readonly PreparedMaterial[] }>(
+            "/api/study/session/learn-all",
+            { method: "POST" },
+          ));
         } catch (cause) {
           // New Cards show only what the import stored. Anything else is an
           // onboarding gap, not something retrying will fix.
@@ -552,10 +619,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
           }
           throw cause;
         }
-        present(prepared);
-        return "Learn this target. It goes back in the queue for review.";
+        beginSession("learn", items);
+        return `Learn this target. ${items.length} Cards to learn are ready; Seen it moves straight on.`;
       },
-      { label: "Opening the next Card to learn…" },
+      { label: "Opening the Cards to learn…" },
       "status",
     );
   };
@@ -565,15 +632,22 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // (every Card failed, or was answered elsewhere) closes the batch plainly.
   const workThroughBatch = (): void => {
     if (model.presentation !== null) return;
+    const batch = model.batch;
+    if (batch === null) return;
     void run(
       async () => {
-        const first = await chainBatch("");
-        if (first === null) return "Batch closed.";
-        if (first === "done") return "Batch complete: nothing left to review.";
-        present(first);
+        const { items } = await requestJson<{ items: readonly PreparedMaterial[] }>(
+          "/api/study/session/review-all",
+          { method: "POST", body: JSON.stringify({ cardIds: batch.completedIds }) },
+        );
+        if (items.length === 0) {
+          model.batch = null;
+          return "Batch complete: nothing left to review.";
+        }
+        beginSession("review", items);
         return "Read the sentence, then check the explanation and mark yourself.";
       },
-      { label: "Opening the first review…" },
+      { label: "Opening the reviews…" },
       "status",
     );
   };
@@ -647,110 +721,59 @@ export const mountStudyApp = (root: HTMLElement): void => {
     );
   };
 
-  // Seen it records the acknowledgement, then keeps the learner in Learn by
-  // serving the next untaught Card straight away. The taught Card itself is
-  // never chained into its review (Patch 2.9); only the next first exposure
-  // follows. Running out is the natural end of the session, not an error:
-  // the buttons come back with a plain message.
+  // Seen it queues the acknowledgement and shows the next Card at once. The
+  // taught Card itself is never chained into its review (Patch 2.9); only the
+  // next first exposure follows. Running out is the natural end of the
+  // session, not an error: the buttons come back with a plain message.
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
-    void run(
-      async () => {
-        await requestJson("/api/study/session/teach", {
+    outbox.enqueue({
+      label: `Seen it: ${current.material.targetSurface}`,
+      send: () =>
+        requestJson("/api/study/session/teach", {
           method: "POST",
-          body: JSON.stringify({
-            cardId: current.cardId,
-            presentationId: current.id,
-          }),
-        });
-        model.presentation = null;
-        let next: PreparedMaterial;
-        try {
-          next = await requestJson<PreparedMaterial>("/api/study/learn", {
-            method: "POST",
-          });
-        } catch (cause) {
-          if (cause instanceof Error && cause.message === "teachingNotPrepared") {
-            return "Teaching seen. Nothing more to learn right now.";
-          }
-          throw cause;
-        }
-        present(next);
-        return "Teaching seen. Here is the next Card to learn.";
-      },
-      { label: "Teaching seen. Opening the next Card…" },
-      "status",
-    );
-  };
-
-  // After a grade, keep working through a finished batch without sending
-  // the learner back to the buttons: serve the next batched Card that is
-  // still due, skipping anything already answered elsewhere. Failed batch
-  // Cards are never attempted here — they stay due for single Review.
-  // Returns the next presentation, "done" when the batch is exhausted, or
-  // null when no batch is driving.
-  const chainBatch = async (
-    justGraded: string,
-  ): Promise<PreparedMaterial | "done" | null> => {
-    const batch = model.batch;
-    if (batch === null || !batch.done) return null;
-    for (const cardId of batch.completedIds) {
-      if (cardId === justGraded) continue;
-      try {
-        return await requestJson<PreparedMaterial>("/api/study/session/prepare", {
-          method: "POST",
-          body: JSON.stringify({ cardId }),
-        });
-      } catch (cause) {
-        if (
-          cause instanceof Error &&
-          (cause.message === "cardNotDue" || cause.message === "nothingDue")
-        ) {
-          continue;
-        }
-        throw cause;
-      }
-    }
-    model.batch = null;
-    return "done";
+          body: JSON.stringify({ cardId: current.cardId, presentationId: current.id }),
+        }),
+    });
+    const more = advanceSession();
+    model.message = more
+      ? "Teaching seen. Here is the next Card to learn."
+      : "Teaching seen. Nothing more to learn right now.";
+    model.messageKind = "success";
+    draw();
+    if (!more) void refreshStatus().then(draw, draw);
   };
 
   // Check yourself against the explanation, then mark it honestly:
   // correct maps to good, incorrect maps to again, and the scheduler never
-  // sees a third option.
+  // sees a third option. The grade is queued and the next Card shows at once.
   const answer = (correct: boolean): void => {
-    if (model.busy) return;
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
-    void run(
-      async () => {
-        await requestJson("/api/study/session/answer", {
+    const permit = current.permit.token;
+    outbox.enqueue({
+      label: `Grade: ${current.material.targetSurface}`,
+      send: () =>
+        requestJson("/api/study/session/answer", {
           method: "POST",
           body: JSON.stringify({
             cardId: current.cardId,
             grade: correct ? "good" : "again",
-            permit: current.permit?.token,
+            permit,
           }),
-        });
-        model.presentation = null;
-        model.revealed = false;
-        const chained = await chainBatch(current.cardId);
-        if (chained !== null && chained !== "done") {
-          present(chained);
-          return correct
-            ? "Review recorded once. Next batched Card."
-            : "Marked for sooner. Next batched Card.";
-        }
-        if (chained === "done") return "Batch complete.";
-        return correct
-          ? "Review recorded once. The Card's next due time is saved."
-          : "Marked for sooner. The Card's next due time is saved.";
-      },
-      // A review event changes the bank listing (review counts), so the
-      // bank is refetched here; the tiles alone would go stale.
-      { label: "Saving your answer…" },
-    );
+        }),
+    });
+    const more = advanceSession();
+    if (!more) model.batch = null;
+    model.message = more
+      ? correct
+        ? "Review recorded. Next Card."
+        : "Marked for sooner. Next Card."
+      : "Batch complete.";
+    model.messageKind = "success";
+    draw();
+    if (!more) void refreshStatus().then(draw, draw);
   };
 
   const lookupDialog = (): TemplateResult | "" => {
@@ -846,6 +869,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
         </header>
 
         <p class="notice notice--${model.messageKind}" role="status">${model.message}</p>
+        ${
+          model.sync.pending > 0
+            ? html`<p class="syncing" data-testid="syncing" aria-live="polite">Syncing ${model.sync.pending}…</p>`
+            : ""
+        }
+        ${
+          model.sync.failed.length > 0
+            ? html`<p class="notice notice--error" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. The Cards stay due.</p>`
+            : ""
+        }
 
         ${
           snapshot === null
