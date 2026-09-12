@@ -61,18 +61,27 @@ describe("counting the two session queues", () => {
       taughtSet(["taught-new"]),
       NOW,
     );
-    expect(counts).toEqual({ ok: true, value: { learnCount: 1, reviewCount: 2 } });
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 1, reviewCount: 2, laterCount: 0 },
+    });
   });
 
   test("Seen it moves exactly one Card from Learn to Review", () => {
     const cards = [card("a"), card("b")];
     const before = countSessionModes(cards, taughtSet([]), NOW);
     const after = countSessionModes(cards, taughtSet(["a"]), NOW);
-    expect(before).toEqual({ ok: true, value: { learnCount: 2, reviewCount: 0 } });
-    expect(after).toEqual({ ok: true, value: { learnCount: 1, reviewCount: 1 } });
+    expect(before).toEqual({
+      ok: true,
+      value: { learnCount: 2, reviewCount: 0, laterCount: 0 },
+    });
+    expect(after).toEqual({
+      ok: true,
+      value: { learnCount: 1, reviewCount: 1, laterCount: 0 },
+    });
   });
 
-  test("only active Cards due by now are counted", () => {
+  test("only active Cards are counted, and each lands in exactly one bucket", () => {
     const counts = countSessionModes(
       [
         card("staged", { state: "staged", dueAt: null, schedulePhase: null }),
@@ -84,7 +93,26 @@ describe("counting the two session queues", () => {
       taughtSet([]),
       NOW,
     );
-    expect(counts).toEqual({ ok: true, value: { learnCount: 1, reviewCount: 0 } });
+    // learn + review + later is the whole active set: 2 of the 5 Cards.
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 1, reviewCount: 0, laterCount: 1 },
+    });
+  });
+
+  test("an active Card scheduled for later is neither learn nor review, taught or not", () => {
+    const cards = [
+      card("later-untaught", { dueAt: "2026-09-13T00:00:00.000Z" }),
+      card("later-taught", {
+        dueAt: "2026-09-13T00:00:00.000Z",
+        schedulePhase: "review",
+      }),
+    ];
+    const counts = countSessionModes(cards, taughtSet(["later-taught"]), NOW);
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 0, reviewCount: 0, laterCount: 2 },
+    });
   });
 
   test("a failed teaching read fails the count rather than guessing", () => {

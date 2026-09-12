@@ -13,12 +13,21 @@ export const wantsTeaching = (
   taught: boolean,
 ): boolean => card.schedulePhase === "new" && !taught;
 
-export type SessionCounts = Readonly<{ learnCount: number; reviewCount: number }>;
+/**
+ * Every active Card lands in exactly one bucket: due and awaiting its first
+ * look (learn), due and awaiting a quiz (review), or scheduled for later.
+ * The three sum to the active count, so the tiles partition the deck.
+ */
+export type SessionCounts = Readonly<{
+  learnCount: number;
+  reviewCount: number;
+  laterCount: number;
+}>;
 
 /**
- * Counts the due Cards each session mode would serve, from an already-read
- * Card listing. Due means active with a due time at or before `now`, the same
- * test the queue uses. Nothing is admitted or prepared here.
+ * Buckets the active Cards from an already-read Card listing. Due means a
+ * due time at or before `now`, the same test the queue uses. Nothing is
+ * admitted or prepared here.
  */
 export const countSessionModes = <Failure>(
   cards: readonly CardSummary[],
@@ -27,12 +36,17 @@ export const countSessionModes = <Failure>(
 ): Result<SessionCounts, Failure> => {
   let learnCount = 0;
   let reviewCount = 0;
+  let laterCount = 0;
   for (const card of cards) {
-    if (card.state !== "active" || card.dueAt === null || card.dueAt > now) continue;
+    if (card.state !== "active") continue;
+    if (card.dueAt === null || card.dueAt > now) {
+      laterCount += 1;
+      continue;
+    }
     const taught = hasTeaching(card.id);
     if (!taught.ok) return taught;
     if (wantsTeaching(card, taught.value)) learnCount += 1;
     else reviewCount += 1;
   }
-  return ok({ learnCount, reviewCount });
+  return ok({ learnCount, reviewCount, laterCount });
 };
