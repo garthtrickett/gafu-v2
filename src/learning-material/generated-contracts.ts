@@ -84,6 +84,8 @@ export type MaterialBatchTarget = Readonly<{
   mode: MaterialMode;
   card: CardSummary;
   recentJapanese: readonly string[];
+  /** Why an earlier round's candidates for this Card were rejected, if any. */
+  previousRejections: readonly string[];
 }>;
 
 export type MaterialBatchItem = Readonly<{
@@ -195,7 +197,12 @@ export type ReviewBatchProgress = Readonly<{
   pending: number;
   completed: readonly CardSummary["id"][];
   failed: readonly ReviewBatchFailure[];
+  /** Which whole-batch request the pending Cards are on, from 1. */
+  round: number;
 }>;
+
+/** Whole-batch requests a Card may take before it is dropped. */
+export const MAX_REVIEW_BATCH_ROUNDS = 3;
 
 export type LearningMaterial = Readonly<{
   prepare: (

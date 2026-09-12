@@ -284,8 +284,18 @@ describe("whole-batch generation", () => {
     },
   };
   const targets = [
-    { mode: "review" as const, card: request.card, recentJapanese: ["猫よね。"] },
-    { mode: "review" as const, card: second, recentJapanese: [] },
+    {
+      mode: "review" as const,
+      card: request.card,
+      recentJapanese: ["猫よね。"],
+      previousRejections: ["unknownVocabulary: 難語"],
+    },
+    {
+      mode: "review" as const,
+      card: second,
+      recentJapanese: [],
+      previousRejections: [],
+    },
   ];
 
   test("dispatches one request naming every card, with knowledge attached once", async () => {
@@ -309,6 +319,10 @@ describe("whole-batch generation", () => {
       "card-2",
     ]);
     expect(input["candidateCountPerTarget"]).toBe(2);
+    expect(
+      (input["targets"] as { previousRejections: string[] }[])[0]?.previousRejections,
+    ).toEqual(["unknownVocabulary: 難語"]);
+    expect(String(body["instructions"])).toContain("previousRejections");
     expect(input["allowedSupportingVocabulary"]).toEqual([]);
     const schema = (body["text"] as { format: { schema: Record<string, unknown> } })
       .format.schema;

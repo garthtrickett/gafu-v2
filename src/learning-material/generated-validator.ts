@@ -164,9 +164,17 @@ export const createGeneratedMaterialValidator = (
       grammar: new Set(knowledge.grammar.map((item) => item.canonicalForm)),
     });
     if (!checked.ok) {
+      // The words at fault travel with the reason: a retry that knows which
+      // word was unknown can avoid it, where a bare kind teaches nothing.
       return err({
         kind: "validationRejected",
-        reasons: checked.error.reasons.map((reason) => reason.kind),
+        reasons: checked.error.reasons.map((reason) =>
+          reason.kind === "unknownVocabulary"
+            ? `unknownVocabulary: ${reason.surfaces.join(", ")}`
+            : reason.kind === "unknownGrammar"
+              ? `unknownGrammar: ${reason.canonicalForms.join(", ")}`
+              : reason.kind,
+        ),
       });
     }
     return ok(decoded.value);

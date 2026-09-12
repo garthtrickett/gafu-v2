@@ -243,9 +243,15 @@ describe("review batch job", () => {
       { card: bad, knowledge: knowledge.value },
     ]);
     if (!begun.ok) throw new Error(begun.error.kind);
-    await app.material.advanceReviewBatch(begun.value);
-    const done = await app.material.advanceReviewBatch(begun.value);
-    // The provider answered for one card only; the other is dropped alone.
+    // The provider answers for one card only. The other is retried for two
+    // more rounds and then dropped alone; the first is ready from round one.
+    let done = await app.material.advanceReviewBatch(begun.value);
+    let advances = 1;
+    while (done.ok && !done.value.done && advances < 12) {
+      done = await app.material.advanceReviewBatch(begun.value);
+      advances += 1;
+    }
+    expect(advances).toBe(6);
     expect(done).toMatchObject({
       ok: true,
       value: {

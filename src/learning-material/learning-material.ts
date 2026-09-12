@@ -20,10 +20,11 @@ import type {
   ReviewBatchFailure,
   ReviewBatchProgress,
 } from "./generated-contracts.ts";
+import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 4;
+export const MATERIAL_SCHEMA_VERSION = 5;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
 const MAXIMUM_PENDING_PERMITS = 1_024;
@@ -200,6 +201,30 @@ const migrate = (
         database
           .query(
             "INSERT INTO learning_material_migration(version, applied_at) VALUES (4, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 5) {
+        // Retry rounds: how many whole-batch requests a Card has been in, and
+        // why its last candidates were refused, fed back to the next request.
+        const columns = new Set(
+          (
+            database.query("PRAGMA table_info(review_batch_item)").all() as {
+              name: string;
+            }[]
+          ).map((column) => column.name),
+        );
+        if (!columns.has("attempts")) {
+          database.exec(
+            "ALTER TABLE review_batch_item ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+          );
+        }
+        if (!columns.has("hints_json")) {
+          database.exec("ALTER TABLE review_batch_item ADD COLUMN hints_json TEXT");
+        }
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (5, ?)",
           )
           .run(appliedAt);
       }
@@ -641,7 +666,13 @@ export const openLearningMaterial = (
     return err({ kind: "noValidCandidate" });
   };
 
-  type PendingItem = { seq: number; card_id: CardId; input_json: string };
+  type PendingItem = {
+    seq: number;
+    card_id: CardId;
+    input_json: string;
+    attempts: number;
+    hints_json: string | null;
+  };
   type BatchInput = { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
 
   const setItemStatus = (
@@ -690,7 +721,7 @@ export const openLearningMaterial = (
     try {
       pending = database
         .query(
-          `SELECT seq, card_id, input_json FROM review_batch_item
+          `SELECT seq, card_id, input_json, attempts, hints_json FROM review_batch_item
            WHERE batch_id = ? AND status = 'pending' ORDER BY seq`,
         )
         .all(batchId) as PendingItem[];
@@ -752,10 +783,22 @@ export const openLearningMaterial = (
       for (const target of targets) {
         const recent = recentJapanese(target.item.card_id);
         if (!recent.ok) return recent;
+        let previousRejections: readonly string[] = [];
+        try {
+          const parsed: unknown =
+            target.item.hints_json === null ? [] : JSON.parse(target.item.hints_json);
+          if (Array.isArray(parsed))
+            previousRejections = parsed.filter(
+              (hint): hint is string => typeof hint === "string",
+            );
+        } catch {
+          previousRejections = [];
+        }
         batchTargets.push({
           mode: "review" as const,
           card: target.input.card,
           recentJapanese: recent.value,
+          previousRejections,
         });
       }
       const dispatched = await batch.dispatch(batchTargets, first.input.knowledge);
@@ -784,12 +827,14 @@ export const openLearningMaterial = (
       const candidates = byCard.get(item.card_id);
       let status: "ready" | "failed" = "failed";
       let failureKind: string | null = "noValidCandidate";
+      const hints: string[] = [];
       if (input !== undefined && candidates !== undefined) {
-        let rejected: string | null = null;
         for (const value of candidates) {
           const validated = await options.validate({ ...input, value, mode: "review" });
           if (!validated.ok) {
-            rejected = validated.error.kind;
+            failureKind = validated.error.kind;
+            if (validated.error.kind === "validationRejected")
+              hints.push(...validated.error.reasons);
             continue;
           }
           const saved = storeCandidate(
@@ -804,10 +849,34 @@ export const openLearningMaterial = (
           status = "ready";
           failureKind = null;
         }
-        if (status === "failed" && rejected !== null) failureKind = rejected;
       }
       try {
-        setItemStatus(batchId, item.seq, status, failureKind, at);
+        const attempts = item.attempts + 1;
+        if (status === "failed" && attempts < MAX_REVIEW_BATCH_ROUNDS) {
+          // Back into the next round, carrying why this one was refused.
+          database
+            .query(
+              `UPDATE review_batch_item
+               SET attempts = ?, hints_json = ?, failure_kind = ?, updated_at = ?
+               WHERE batch_id = ? AND seq = ?`,
+            )
+            .run(
+              attempts,
+              JSON.stringify([...new Set(hints)]),
+              failureKind,
+              at,
+              batchId,
+              item.seq,
+            );
+        } else {
+          database
+            .query(
+              `UPDATE review_batch_item
+               SET status = ?, attempts = ?, failure_kind = ?, updated_at = ?
+               WHERE batch_id = ? AND seq = ?`,
+            )
+            .run(status, attempts, failureKind, at, batchId, item.seq);
+        }
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
       }
@@ -858,18 +927,20 @@ export const openLearningMaterial = (
         try {
           const rows = database
             .query(
-              `SELECT card_id, status, failure_kind FROM review_batch_item
+              `SELECT card_id, status, failure_kind, attempts FROM review_batch_item
                WHERE batch_id = ? ORDER BY seq`,
             )
             .all(batchId) as {
             card_id: CardId;
             status: string;
             failure_kind: string | null;
+            attempts: number;
           }[];
           if (rows.length === 0) return err({ kind: "reviewBatchNotFound", batchId });
           const completed: CardId[] = [];
           const failed: ReviewBatchFailure[] = [];
           let pending = 0;
+          let round = 1;
           for (const row of rows) {
             if (row.status === "ready") completed.push(row.card_id);
             else if (row.status === "failed")
@@ -877,7 +948,10 @@ export const openLearningMaterial = (
                 cardId: row.card_id,
                 kind: (row.failure_kind ?? "offline") as ReviewBatchFailure["kind"],
               });
-            else pending += 1;
+            else {
+              pending += 1;
+              round = Math.max(round, row.attempts + 1);
+            }
           }
           const snapshot: ReviewBatchProgress = {
             batchId,
@@ -885,6 +959,7 @@ export const openLearningMaterial = (
             pending,
             completed,
             failed,
+            round,
           };
           return ok(snapshot);
         } catch (cause) {

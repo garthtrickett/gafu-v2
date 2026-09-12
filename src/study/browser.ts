@@ -58,6 +58,7 @@ type BrowserModel = {
     failed: number;
     pending: number;
     done: boolean;
+    round: number;
   } | null;
   message: string;
   messageKind: "neutral" | "success" | "error";
@@ -565,6 +566,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             failed: progress.failed.length,
             pending: progress.pending,
             done: progress.done,
+            round: progress.round,
           };
           if (progress.done) {
             window.clearInterval(poller);
@@ -597,6 +599,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           failed: 0,
           pending: dispatched.total,
           done: false,
+          round: 1,
         };
         draw();
         pollReviewBatch(dispatched.batchId);
@@ -857,7 +860,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         ${
                           model.batch.done
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
-                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go and land together, usually within a minute or two; then each is checked and spoken.`
+                            : model.batch.round > 1
+                              ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Round ${model.batch.round} of 3: the ${model.batch.pending} Cards whose sentences were refused are requested again with the reasons attached.`
+                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go and land together, usually within a minute or two; then each is checked and spoken. Refused sentences get up to two more rounds.`
                         }
                       </p>`
                     : ""
