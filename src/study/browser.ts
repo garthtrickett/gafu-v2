@@ -790,6 +790,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   <div>
                     <p class="eyebrow">Fresh validated material</p>
                     <h2>Study</h2>
+                    ${
+                      model.presentation === null
+                        ? html`<p class="review-help">Learn shows the next untaught Card from its stored teaching. Review batch prepares fresh sentences for your due reviews, then works through them. Staged Cards are admitted under your daily limit.</p>`
+                        : ""
+                    }
                   </div>
                   ${
                     model.presentation === null
@@ -829,7 +834,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 }
                 ${
                   model.presentation === null
-                    ? html`<p>Learn shows the next untaught Card from its stored teaching. Review batch prepares fresh sentences for your due reviews, then works through them. Staged Cards are admitted under your daily limit.</p>`
+                    ? ""
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
                         ${
