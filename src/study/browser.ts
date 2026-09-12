@@ -61,6 +61,12 @@ type BrowserModel = {
     result: JishoLookupResult | null;
     message: string;
   } | null;
+  /**
+   * What the learner is waiting on. A single Review generates and speaks a
+   * fresh sentence, which can take most of a minute; disabled buttons alone
+   * read as a hang. Ticks every second while set.
+   */
+  pending: { label: string; detail: string | null; startedAt: number } | null;
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
@@ -219,6 +225,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     search: "",
     typeFilter: "all",
     lookup: null,
+    pending: null,
   };
 
   const refresh = async (): Promise<void> => {
@@ -228,8 +235,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
     ]);
   };
 
-  const run = async (operation: () => Promise<string>): Promise<void> => {
+  const run = async (
+    operation: () => Promise<string>,
+    pending?: { label: string; detail?: string },
+  ): Promise<void> => {
     model.busy = true;
+    let ticker: ReturnType<typeof setInterval> | null = null;
+    if (pending !== undefined) {
+      model.pending = {
+        label: pending.label,
+        detail: pending.detail ?? null,
+        startedAt: Date.now(),
+      };
+      ticker = setInterval(draw, 1000);
+    }
     draw();
     try {
       const message = await operation();
@@ -240,6 +259,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
       model.message = cause instanceof Error ? cause.message : String(cause);
       model.messageKind = "error";
     } finally {
+      if (ticker !== null) clearInterval(ticker);
+      model.pending = null;
       model.busy = false;
       draw();
     }
@@ -447,33 +468,47 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * duplicate text. A segment whose reading is its own writing is kana already
    * and takes no ruby: putting が over が is noise that pushes the line apart.
    */
-  const startSession = (url: string): void => {
-    void run(async () => {
-      let prepared: PreparedMaterial;
-      try {
-        prepared = await requestJson<PreparedMaterial>(url, {
-          method: "POST",
-        });
-      } catch (cause) {
-        // New Cards show only what the import stored. Anything else is an
-        // onboarding gap, not something retrying will fix.
-        if (cause instanceof Error && cause.message === "teachingNotPrepared") {
-          throw new Error(
-            "This Card has no teaching yet. Import it with the cards CLI first.",
-          );
+  const startLearn = (): void => {
+    void run(
+      async () => {
+        let prepared: PreparedMaterial;
+        try {
+          prepared = await requestJson<PreparedMaterial>("/api/study/learn", {
+            method: "POST",
+          });
+        } catch (cause) {
+          // New Cards show only what the import stored. Anything else is an
+          // onboarding gap, not something retrying will fix.
+          if (cause instanceof Error && cause.message === "teachingNotPrepared") {
+            throw new Error(
+              "This Card has no teaching yet. Import it with the cards CLI first.",
+            );
+          }
+          throw cause;
         }
-        throw cause;
-      }
-      present(prepared);
-      return prepared.mode === "teach"
-        ? "Learn this target. It goes back in the queue for review."
-        : "Read the sentence, then check the explanation and mark yourself.";
-    });
+        present(prepared);
+        return "Learn this target. It goes back in the queue for review.";
+      },
+      { label: "Opening the next Card to learn…" },
+    );
   };
 
-  const startLearn = (): void => startSession("/api/study/learn");
-
-  const startReview = (): void => startSession("/api/study/session/review");
+  // A ready batch is the review session: the first banked Card is served
+  // without another press, and grading chains the rest. Nothing to serve
+  // (every Card failed, or was answered elsewhere) closes the batch plainly.
+  const workThroughBatch = (): void => {
+    if (model.presentation !== null) return;
+    void run(
+      async () => {
+        const first = await chainBatch("");
+        if (first === null) return "Batch closed.";
+        if (first === "done") return "Batch complete: nothing left to review.";
+        present(first);
+        return "Read the sentence, then check the explanation and mark yourself.";
+      },
+      { label: "Opening the first review…" },
+    );
+  };
 
   const pollReviewBatch = (batchId: string): void => {
     // Each status poll advances the batch one Card, so polling is the pump:
@@ -508,6 +543,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 ? `Batch ready: ${progress.completed.length} to review.`
                 : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
             model.messageKind = "success";
+            workThroughBatch();
           }
           draw();
         })
@@ -517,24 +553,27 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const startReviewBatch = (): void => {
     if (model.batch !== null && !model.batch.done) return;
-    void run(async () => {
-      const dispatched = await requestJson<{ batchId: string; total: number }>(
-        "/api/study/review-batch",
-        { method: "POST", body: JSON.stringify({}) },
-      );
-      model.batch = {
-        id: dispatched.batchId,
-        total: dispatched.total,
-        completed: 0,
-        completedIds: [],
-        failed: 0,
-        pending: dispatched.total,
-        done: false,
-      };
-      draw();
-      pollReviewBatch(dispatched.batchId);
-      return `Review batch started for ${dispatched.total} Cards.`;
-    });
+    void run(
+      async () => {
+        const dispatched = await requestJson<{ batchId: string; total: number }>(
+          "/api/study/review-batch",
+          { method: "POST", body: JSON.stringify({}) },
+        );
+        model.batch = {
+          id: dispatched.batchId,
+          total: dispatched.total,
+          completed: 0,
+          completedIds: [],
+          failed: 0,
+          pending: dispatched.total,
+          done: false,
+        };
+        draw();
+        pollReviewBatch(dispatched.batchId);
+        return `Review batch started for ${dispatched.total} Cards.`;
+      },
+      { label: "Starting a review batch…" },
+    );
   };
 
   // Seen it records the acknowledgement, then keeps the learner in Learn by
@@ -545,29 +584,32 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
-    void run(async () => {
-      await requestJson("/api/study/session/teach", {
-        method: "POST",
-        body: JSON.stringify({
-          cardId: current.cardId,
-          presentationId: current.id,
-        }),
-      });
-      model.presentation = null;
-      let next: PreparedMaterial;
-      try {
-        next = await requestJson<PreparedMaterial>("/api/study/learn", {
+    void run(
+      async () => {
+        await requestJson("/api/study/session/teach", {
           method: "POST",
+          body: JSON.stringify({
+            cardId: current.cardId,
+            presentationId: current.id,
+          }),
         });
-      } catch (cause) {
-        if (cause instanceof Error && cause.message === "teachingNotPrepared") {
-          return "Teaching seen. Nothing more to learn right now.";
+        model.presentation = null;
+        let next: PreparedMaterial;
+        try {
+          next = await requestJson<PreparedMaterial>("/api/study/learn", {
+            method: "POST",
+          });
+        } catch (cause) {
+          if (cause instanceof Error && cause.message === "teachingNotPrepared") {
+            return "Teaching seen. Nothing more to learn right now.";
+          }
+          throw cause;
         }
-        throw cause;
-      }
-      present(next);
-      return "Teaching seen. Here is the next Card to learn.";
-    });
+        present(next);
+        return "Teaching seen. Here is the next Card to learn.";
+      },
+      { label: "Teaching seen. Opening the next Card…" },
+    );
   };
 
   // After a grade, keep working through a finished batch without sending
@@ -609,29 +651,32 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (model.busy) return;
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
-    void run(async () => {
-      await requestJson("/api/study/session/answer", {
-        method: "POST",
-        body: JSON.stringify({
-          cardId: current.cardId,
-          grade: correct ? "good" : "again",
-          permit: current.permit?.token,
-        }),
-      });
-      model.presentation = null;
-      model.revealed = false;
-      const chained = await chainBatch(current.cardId);
-      if (chained !== null && chained !== "done") {
-        present(chained);
+    void run(
+      async () => {
+        await requestJson("/api/study/session/answer", {
+          method: "POST",
+          body: JSON.stringify({
+            cardId: current.cardId,
+            grade: correct ? "good" : "again",
+            permit: current.permit?.token,
+          }),
+        });
+        model.presentation = null;
+        model.revealed = false;
+        const chained = await chainBatch(current.cardId);
+        if (chained !== null && chained !== "done") {
+          present(chained);
+          return correct
+            ? "Review recorded once. Next batched Card."
+            : "Marked for sooner. Next batched Card.";
+        }
+        if (chained === "done") return "Batch complete.";
         return correct
-          ? "Review recorded once. Next batched Card."
-          : "Marked for sooner. Next batched Card.";
-      }
-      if (chained === "done") return "Batch complete.";
-      return correct
-        ? "Review recorded once. The Card's next due time is saved."
-        : "Marked for sooner. The Card's next due time is saved.";
-    });
+          ? "Review recorded once. The Card's next due time is saved."
+          : "Marked for sooner. The Card's next due time is saved.";
+      },
+      { label: "Saving your answer…" },
+    );
   };
 
   const lookupDialog = (): TemplateResult | "" => {
@@ -752,9 +797,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           <button type="button" @click=${startLearn} ?disabled=${model.busy}>
                             Learn new
                           </button>
-                          <button type="button" @click=${startReview} ?disabled=${model.busy}>
-                            Review
-                          </button>
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
                             Review batch
                           </button>
@@ -763,19 +805,31 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   }
                 </div>
                 ${
+                  model.pending !== null
+                    ? html`<div class="pending" data-testid="session-progress" aria-live="polite">
+                        <div class="pending-bar" aria-hidden="true"></div>
+                        <p class="pending-label">
+                          ${model.pending.label}
+                          <span class="pending-elapsed">${Math.max(0, Math.round((Date.now() - model.pending.startedAt) / 1000))}s</span>
+                        </p>
+                        ${model.pending.detail !== null ? html`<p class="pending-detail">${model.pending.detail}</p>` : ""}
+                      </div>`
+                    : ""
+                }
+                ${
                   model.batch !== null
                     ? html`<p data-testid="batch-progress">
                         ${
                           model.batch.done
-                            ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Press Review to work through.`
-                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}…`
+                            ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
+                            : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Each Card gets a fresh sentence, generated, checked, and spoken, usually 20 to 60 seconds apiece.`
                         }
                       </p>`
                     : ""
                 }
                 ${
                   model.presentation === null
-                    ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
+                    ? html`<p>Learn shows the next untaught Card from its stored teaching. Review batch prepares fresh sentences for your due reviews, then works through them. Staged Cards are admitted under your daily limit.</p>`
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
                         ${
