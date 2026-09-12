@@ -59,3 +59,78 @@ export const splitFurigana = (written: string, reading: string): FuriganaSplit =
     after: end === 0 ? "" : written.slice(written.length - end),
   };
 };
+
+/** One run of a written form: kanji with the reading over it, or writing shown as itself. */
+export type FuriganaPiece = Readonly<{ text: string; reading: string | null }>;
+
+const kanjiRun = /[一-鿿々〆]+/gu;
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+// Katakana and hiragana are the same syllables; a written カ must match a reading か.
+const toHiragana = (value: string): string =>
+  value.replace(/[ァ-ヶ]/gu, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60));
+
+const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[] => {
+  const { before, body, over, after } = splitFurigana(written, reading);
+  if (body === "") return [{ text: written, reading: null }];
+  const pieces: FuriganaPiece[] = [];
+  if (before !== "") pieces.push({ text: before, reading: null });
+  pieces.push({ text: body, reading: over });
+  if (after !== "") pieces.push({ text: after, reading: null });
+  return pieces;
+};
+
+/**
+ * Aligns a reading to its written form so only the kanji carry ruby.
+ *
+ * A segment can be a whole phrase — 噂だけでなく、 reading うわさだけでなく、
+ * — with kana and punctuation before, after, and between its kanji. Every
+ * non-kanji run of the writing must appear literally in the reading, so the
+ * writing is turned into a pattern: kanji runs match any reading, everything
+ * else matches itself. What each kanji run captured is its furigana. A
+ * reading the pattern cannot explain falls back to trimming the shared edges,
+ * so nothing renders worse than it did.
+ */
+export const alignFurigana = (
+  written: string,
+  reading: string,
+): readonly FuriganaPiece[] => {
+  if (reading === "" || reading === written || !hasKanji(written)) {
+    return [{ text: written, reading: null }];
+  }
+  const runs: { text: string; kanji: boolean }[] = [];
+  let cursor = 0;
+  for (const match of written.matchAll(kanjiRun)) {
+    const start = match.index ?? 0;
+    if (start > cursor) runs.push({ text: written.slice(cursor, start), kanji: false });
+    runs.push({ text: match[0], kanji: true });
+    cursor = start + match[0].length;
+  }
+  if (cursor < written.length) runs.push({ text: written.slice(cursor), kanji: false });
+  const pattern = new RegExp(
+    `^${runs.map((run) => (run.kanji ? "(.+?)" : escapeRegExp(toHiragana(run.text)))).join("")}$`,
+    "u",
+  );
+  const matched = pattern.exec(toHiragana(reading));
+  if (matched === null) return edgeTrimmed(written, reading);
+  // Kana normalisation keeps every length, so the captures' positions in the
+  // normalised reading are their positions in the original.
+  const pieces: FuriganaPiece[] = [];
+  let offset = 0;
+  let group = 1;
+  for (const run of runs) {
+    if (run.kanji) {
+      const captured = matched[group] ?? "";
+      group += 1;
+      pieces.push({
+        text: run.text,
+        reading: reading.slice(offset, offset + captured.length),
+      });
+      offset += captured.length;
+    } else {
+      pieces.push({ text: run.text, reading: null });
+      offset += run.text.length;
+    }
+  }
+  return pieces;
+};

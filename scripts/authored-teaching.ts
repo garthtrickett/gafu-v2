@@ -18,7 +18,7 @@ import {
   adjectiveLemma,
   normalizeReading,
 } from "../src/learning-material/validator.ts";
-import { splitFurigana } from "../src/study/furigana.ts";
+import { alignFurigana } from "../src/study/furigana.ts";
 
 export type AuthoredCard = Readonly<{
   type: "vocabulary" | "grammar";
@@ -251,11 +251,11 @@ export const buildTeaching = async (
 /** The sentence with its readings, for showing what was built. */
 export const preview = (value: Record<string, unknown>): string =>
   (value["readingSegments"] as { written: string; reading: string }[])
-    .map((segment) => {
-      const { before, body, over, after } = splitFurigana(
-        segment.written,
-        segment.reading,
-      );
-      return body === "" ? before : `${before}${body}[${over}]${after}`;
-    })
+    .map((segment) =>
+      alignFurigana(segment.written, segment.reading)
+        .map((piece) =>
+          piece.reading === null ? piece.text : `${piece.text}[${piece.reading}]`,
+        )
+        .join(""),
+    )
     .join("");

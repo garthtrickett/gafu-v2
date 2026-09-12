@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { splitFurigana } from "./furigana.ts";
+import { alignFurigana, splitFurigana } from "./furigana.ts";
 
 const shown = (written: string, reading: string): string => {
   const { before, body, over, after } = splitFurigana(written, reading);
@@ -52,6 +52,56 @@ describe("where a reading sits over a written form", () => {
     ] as const) {
       const { before, body, after } = splitFurigana(written, reading);
       expect(`${before}${body}${after}`).toBe(written);
+    }
+  });
+});
+
+const aligned = (written: string, reading: string): string =>
+  alignFurigana(written, reading)
+    .map((piece) =>
+      piece.reading === null ? piece.text : `[${piece.text}:${piece.reading}]`,
+    )
+    .join("");
+
+describe("aligning a reading to a written phrase", () => {
+  test("kana and punctuation at either edge stay as writing", () => {
+    expect(aligned("噂だけでなく、", "うわさだけでなく、")).toBe(
+      "[噂:うわさ]だけでなく、",
+    );
+    expect(aligned("も広がる。", "もひろがる。")).toBe("も[広:ひろ]がる。");
+    expect(aligned("評判", "ひょうばん")).toBe("[評判:ひょうばん]");
+  });
+
+  test("kana between kanji runs is matched, so each run carries only its own reading", () => {
+    expect(aligned("食べ放題", "たべほうだい")).toBe("[食:た]べ[放題:ほうだい]");
+    expect(aligned("消しゴム", "けしごむ")).toBe("[消:け]しゴム");
+    expect(aligned("引っ越し", "ひっこし")).toBe("[引:ひ]っ[越:こ]し");
+  });
+
+  test("katakana in the writing matches its hiragana reading, and the shown reading is the original", () => {
+    expect(aligned("コーヒー", "こーひー")).toBe("コーヒー");
+    expect(aligned("食べ放題", "タベホウダイ")).toBe("[食:タ]べ[放題:ホウダイ]");
+  });
+
+  test("a reading the writing cannot explain falls back to trimming the edges", () => {
+    // Reading has no る: no literal match, so the old behaviour applies.
+    expect(aligned("広がる", "ひろい")).toBe("[広がる:ひろい]");
+    expect(aligned("広い", "い")).toBe("広い");
+  });
+
+  test("the written form is always recoverable", () => {
+    for (const [written, reading] of [
+      ["噂だけでなく、", "うわさだけでなく、"],
+      ["食べ放題", "たべほうだい"],
+      ["コーヒー", "こーひー"],
+      ["広がる", "ひろい"],
+      ["人々", "ひとびと"],
+    ] as const) {
+      expect(
+        alignFurigana(written, reading)
+          .map((piece) => piece.text)
+          .join(""),
+      ).toBe(written);
     }
   });
 });
