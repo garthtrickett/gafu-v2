@@ -101,7 +101,10 @@ const migrate = (
       if (!applied.every(({ version }, index) => version === index + 1)) {
         throw new Error("Learning Material migration history is not contiguous");
       }
-      if (current.version >= 2) return;
+      // Each step applies when the database is below its version. No step
+      // returns early: a database at version 2 must still receive 3 and 4.
+      // (An early return here once left production without the tables the
+      // later steps create, while fresh databases in tests had them all.)
       if (current.version < 1) {
         database.exec(`
         CREATE TABLE validated_presentation (
@@ -134,10 +137,11 @@ const migrate = (
           )
           .run(appliedAt);
       }
-      // Review batches: one row per card, advanced one card per status poll.
-      // Generation banks reserves without taking, so work-through serves with
-      // fresh permits through the normal path.
-      database.exec(`
+      if (current.version < 2) {
+        // Review batches: one row per card. Generation banks reserves without
+        // taking, so work-through serves with fresh permits through the
+        // normal path.
+        database.exec(`
         CREATE TABLE IF NOT EXISTS review_batch_item (
           batch_id TEXT NOT NULL,
           seq INTEGER NOT NULL,
@@ -151,15 +155,16 @@ const migrate = (
         CREATE INDEX IF NOT EXISTS review_batch_pending_idx
           ON review_batch_item(batch_id, status, seq);
       `);
-      database
-        .query(
-          "INSERT INTO learning_material_migration(version, applied_at) VALUES (2, ?)",
-        )
-        .run(appliedAt);
-      if (current.version >= 3) return;
-      // Spoken sentences, one clip per presentation, and the daily ceiling
-      // that bounds what a runaway session can spend on synthesis.
-      database.exec(`
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (2, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 3) {
+        // Spoken sentences, one clip per presentation, and the daily ceiling
+        // that bounds what a runaway session can spend on synthesis.
+        database.exec(`
         CREATE TABLE IF NOT EXISTS presentation_audio (
           presentation_id TEXT PRIMARY KEY,
           content_type TEXT NOT NULL,
@@ -176,26 +181,28 @@ const migrate = (
           updated_at TEXT NOT NULL
         );
       `);
-      database
-        .query(
-          "INSERT INTO learning_material_migration(version, applied_at) VALUES (3, ?)",
-        )
-        .run(appliedAt);
-      if (current.version >= 4) return;
-      // The provider job a review batch dispatched, so polls across
-      // processes find it again instead of generating twice.
-      database.exec(`
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (3, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 4) {
+        // The provider job a review batch dispatched, so polls across
+        // processes find it again instead of generating twice.
+        database.exec(`
         CREATE TABLE IF NOT EXISTS review_batch_job (
           batch_id TEXT PRIMARY KEY,
           job_id TEXT NOT NULL,
           dispatched_at TEXT NOT NULL
         );
       `);
-      database
-        .query(
-          "INSERT INTO learning_material_migration(version, applied_at) VALUES (4, ?)",
-        )
-        .run(appliedAt);
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (4, ?)",
+          )
+          .run(appliedAt);
+      }
     });
     apply.immediate();
     return ok(undefined);
