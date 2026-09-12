@@ -380,6 +380,13 @@ label {
   color: #c8a75a;
 }
 
+.syncing {
+  margin: -0.6rem 0 1rem;
+  color: #7f877b;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .pending {
   margin: 0.8rem 0;
   padding: 0.9rem 1rem;

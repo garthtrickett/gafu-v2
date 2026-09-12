@@ -421,6 +421,71 @@ const handleApi = async (
   if (request.method === "POST" && url.pathname === "/api/study/session") {
     return serveFirst(study, material, null);
   }
+  if (request.method === "POST" && url.pathname === "/api/study/session/learn-all") {
+    // The whole Learn session at once: every untaught due Card with stored
+    // teaching, prepared together so the browser can walk them with no
+    // round trip per Card. Cards with nothing stored are passed over as the
+    // single-Card route does; an empty hand is the same explicit gap.
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const split = splitDue(queue.value.due, material);
+    if (!split.ok) return materialResponse(split);
+    const prepared = await Promise.all(
+      split.value.untaught.map((item) =>
+        material.prepare({ card: item.card, knowledge: knowledge.value }),
+      ),
+    );
+    const items: PreparedMaterial[] = [];
+    for (const result of prepared) {
+      if (result.ok) items.push(result.value);
+      else if (result.error.kind !== "teachingNotPrepared")
+        return materialResponse(result);
+    }
+    if (items.length === 0) {
+      return Response.json({ error: { kind: "teachingNotPrepared" } }, { status: 422 });
+    }
+    return Response.json({ items });
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/session/review-all") {
+    // The whole review session at once, for the Cards a finished batch
+    // banked. Only banked reserves are served: nothing is generated here, so
+    // a Card that lost its reserve is simply left out and stays due.
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      !Array.isArray(body["cardIds"]) ||
+      body["cardIds"].length > 50 ||
+      !body["cardIds"].every((id) => typeof id === "string" && id !== "")
+    ) {
+      return invalidRequest("Card IDs are invalid.");
+    }
+    const queue = study.studyQueue();
+    if (!queue.ok) return failureResponse(queue.error);
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const wanted = new Set(body["cardIds"] as string[]);
+    const cards = queue.value.due
+      .filter((item) => wanted.has(item.card.id))
+      .map((item) => item.card);
+    const banked: CardSummary[] = [];
+    for (const card of cards) {
+      const reserve = material.hasReserve(card.id, "review");
+      if (!reserve.ok) return materialResponse(reserve);
+      if (reserve.value) banked.push(card);
+    }
+    const prepared = await Promise.all(
+      banked.map((card) => material.prepare({ card, knowledge: knowledge.value })),
+    );
+    const items: PreparedMaterial[] = [];
+    for (const result of prepared) {
+      if (!result.ok) return materialResponse(result);
+      items.push(result.value);
+    }
+    return Response.json({ items });
+  }
   if (request.method === "POST" && url.pathname === "/api/study/learn") {
     return serveFirst(study, material, true);
   }

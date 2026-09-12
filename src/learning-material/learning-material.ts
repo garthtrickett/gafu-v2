@@ -24,9 +24,14 @@ import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 5;
+export const MATERIAL_SCHEMA_VERSION = 6;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
-const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
+/**
+ * A session is handed to the browser whole, so a permit must outlive the
+ * time a learner takes to reach its Card: hours, not minutes. It stays
+ * single-use (Review Events hold the permit id uniquely) and target-bound.
+ */
+const PRESENTATION_PERMIT_TTL_MS = 12 * 60 * 60 * 1_000;
 const MAXIMUM_PENDING_PERMITS = 1_024;
 
 type MaterialRow = Readonly<{
@@ -228,6 +233,25 @@ const migrate = (
           )
           .run(appliedAt);
       }
+      if (current.version < 6) {
+        // Permits outlive a process now that a session is downloaded whole:
+        // a deploy mid-session must not strand twenty answers in the outbox.
+        database.exec(`
+        CREATE TABLE IF NOT EXISTS presentation_permit (
+          token TEXT PRIMARY KEY,
+          id TEXT NOT NULL,
+          card_id TEXT NOT NULL,
+          presentation_id TEXT NOT NULL,
+          issued_at TEXT NOT NULL,
+          contract_version TEXT NOT NULL
+        );
+      `);
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (6, ?)",
+          )
+          .run(appliedAt);
+      }
     });
     apply.immediate();
     return ok(undefined);
@@ -258,29 +282,77 @@ export const openLearningMaterial = (
     return migrated;
   }
 
-  const permits = new Map<string, StoredPermit>();
+  type PermitRow = {
+    token: string;
+    id: string;
+    card_id: CardId;
+    presentation_id: string;
+    issued_at: string;
+    contract_version: string;
+  };
   const prunePermits = (time: number): void => {
-    for (const [token, permit] of permits) {
-      if (time - permit.issuedAt.getTime() > PRESENTATION_PERMIT_TTL_MS) {
-        permits.delete(token);
-      }
+    database
+      .query("DELETE FROM presentation_permit WHERE issued_at < ?")
+      .run(new Date(time - PRESENTATION_PERMIT_TTL_MS).toISOString());
+    const { count } = database
+      .query("SELECT count(*) AS count FROM presentation_permit")
+      .get() as { count: number };
+    if (count >= MAXIMUM_PENDING_PERMITS) {
+      database
+        .query(
+          `DELETE FROM presentation_permit WHERE token IN (
+             SELECT token FROM presentation_permit ORDER BY issued_at, token LIMIT ?
+           )`,
+        )
+        .run(count - MAXIMUM_PENDING_PERMITS + 1);
     }
-    while (permits.size >= MAXIMUM_PENDING_PERMITS) {
-      const oldest = permits.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      permits.delete(oldest);
-    }
+  };
+  const issuePermit = (permit: StoredPermit): void => {
+    database
+      .query(
+        `INSERT INTO presentation_permit(
+           token, id, card_id, presentation_id, issued_at, contract_version
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        permit.token,
+        permit.id,
+        permit.cardId,
+        permit.presentationId,
+        permit.issuedAt.toISOString(),
+        permit.contractVersion,
+      );
   };
   const permitVerifier: PresentationPermitVerifier = {
     verify: (
       permit: PresentationPermit,
       now: Date,
     ): Result<VerifiedPresentationPermit, PresentationPermitFailure> => {
-      prunePermits(now.getTime());
-      const stored = permits.get(permit.token);
-      return stored === undefined
-        ? err({ kind: "presentationInvalid", detail: "unknown presentation permit" })
-        : ok(stored);
+      try {
+        prunePermits(now.getTime());
+        const row = database
+          .query(
+            `SELECT token, id, card_id, presentation_id, issued_at, contract_version
+             FROM presentation_permit WHERE token = ?`,
+          )
+          .get(permit.token) as PermitRow | null;
+        if (row === null) {
+          return err({
+            kind: "presentationInvalid",
+            detail: "unknown presentation permit",
+          });
+        }
+        return ok({
+          token: row.token,
+          id: row.id,
+          cardId: row.card_id,
+          presentationId: row.presentation_id,
+          issuedAt: new Date(row.issued_at),
+          contractVersion: row.contract_version,
+        });
+      } catch {
+        return err({ kind: "presentationInvalid", detail: "permit store unavailable" });
+      }
     },
   };
 
@@ -517,7 +589,7 @@ export const openLearningMaterial = (
       if (mode === "review") {
         prunePermits(observedAt.value.getTime());
         const token = options.nextToken();
-        permits.set(token, {
+        issuePermit({
           token,
           id: options.nextId(),
           cardId,

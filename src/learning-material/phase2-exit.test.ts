@@ -221,11 +221,14 @@ describe("Phase 2 generated study lifecycle", () => {
     const restartedCustody = createProviderKeyCustody({
       verify: async () => ok(undefined),
     });
+    // Permits persist across the restart now, so the restarted process must
+    // not reissue the tokens the first one used; real tokens are random.
+    const restartedTokens = sequentialIds();
     const restartedMaterial = openLearningMaterial({
       databasePath: app.databasePath,
       clock: app.clock.now,
       nextId: sequentialIds(),
-      nextToken: sequentialIds(),
+      nextToken: () => `restarted-${restartedTokens()}`,
       provider: createScriptedMaterialProvider([
         err({ kind: "timeout", detail: "provider timed out" }),
       ]),

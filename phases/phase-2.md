@@ -351,7 +351,8 @@ appears in responses, logs, inspection, or backup.
 
 Add Learning Material's migration, persisted validated pool, teaching
 acknowledgement, bounded generation attempts, reserve selection, atomic show
-record, and in-memory permit authority.
+record, and in-memory permit authority (permits moved to the database in
+Patch 2.25).
 
 **Gate:** only independently validated material is stored or permitted;
 concurrent preparation cannot show one reserve twice; provider outage uses only
@@ -832,6 +833,37 @@ hundreds of Cards. From a distance that alone was most of a second per click.
 **Gate:** the deployment test reads the baseline summary from the snapshot
 and the words from the knowledge route; the journey asserts knowledge is
 absent from the snapshot; the full required validation passes.
+
+### Patch 2.25 — The session comes down whole; writes go up behind
+
+Every click waited on the server. V1 felt instant because the session lived
+in the browser; V2 keeps scheduling, admission, and permits on the server
+and gets the same feel by handing the browser the whole session at once and
+sending its writes in the background.
+
+- `POST /api/study/session/learn-all` prepares every untaught due Card with
+  stored teaching together; `POST /api/study/session/review-all` prepares
+  every banked review a finished batch names, never generating. Both fill
+  missing clips and return the presentations as one list.
+- The browser walks the list. Seen it and each grade go to an outbox and the
+  next Card shows at once; the clip after the current one is fetched ahead.
+  The outbox sends in order, retries transport failures with backoff, and
+  records a refused write rather than resending it (the Card stays due).
+  "Syncing N" shows while anything is queued, a failed write is named, and
+  leaving the page with writes queued asks first. When the queue drains the
+  bank is refetched, since grades change it.
+- Permits now live in the database and last twelve hours, because a session
+  can outlast ten minutes and a deploy must not strand its answers. They stay
+  target-bound and single-use: Review Events hold the permit id uniquely.
+  Patch 2.4's in-memory permit authority is superseded by this.
+- Out of scope here, as agreed: a persisted outbox and offline study are the
+  next patch; client-side scheduling stays out for good.
+
+**Gate:** outbox tests for order, retry, give-up, and refusal; a permit
+survives a restart and expires after twelve hours; the journey holds the
+first acknowledgement and the first grade and sees the next Card on screen
+with "Syncing 1" before either is released; the full required validation
+passes.
 
 ## Exit gate
 
