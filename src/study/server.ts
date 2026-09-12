@@ -263,8 +263,19 @@ const snapshot = (study: Study, material: LearningMaterial): Response => {
     status.value.observedAt,
   );
   if (!session.ok) return materialResponse(session);
+  // Whether each Card has been taught (acknowledged) or can be taught from a
+  // banked sentence. Learn walks past a Card with neither; without these the
+  // bank cannot say which, and the learner is left guessing what to author.
+  const bank: (CardSummary & { taught: boolean; teachable: boolean })[] = [];
+  for (const card of cards.value) {
+    const taught = material.hasTeaching(card.id);
+    if (!taught.ok) return materialResponse(taught);
+    const teachable = material.hasReserve(card.id, "teach");
+    if (!teachable.ok) return materialResponse(teachable);
+    bank.push({ ...card, taught: taught.value, teachable: teachable.value });
+  }
   return Response.json({
-    cards: cards.value,
+    cards: bank,
     preferences: preferences.value,
     knowledge: knowledge.value,
     status: status.value,
