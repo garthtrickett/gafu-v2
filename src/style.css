@@ -303,14 +303,27 @@ label {
 
 .review-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.5rem;
 }
 
 .review-heading h2,
 .review-heading p {
   margin-bottom: 0;
+}
+
+/* The help sits under the title, in the left column, so the buttons keep
+   the right column to themselves instead of having copy run under them. */
+.review-heading .review-help {
+  max-width: 60ch;
+  margin-top: 0.5rem;
+  color: #9fa69c;
+}
+
+.review-heading .button-row {
+  flex-shrink: 0;
+  margin-top: 1.2rem;
 }
 
 .presentation {
