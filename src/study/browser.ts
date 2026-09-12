@@ -433,6 +433,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  // Seen it records the acknowledgement, then keeps the learner in Learn by
+  // serving the next untaught Card straight away. The taught Card itself is
+  // never chained into its review (Patch 2.9); only the next first exposure
+  // follows. Running out is the natural end of the session, not an error:
+  // the buttons come back with a plain message.
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
@@ -445,7 +450,18 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }),
       });
       model.presentation = null;
-      return "Teaching seen. The Card goes back in the queue for review.";
+      try {
+        model.presentation = await requestJson<PreparedMaterial>("/api/study/learn", {
+          method: "POST",
+        });
+      } catch (cause) {
+        if (cause instanceof Error && cause.message === "teachingNotPrepared") {
+          return "Teaching seen. Nothing more to learn right now.";
+        }
+        throw cause;
+      }
+      model.revealed = false;
+      return "Teaching seen. Here is the next Card to learn.";
     });
   };
 
@@ -607,7 +623,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                 <p class="answer-copy">${model.presentation.material.explanation}</p>
                                 <p class="answer-copy">${model.presentation.material.usageNote}</p>
                               </div>
-                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — back to the queue</button>`
+                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — next Card</button>`
                             : model.revealed
                               ? html`<div class="answer" data-testid="material-answer">
                                   <strong>${model.presentation.material.answer}</strong>

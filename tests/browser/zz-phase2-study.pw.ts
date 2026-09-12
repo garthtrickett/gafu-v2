@@ -129,18 +129,19 @@ test("configures a key and teaches before the first generated review", async ({
   await attachTeaching("鳥", "とり", "bird", "A general word for a bird.", "鳥かな。");
   await attachTeaching("猫", "ねこ", "cat", "A general word for a cat.", "猫かな。");
 
-  // Queue order is by Card id, so either Card can come first. Teach both,
-  // collecting which meaning each exposure showed. Seen it changes no state
-  // and no schedule, so the only visible proof it landed is the Card moving
-  // from the "to learn" tile to the "to review" tile. The baseline is read
-  // after Learn opens, because admission happens on that first press.
+  // Queue order is by Card id, so either Card can come first. One Learn press
+  // teaches both: Seen it records the first and serves the second without a
+  // trip back to the buttons. Seen it changes no state and no schedule, so
+  // the visible proof it landed is the Card moving from the "to learn" tile
+  // to the "to review" tile. The baseline is read after Learn opens, because
+  // admission happens on that first press.
   const tile = async (name: string): Promise<number> =>
     Number(
       (await page.getByTestId(`tile-${name}`).locator("strong").textContent()) ?? "",
     );
   const learned: string[] = [];
+  await review.getByRole("button", { name: "Learn new" }).click();
   for (let round = 0; round < 2; round += 1) {
-    await review.getByRole("button", { name: "Learn new" }).click();
     await expect(review.getByText("teach", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
@@ -149,8 +150,8 @@ test("configures a key and teaches before the first generated review", async ({
     const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
     learned.push(taught.includes("cat") ? "cat" : "bird");
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
-    await review.getByRole("button", { name: "Seen it — back to the queue" }).click();
-    await expect(page.getByRole("status")).toContainText("back in the queue");
+    await review.getByRole("button", { name: "Seen it — next Card" }).click();
+    await expect(page.getByRole("status")).toContainText("Teaching seen");
     await expect(page.getByTestId("tile-learn").locator("strong")).toHaveText(
       String(toLearn - 1),
     );
@@ -161,8 +162,10 @@ test("configures a key and teaches before the first generated review", async ({
   expect(learned.sort()).toEqual(["bird", "cat"]);
 
   // Both taught Cards are out of the learn queue now. What remains untaught
-  // has no stored teaching anywhere, so Learn walks past all of it and says
-  // so instead of idling on the first gap.
+  // has no stored teaching anywhere, so the chain ends on the buttons with a
+  // plain message, and a fresh Learn press walks past all of it and says so
+  // instead of idling on the first gap.
+  await expect(page.getByRole("status")).toContainText("Nothing more to learn");
   await review.getByRole("button", { name: "Learn new" }).click();
   await expect(page.getByRole("status")).toContainText("has no teaching yet");
 
