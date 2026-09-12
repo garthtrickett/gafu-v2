@@ -129,6 +129,17 @@ export type PreparedMaterial = Readonly<{
   material: GeneratedMaterial;
   permit: PresentationPermit | null;
   source: "generated" | "reserve";
+  /**
+   * Where the browser fetches the spoken sentence, or null when no clip
+   * exists: speech unconfigured, the daily ceiling reached, or synthesis
+   * failed. Material never waits on audio and never fails for lack of it.
+   */
+  audioUrl: string | null;
+}>;
+
+export type PresentationAudio = Readonly<{
+  contentType: "audio/mpeg" | "audio/wav";
+  bytes: Uint8Array;
 }>;
 
 export type PrepareMaterial = Readonly<{
@@ -195,6 +206,10 @@ export type LearningMaterial = Readonly<{
     }>,
   ) => Promise<Result<void, MaterialFailure>>;
   inspectLastRequest: () => Result<RedactedProviderRequest, MaterialFailure>;
+  /** The stored clip for a presentation, or null when it has none. */
+  presentationAudio: (
+    presentationId: string,
+  ) => Result<PresentationAudio | null, MaterialFailure>;
   permitVerifier: PresentationPermitVerifier;
   close: () => void;
 }>;

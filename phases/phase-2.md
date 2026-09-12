@@ -39,7 +39,7 @@ advances SRS.
 ### Out of scope
 
 - Subtitle-derived targets, Subtitle Sets, Preparation Gaps, or Plans.
-- Audio generation or recording.
+- Audio recording. (Spoken sentences arrived later as Patch 2.18.)
 - Watch, media playback, or subtitle capture.
 - Multiple production AI providers, hosted accounts, or durable credential
   storage.
@@ -644,6 +644,69 @@ Two presentation fixes on the teach card, from the operator's screen.
   neighbours. Colour alone marks the target now.
 
 **Gate:** the browser journeys pass unchanged; the full required validation
+passes.
+
+### Patch 2.17 — Highlight a word for Jisho
+
+Carried over from V1. Dragging over a word in the sentence, on a teach or a
+review card, opens a dictionary dialog for it. The browser cannot call
+jisho.org directly (no CORS headers), so the server proxies one search.
+
+- Selection is read by cloning the range and removing `rt` annotations:
+  `Selection.toString()` interleaves furigana with the base text. The
+  listener sits on the document, because a drag ends outside the sentence,
+  and the range decides whether the highlight is in scope. A collapsed
+  selection (a click) never raises a lookup.
+- The term is reduced on both sides: whitespace collapsed, edge punctuation
+  stripped, at most 24 characters, at least one Japanese character. Anything
+  else is refused before it reaches jisho.org.
+- `GET /api/dictionary/jisho?keyword=` sits behind private access like every
+  API route, so the proxy is not an open relay. A 6-hour, 500-entry cache
+  keeps repeated highlights off a free community API; failures are never
+  cached. jisho.org's unversioned payload is treated as untrusted: an
+  unreadable entry is dropped, an unreadable payload is "no entry".
+- One lookup at a time; completion is term-guarded so a slow answer cannot
+  land on a later highlight. Escape closes and clears the selection.
+- Under the fake AI a deterministic dictionary answers, so journeys never
+  reach the network.
+
+**Gate:** unit tests for term reduction, payload reduction, and the proxy's
+cache and failure behaviour; the journey highlights the target in a teach
+sentence, sees the dialog, and closes it with Escape; the full required
+validation passes.
+
+### Patch 2.18 — Spoken sentences
+
+Carried over from V1, where a Google voice said every review sentence and a
+Listen button replayed it. V2 says sentences through the same OpenAI key that
+generates them, because Railway holds no Google service account. Everything
+above the provider is provider-agnostic.
+
+- A generated review sentence is spoken when it is banked, concurrently for
+  the candidates of one generation, so a later serve is instant. A
+  presentation taken without a clip (an authored teach sentence, or a reserve
+  banked before this patch) is spoken on first serve. Either way the clip is
+  stored once per presentation and served from
+  `GET /api/study/presentations/:id/audio` as an immutable private resource.
+- Audio is an extra. No provider, the daily ceiling reached, or a failed
+  synthesis leaves `audioUrl: null` and the sentence still serves. Material
+  never waits on audio to fail.
+- The daily ceiling (`GAFU_SPEECH_DAILY_LIMIT`, default 200) is an atomic
+  conditional upsert per UTC day; cache hits do not count.
+  `GAFU_SPEECH_DISABLED=1` turns clips off. Voice and model come from
+  `GAFU_OPENAI_SPEECH_VOICE` and `GAFU_OPENAI_SPEECH_MODEL`; the provider's
+  identity and a synthesis version are stored with each clip, so a voice
+  change is visible per row and regeneration is a version bump, not a purge.
+- The browser says the sentence once when a presentation with a clip is
+  shown, including chained ones, and offers "🔊 Listen" with the `R` key. A
+  refused autoplay is the browser's policy, not a fault.
+- The fake speech provider returns a short silent WAV, so journeys exercise
+  the whole clip path with no network.
+
+**Gate:** unit tests for the OpenAI speech request, MP3 validation, and
+failure mapping, and for the material module's eager and lazy synthesis, the
+ceiling, and audio-less serving; the journey sees Listen on a teach card and
+on a generated review, and fetches the clip; the full required validation
 passes.
 
 ## Exit gate

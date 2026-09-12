@@ -350,6 +350,9 @@ label {
   color: #aeb5aa;
   font-weight: 400;
   letter-spacing: 0.02em;
+  /* Readings are furigana, not text to copy: dragging over 放題 should give
+     放題, never ほうだい放題. The JS reader strips them as well. */
+  user-select: none;
 }
 
 .presentation .japanese .target {
@@ -362,6 +365,101 @@ label {
 
 .presentation .japanese .target rt {
   color: #c8a75a;
+}
+
+.sentence-tools {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: -1rem 0 1rem;
+}
+
+.sentence-tools .hint {
+  margin: 0;
+  color: #7f877b;
+  font-size: 0.85rem;
+}
+
+.lookup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 70%);
+}
+
+.lookup-dialog {
+  width: 100%;
+  max-width: 32rem;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 1.5rem;
+  border: 1px solid #333a31;
+  border-radius: 1rem;
+  background: #101410;
+}
+
+.lookup-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.lookup-heading h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.lookup-entries,
+.lookup-senses {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.lookup-entries > li {
+  margin: 1rem 0;
+  list-style: none;
+}
+
+.lookup-word {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+}
+
+.lookup-reading {
+  color: #a7cf64;
+}
+
+.lookup-senses li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+}
+
+.lookup-pos {
+  color: #7f877b;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.lookup-tags {
+  color: #d9b45c;
+  font-size: 0.85rem;
+}
+
+@media (min-width: 40rem) {
+  .lookup-backdrop {
+    align-items: center;
+  }
 }
 
 .presentation .answer {

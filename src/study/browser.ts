@@ -1,4 +1,9 @@
 import { html, render, type TemplateResult } from "lit-html";
+import {
+  extractJapaneseLookupTerm,
+  type JishoLookupResult,
+  jishoWebUrl,
+} from "../dictionary/jisho.ts";
 import type {
   PreparedMaterial,
   ProviderStatus,
@@ -15,6 +20,7 @@ import type {
   StudyStatus,
 } from "./contracts.ts";
 import { splitFurigana } from "./furigana.ts";
+import { clearSelection, readSelectedBaseText } from "./selection.ts";
 import type { SessionCounts } from "./session-split.ts";
 
 type BrowserSnapshot = Readonly<{
@@ -44,6 +50,17 @@ type BrowserModel = {
   messageKind: "neutral" | "success" | "error";
   search: string;
   typeFilter: "all" | "grammar" | "vocabulary";
+  /**
+   * One dictionary lookup at a time, raised by highlighting a word in the
+   * sentence. Completion is term-guarded so a slow lookup cannot land on a
+   * later highlight.
+   */
+  lookup: {
+    term: string;
+    status: "loading" | "loaded" | "error";
+    result: JishoLookupResult | null;
+    message: string;
+  } | null;
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
@@ -201,6 +218,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     messageKind: "neutral",
     search: "",
     typeFilter: "all",
+    lookup: null,
   };
 
   const refresh = async (): Promise<void> => {
@@ -336,6 +354,91 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  // One pronunciation at a time. A rejected play() is the browser's autoplay
+  // policy, not a fault: the Listen button is right there.
+  let audio: HTMLAudioElement | null = null;
+  const playAudio = (url: string): void => {
+    audio?.pause();
+    audio = new Audio(url);
+    audio.play().catch(() => undefined);
+  };
+  const replayAudio = (): void => {
+    const url = model.presentation?.audioUrl;
+    if (url) playAudio(url);
+  };
+
+  /** Shows a presentation and, when it has audio, says the sentence once. */
+  const present = (prepared: PreparedMaterial): void => {
+    model.presentation = prepared;
+    model.revealed = false;
+    if (prepared.audioUrl !== null) playAudio(prepared.audioUrl);
+  };
+
+  const closeLookup = (): void => {
+    clearSelection(window.getSelection());
+    model.lookup = null;
+    draw();
+  };
+
+  const openLookup = (term: string): void => {
+    model.lookup = { term, status: "loading", result: null, message: "" };
+    draw();
+    void (async () => {
+      let next: NonNullable<BrowserModel["lookup"]>;
+      try {
+        const result = await requestJson<JishoLookupResult>(
+          `/api/dictionary/jisho?keyword=${encodeURIComponent(term)}`,
+        );
+        next = { term, status: "loaded", result, message: "" };
+      } catch (cause) {
+        const kind = cause instanceof Error ? cause.message : "";
+        next = {
+          term,
+          status: "error",
+          result: null,
+          message:
+            kind === "invalidTerm"
+              ? "That highlight is not a Japanese word."
+              : "Jisho could not be reached right now.",
+        };
+      }
+      if (model.lookup?.term !== term) return;
+      model.lookup = next;
+      draw();
+    })();
+  };
+
+  // A drag frequently ends outside the sentence box, so the listener lives on
+  // the document and the range decides whether the highlight is in scope.
+  const handleSelectionLookup = (): void => {
+    if (model.lookup !== null || model.presentation === null) return;
+    const container = root.querySelector("[data-japanese-sentence]");
+    if (container === null) return;
+    const selected = readSelectedBaseText(window.getSelection(), container);
+    if (selected === null) return;
+    const term = extractJapaneseLookupTerm(selected);
+    if (term === null) return;
+    openLookup(term);
+  };
+  document.addEventListener("mouseup", handleSelectionLookup);
+  document.addEventListener("touchend", handleSelectionLookup);
+
+  document.addEventListener("keydown", (event) => {
+    if (model.lookup !== null) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeLookup();
+      }
+      return;
+    }
+    const target = event.target as Element | null;
+    if (target?.matches("input, button, select, textarea")) return;
+    if (event.key === "r" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      replayAudio();
+    }
+  });
+
   /**
    * The sentence with a reading over each written form that needs one.
    *
@@ -346,8 +449,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
    */
   const startSession = (url: string): void => {
     void run(async () => {
+      let prepared: PreparedMaterial;
       try {
-        model.presentation = await requestJson<PreparedMaterial>(url, {
+        prepared = await requestJson<PreparedMaterial>(url, {
           method: "POST",
         });
       } catch (cause) {
@@ -360,8 +464,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }
         throw cause;
       }
-      model.revealed = false;
-      return model.presentation.mode === "teach"
+      present(prepared);
+      return prepared.mode === "teach"
         ? "Learn this target. It goes back in the queue for review."
         : "Read the sentence, then check the explanation and mark yourself.";
     });
@@ -450,8 +554,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }),
       });
       model.presentation = null;
+      let next: PreparedMaterial;
       try {
-        model.presentation = await requestJson<PreparedMaterial>("/api/study/learn", {
+        next = await requestJson<PreparedMaterial>("/api/study/learn", {
           method: "POST",
         });
       } catch (cause) {
@@ -460,7 +565,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }
         throw cause;
       }
-      model.revealed = false;
+      present(next);
       return "Teaching seen. Here is the next Card to learn.";
     });
   };
@@ -517,8 +622,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       model.revealed = false;
       const chained = await chainBatch(current.cardId);
       if (chained !== null && chained !== "done") {
-        model.presentation = chained;
-        model.revealed = false;
+        present(chained);
         return correct
           ? "Review recorded once. Next batched Card."
           : "Marked for sooner. Next batched Card.";
@@ -528,6 +632,71 @@ export const mountStudyApp = (root: HTMLElement): void => {
         ? "Review recorded once. The Card's next due time is saved."
         : "Marked for sooner. The Card's next due time is saved.";
     });
+  };
+
+  const lookupDialog = (): TemplateResult | "" => {
+    const lookup = model.lookup;
+    if (lookup === null) return "";
+    const body =
+      lookup.status === "loading"
+        ? html`<p>Looking up ${lookup.term} on Jisho…</p>`
+        : lookup.status === "error"
+          ? html`<p role="alert">${lookup.message}</p>`
+          : lookup.result === null || lookup.result.entries.length === 0
+            ? html`<p>Jisho has no entry for ${lookup.term}. Try highlighting a shorter part of the word.</p>`
+            : html`<ul class="lookup-entries">
+                ${lookup.result.entries.map(
+                  (entry) => html`<li>
+                    <p class="lookup-word" lang="ja">
+                      <strong>${entry.forms[0]?.word ?? entry.slug}</strong>
+                      ${entry.forms[0]?.reading ? html`<span class="lookup-reading">${entry.forms[0].reading}</span>` : ""}
+                      ${entry.isCommon ? html`<span class="pill">common</span>` : ""}
+                      ${entry.jlpt.map((level) => html`<span class="pill">${level.replace("jlpt-", "")}</span>`)}
+                    </p>
+                    ${
+                      entry.forms.length > 1
+                        ? html`<p class="answer-copy" lang="ja">Other forms: ${entry.forms
+                            .slice(1)
+                            .map((form) =>
+                              form.word
+                                ? `${form.word}【${form.reading ?? ""}】`
+                                : (form.reading ?? ""),
+                            )
+                            .join("、")}</p>`
+                        : ""
+                    }
+                    <ol class="lookup-senses">
+                      ${entry.senses.map(
+                        (sense) => html`<li>
+                          ${sense.partsOfSpeech.length > 0 ? html`<span class="lookup-pos">${sense.partsOfSpeech.join(", ")}</span>` : ""}
+                          <span>${sense.englishDefinitions.join("; ")}</span>
+                          ${sense.tags.length > 0 ? html`<span class="lookup-tags">${sense.tags.join(", ")}</span>` : ""}
+                          ${sense.seeAlso.length > 0 ? html`<span class="answer-copy">See also: ${sense.seeAlso.join("、")}</span>` : ""}
+                        </li>`,
+                      )}
+                    </ol>
+                  </li>`,
+                )}
+              </ul>`;
+    return html`<div class="lookup-backdrop" @click=${closeLookup}>
+      <section
+        class="lookup-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="jisho-lookup-title"
+        data-testid="jisho-lookup"
+        @click=${(event: Event) => event.stopPropagation()}
+      >
+        <header class="lookup-heading">
+          <h2 id="jisho-lookup-title" lang="ja">${lookup.term}</h2>
+          <button type="button" class="secondary" @click=${closeLookup} aria-label="Close dictionary lookup" aria-keyshortcuts="Escape">Close</button>
+        </header>
+        <div id="jisho-lookup-body">${body}</div>
+        <p class="answer-copy">
+          <a href=${jishoWebUrl(lookup.term)} target="_blank" rel="noopener noreferrer">Open ${lookup.term} on jisho.org ↗</a>
+        </p>
+      </section>
+    </div>`;
   };
 
   const draw = (): void => {
@@ -618,7 +787,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             ? html`<p class="context">${model.presentation.material.context}</p>`
                             : ""
                         }
-                        <p class="japanese" lang="ja">${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
+                        <p class="japanese" lang="ja" data-japanese-sentence>${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
+                        <div class="sentence-tools">
+                          ${
+                            model.presentation.audioUrl !== null
+                              ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${model.presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
+                              : ""
+                          }
+                          <p class="hint">Highlight a word for Jisho.</p>
+                        </div>
                         ${
                           model.presentation.mode === "teach"
                             ? html`<div class="answer" data-testid="material-answer">
@@ -808,6 +985,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
               </section>
             `
         }
+        ${lookupDialog()}
       </main>`,
       root,
     );

@@ -20,9 +20,10 @@ import type {
   ReviewBatchFailure,
   ReviewBatchProgress,
 } from "./generated-contracts.ts";
+import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 2;
+export const MATERIAL_SCHEMA_VERSION = 3;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
 const MAXIMUM_PENDING_PERMITS = 1_024;
@@ -51,6 +52,13 @@ export type OpenLearningMaterialOptions = Readonly<{
   ) => Promise<Result<GeneratedMaterial, MaterialFailure>>;
   inspectionEnabled: boolean;
   maximumValidationAttempts?: number;
+  /**
+   * Says each sentence once it is banked. Optional: without it no clip is
+   * made and every presentation serves with `audioUrl: null`.
+   */
+  speech?: SpeechProvider | undefined;
+  /** Synthesis attempts per UTC day before new clips stop; default 200. */
+  speechDailyLimit?: number;
 }>;
 
 const detail = (cause: unknown): string =>
@@ -148,6 +156,31 @@ const migrate = (
           "INSERT INTO learning_material_migration(version, applied_at) VALUES (2, ?)",
         )
         .run(appliedAt);
+      if (current.version >= 3) return;
+      // Spoken sentences, one clip per presentation, and the daily ceiling
+      // that bounds what a runaway session can spend on synthesis.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS presentation_audio (
+          presentation_id TEXT PRIMARY KEY,
+          content_type TEXT NOT NULL,
+          bytes BLOB NOT NULL,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          voice TEXT NOT NULL,
+          synthesis_version INTEGER NOT NULL,
+          generated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS speech_daily_usage (
+          usage_date TEXT PRIMARY KEY,
+          attempted_count INTEGER NOT NULL DEFAULT 0 CHECK (attempted_count >= 0),
+          updated_at TEXT NOT NULL
+        );
+      `);
+      database
+        .query(
+          "INSERT INTO learning_material_migration(version, applied_at) VALUES (3, ?)",
+        )
+        .run(appliedAt);
     });
     apply.immediate();
     return ok(undefined);
@@ -237,6 +270,107 @@ export const openLearningMaterial = (
     }
   };
 
+  const audioUrlFor = (presentationId: string): string =>
+    `/api/study/presentations/${encodeURIComponent(presentationId)}/audio`;
+
+  const hasAudio = (presentationId: string): boolean =>
+    database
+      .query("SELECT 1 FROM presentation_audio WHERE presentation_id = ?")
+      .get(presentationId) !== null;
+
+  /**
+   * One synthesis attempt counts against the day, cache hits do not. The
+   * conditional upsert is atomic, so concurrent stocking cannot overshoot.
+   */
+  const reserveSpeechBudget = (now: Date): boolean => {
+    const limit = options.speechDailyLimit ?? 200;
+    const day = now.toISOString().slice(0, 10);
+    const changed = database
+      .query(
+        `INSERT INTO speech_daily_usage(usage_date, attempted_count, updated_at)
+         VALUES (?, 1, ?)
+         ON CONFLICT(usage_date) DO UPDATE SET
+           attempted_count = attempted_count + 1,
+           updated_at = excluded.updated_at
+         WHERE attempted_count < ?`,
+      )
+      .run(day, now.toISOString(), limit);
+    return changed.changes === 1;
+  };
+
+  /**
+   * Best effort: says the sentence and stores the clip. Any failure — no
+   * provider, ceiling reached, provider error — leaves the presentation
+   * without audio and is never surfaced as a material failure.
+   */
+  const synthesizeAudio = async (
+    presentationId: string,
+    japanese: string,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const speech = options.speech;
+    if (speech === undefined) return;
+    try {
+      if (hasAudio(presentationId)) return;
+      const now = safeNow(options.clock);
+      if (!now.ok) return;
+      if (!reserveSpeechBudget(now.value)) return;
+      const spoken = await speech.synthesize(japanese, signal);
+      if (!spoken.ok) return;
+      database
+        .query(
+          `INSERT OR IGNORE INTO presentation_audio(
+             presentation_id, content_type, bytes, provider, model, voice,
+             synthesis_version, generated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          presentationId,
+          spoken.value.contentType,
+          spoken.value.bytes,
+          speech.identity.provider,
+          speech.identity.model,
+          speech.identity.voice,
+          speech.identity.synthesisVersion,
+          now.value.toISOString(),
+        );
+    } catch {
+      // Audio is an extra; the sentence still serves.
+    }
+  };
+
+  /** Fills in a missing clip for a taken presentation, then labels it. */
+  const withAudio = async (
+    prepared: PreparedMaterial,
+    signal?: AbortSignal,
+  ): Promise<PreparedMaterial> => {
+    await synthesizeAudio(prepared.id, prepared.material.japanese, signal);
+    let present = false;
+    try {
+      present = hasAudio(prepared.id);
+    } catch {
+      present = false;
+    }
+    return { ...prepared, audioUrl: present ? audioUrlFor(prepared.id) : null };
+  };
+
+  const presentationAudio: LearningMaterial["presentationAudio"] = (presentationId) => {
+    try {
+      const row = database
+        .query(
+          "SELECT content_type, bytes FROM presentation_audio WHERE presentation_id = ?",
+        )
+        .get(presentationId) as { content_type: string; bytes: Uint8Array } | null;
+      if (row === null) return ok(null);
+      return ok({
+        contentType: row.content_type === "audio/wav" ? "audio/wav" : "audio/mpeg",
+        bytes: row.bytes,
+      });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const takeReserve = (
     cardId: CardId,
     mode: "teach" | "review",
@@ -278,7 +412,7 @@ export const openLearningMaterial = (
         });
         permit = { token };
       }
-      return ok({ id: row.id, cardId, mode, material, permit, source });
+      return ok({ id: row.id, cardId, mode, material, permit, source, audioUrl: null });
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
@@ -298,16 +432,18 @@ export const openLearningMaterial = (
     }
   };
 
+  /** Banks a validated candidate; returns its id, or null when it is a near copy. */
   const storeCandidate = (
     cardId: CardId,
     mode: "teach" | "review",
     material: GeneratedMaterial,
     generatedAt: Date,
-  ): Result<boolean, MaterialFailure> => {
+  ): Result<string | null, MaterialFailure> => {
     const prior = signatures(cardId);
     if (!prior.ok) return prior;
     if (isNearCopy(material.japanese, material.targetSurface, prior.value))
-      return ok(false);
+      return ok(null);
+    const id = options.nextId();
     try {
       database
         .query(`INSERT INTO validated_presentation(
@@ -315,7 +451,7 @@ export const openLearningMaterial = (
         near_signature, generated_at, provider, model, prompt_version, validation_version
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
-          options.nextId(),
+          id,
           cardId,
           mode,
           JSON.stringify(material),
@@ -328,9 +464,9 @@ export const openLearningMaterial = (
           options.provider.identity.promptVersion,
           MATERIAL_VALIDATION_VERSION,
         );
-      return ok(true);
+      return ok(id);
     } catch (cause) {
-      if (String(cause).includes("validated_presentation.card_id")) return ok(false);
+      if (String(cause).includes("validated_presentation.card_id")) return ok(null);
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
   };
@@ -379,7 +515,7 @@ export const openLearningMaterial = (
       if (!generated.ok) return generated;
       const generatedAt = safeNow(options.clock);
       if (!generatedAt.ok) return generatedAt;
-      let stored = 0;
+      const banked: { id: string; japanese: string }[] = [];
       for (const value of generated.value.candidates) {
         const validated = await options.validate({ ...input, value, mode });
         if (!validated.ok) {
@@ -397,9 +533,19 @@ export const openLearningMaterial = (
           generatedAt.value,
         );
         if (!saved.ok) return saved;
-        if (saved.value) stored += 1;
+        if (saved.value !== null)
+          banked.push({ id: saved.value, japanese: validated.value.japanese });
       }
-      if (stored > 0) return ok(undefined);
+      if (banked.length > 0) {
+        // Say every banked sentence now, concurrently, so a later serve is
+        // instant. Each is best effort; none can fail the material.
+        if (mode === "review") {
+          await Promise.all(
+            banked.map((item) => synthesizeAudio(item.id, item.japanese, input.signal)),
+          );
+        }
+        return ok(undefined);
+      }
     }
     return rejectionReasons.length > 0
       ? err({ kind: "validationRejected", reasons: rejectionReasons })
@@ -413,13 +559,14 @@ export const openLearningMaterial = (
       input.card.schedulePhase === "new" && !taught.value ? "teach" : "review";
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
-    if (reserve.value !== null) return ok(reserve.value);
+    if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
     if (mode === "teach") return err({ kind: "teachingNotPrepared" });
     const stocked = await stockReserve(input, mode);
     if (!stocked.ok) return stocked;
     const prepared = takeReserve(input.card.id, mode, "generated");
     if (!prepared.ok) return prepared;
-    if (prepared.value !== null) return ok(prepared.value);
+    if (prepared.value !== null)
+      return ok(await withAudio(prepared.value, input.signal));
     return err({ kind: "noValidCandidate" });
   };
 
@@ -588,6 +735,7 @@ export const openLearningMaterial = (
       const request = options.provider.inspectLastRequest();
       return request === null ? err({ kind: "presentationNotFound" }) : ok(request);
     },
+    presentationAudio,
     permitVerifier,
     close: () => database.close(),
   });

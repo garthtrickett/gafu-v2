@@ -14,6 +14,11 @@ import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
 import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
 import { createPrivateAccess } from "../deployment/private-access.ts";
 import {
+  createDeterministicDictionary,
+  createJishoDictionary,
+} from "../dictionary/jisho-service.ts";
+import { handleDictionaryApi } from "../dictionary/server.ts";
+import {
   declaredGrammarDetector,
   supportsGrammarTarget,
 } from "../learning-material/declared-grammar.ts";
@@ -25,7 +30,9 @@ import type {
 import { createGeneratedMaterialValidator } from "../learning-material/generated-validator.ts";
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
 import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
+import { createOpenAiSpeechProvider } from "../learning-material/openai-speech-provider.ts";
 import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
+import { createDeterministicSpeechProvider } from "../learning-material/scripted-speech-provider.ts";
 import {
   authorizeLocalMutation,
   decodePathSegment,
@@ -524,6 +531,32 @@ const handleApi = async (
         : jsonResult(study.deletePlan(planId, "delete"));
     }
   }
+  const audioMatch = url.pathname.match(
+    /^\/api\/study\/presentations\/([^/]+)\/audio$/u,
+  );
+  if (request.method === "GET" && audioMatch !== null) {
+    const rawId = audioMatch[1];
+    if (rawId === undefined) return invalidRequest("Missing presentation ID.");
+    const decoded = decodePathSegment(rawId);
+    if (!decoded.ok) return invalidRequest("Presentation ID encoding is invalid.");
+    const clip = material.presentationAudio(decoded.value);
+    if (!clip.ok) return materialResponse(clip);
+    if (clip.value === null) {
+      return Response.json(
+        { error: { kind: "presentationNotFound" } },
+        { status: 404 },
+      );
+    }
+    // A presentation id names one immutable clip, so the browser may keep it.
+    const body = Uint8Array.from(clip.value.bytes).buffer as ArrayBuffer;
+    return new Response(body, {
+      headers: {
+        "Content-Type": clip.value.contentType,
+        "Content-Length": String(clip.value.bytes.byteLength),
+        "Cache-Control": "private, max-age=31536000, immutable",
+      },
+    });
+  }
   const teachingMatch = url.pathname.match(/^\/api\/study\/cards\/([^/]+)\/teaching$/u);
   if (request.method === "PUT" && teachingMatch !== null) {
     const cardId = teachingMatch[1];
@@ -734,6 +767,26 @@ const materialProvider = fakeAi
       // unmeasured upper bound, not a calibrated one.
       completionTimeoutMs: 5 * 60_000,
     });
+// Highlight-to-Jisho lookups are proxied because jisho.org serves no CORS
+// headers. The fake stands in wherever the fake AI does, so journeys never
+// reach the network.
+const dictionary = fakeAi ? createDeterministicDictionary() : createJishoDictionary();
+// Spoken sentences. Same key as material; V1's Google voice needed
+// service-account credentials Railway does not hold. GAFU_SPEECH_DISABLED=1
+// turns clips off entirely; the ceiling bounds a day's synthesis spend.
+const speechDisabled = process.env["GAFU_SPEECH_DISABLED"] === "1";
+const speechProvider = speechDisabled
+  ? undefined
+  : fakeAi
+    ? createDeterministicSpeechProvider()
+    : createOpenAiSpeechProvider({
+        apiKey: keyCustody.readForServerAdapter,
+        model: process.env["GAFU_OPENAI_SPEECH_MODEL"] ?? "gpt-4o-mini-tts",
+        voice: process.env["GAFU_OPENAI_SPEECH_VOICE"] ?? "alloy",
+        speed: 0.95,
+        timeoutMs: 30_000,
+      });
+const speechDailyLimit = Number(process.env["GAFU_SPEECH_DAILY_LIMIT"] ?? "200");
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
 );
@@ -777,6 +830,8 @@ const openedMaterial = openLearningMaterial({
   keyCustody,
   validate: validator,
   inspectionEnabled: process.env["GAFU_DEVELOPER_INSPECTION"] === "1",
+  speech: speechProvider,
+  speechDailyLimit: Number.isFinite(speechDailyLimit) ? speechDailyLimit : 200,
 });
 if (!openedMaterial.ok) {
   throw new Error(`Learning Material failed to open: ${openedMaterial.error.kind}`);
@@ -871,6 +926,8 @@ const server = Bun.serve({
         { status: 403 },
       );
     }
+    const dictionaryResponse = await handleDictionaryApi(request, dictionary);
+    if (dictionaryResponse !== null) return dictionaryResponse;
     const watchResponse = await handleWatchApi(request, watch);
     if (watchResponse !== null) return watchResponse;
     const preparationResponse = await handlePreparationApi(
