@@ -55,6 +55,20 @@ export default defineConfig({
   // Apache licence and NOTICE. Phase 0.6 decides its final runtime location.
   publicDir: "node_modules/@faanau/kuromoji",
   plugins: [rawDictionaryTransport()],
+  build: {
+    rollupOptions: {
+      // The service worker is a second entry with a stable, unhashed name:
+      // the browser registers it by URL, and a changed URL is a new worker.
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        sw: fileURLToPath(new URL("./src/sw.ts", import.meta.url)),
+      },
+      output: {
+        entryFileNames: (chunk) =>
+          chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js",
+      },
+    },
+  },
   resolve: {
     alias: {
       "@faanau/kuromoji": fileURLToPath(

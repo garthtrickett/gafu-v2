@@ -27,7 +27,7 @@ import type {
   StudyStatus,
   SubtitleVocabularyCapture,
 } from "./contracts.ts";
-import { asCardId } from "./contracts.ts";
+import { asCardId, PRESENTATION_PERMIT_LIFETIME_MS } from "./contracts.ts";
 import {
   canonicalizeCard,
   canonicalizeUpdatedContent,
@@ -921,7 +921,10 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     if (verified.value.cardId !== command.cardId) {
       return err({ kind: "presentationForWrongCard" });
     }
-    if (now.value.getTime() - verified.value.issuedAt.getTime() > 10 * 60 * 1_000) {
+    if (
+      now.value.getTime() - verified.value.issuedAt.getTime() >
+      PRESENTATION_PERMIT_LIFETIME_MS
+    ) {
       return err({ kind: "presentationExpired" });
     }
     const preference = preferences();
@@ -930,9 +933,33 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     if (!day.ok) return day;
     try {
       const used = database
-        .query("SELECT 1 AS used FROM review_event WHERE permit_id = ?")
-        .get(verified.value.id);
-      if (used !== null) return err({ kind: "presentationAlreadyUsed" });
+        .query(
+          `SELECT card_id, grade, reviewed_at, after_schedule_json
+           FROM review_event WHERE permit_id = ?`,
+        )
+        .get(verified.value.id) as {
+        card_id: string;
+        grade: string;
+        reviewed_at: string;
+        after_schedule_json: string;
+      } | null;
+      if (used !== null) {
+        // The browser sends grades from an outbox, at least once. The same
+        // grade for the same Card arriving again is that write replayed
+        // after an ambiguous failure: answer as the first time did, record
+        // nothing. A different grade on a spent permit is still refused.
+        if (used.card_id === command.cardId && used.grade === command.grade) {
+          const replayed = readCard(database, command.cardId);
+          if (!replayed.ok) return replayed;
+          const after = JSON.parse(used.after_schedule_json) as StoredSchedule;
+          return ok({
+            card: replayed.value,
+            reviewedAt: used.reviewed_at,
+            nextDueAt: after.dueAt,
+          });
+        }
+        return err({ kind: "presentationAlreadyUsed" });
+      }
       const current = readCard(database, command.cardId);
       if (!current.ok) return current;
       if (current.value.state !== "active") {

@@ -11,6 +11,7 @@ import type {
 } from "../learning-material/generated-contracts.ts";
 import { mutationHeaders } from "../local-api.ts";
 import type {
+  AnswerOutcome,
   CardContent,
   CardStateCommand,
   CardSummary,
@@ -20,7 +21,8 @@ import type {
   StudyStatus,
 } from "./contracts.ts";
 import { splitFurigana } from "./furigana.ts";
-import { createOutbox, type OutboxState } from "./outbox.ts";
+import { openIndexedDbStore } from "./local-store.ts";
+import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
 import type { SessionCounts } from "./session-split.ts";
 
@@ -98,6 +100,7 @@ type BrowserModel = {
     index: number;
   } | null;
   sync: OutboxState;
+  offline: boolean;
 };
 
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
@@ -131,6 +134,12 @@ const cardTitle = (card: CardSummary): string =>
       : "Vocabulary Card";
 
 const cardMeaning = (card: CardSummary): string => card.content.meaning;
+
+const isAnswerOutcome = (value: unknown): value is AnswerOutcome =>
+  typeof value === "object" &&
+  value !== null &&
+  "card" in value &&
+  typeof (value as { card: unknown }).card === "object";
 
 const stateActions = (
   card: CardSummary,
@@ -259,14 +268,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
     lookup: null,
     pending: null,
     session: null,
-    sync: { pending: 0, failed: [] },
+    sync: { pending: 0, failed: [], stalled: false },
+    offline: typeof navigator !== "undefined" && navigator.onLine === false,
   };
+  const store = openIndexedDbStore();
+  const SESSION_KEY = "session";
+  const SNAPSHOT_KEY = "snapshot";
 
   const refresh = async (): Promise<void> => {
     [model.snapshot, model.provider] = await Promise.all([
       requestJson<BrowserSnapshot>("/api/study"),
       requestJson<ProviderStatus>("/api/provider"),
     ]);
+    // The last good bank paints the next load instantly, online or not.
+    void store.set(SNAPSHOT_KEY, model.snapshot);
   };
 
   // Session actions change counts, not the bank, so they refetch only the
@@ -315,8 +330,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
       model.message = message;
       model.messageKind = "success";
     } catch (cause) {
-      model.message = cause instanceof Error ? cause.message : String(cause);
-      model.messageKind = "error";
+      if (cause instanceof TypeError) {
+        // The network, not the request: say so plainly and keep what is here.
+        model.message = "Offline. Showing what was saved on this device.";
+        model.messageKind = "neutral";
+      } else {
+        model.message = cause instanceof Error ? cause.message : String(cause);
+        model.messageKind = "error";
+      }
     } finally {
       if (ticker !== null) clearInterval(ticker);
       model.pending = null;
@@ -436,23 +457,69 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
 
   // Writes the session produces go here and are sent in order behind the
-  // learner's back. A transport failure is retried; a refusal is recorded.
-  // When the queue drains the bank is refetched, since grades change it.
+  // learner's back. They live in IndexedDB until sent, so a closed tab or a
+  // dropped connection loses nothing; a transport failure waits for the
+  // network, a refusal is recorded. The server's answer to a grade updates
+  // the bank Card in place, so no bank refetch is owed.
+  const applySent = (job: OutboxJob, result: unknown): void => {
+    if (model.snapshot === null) return;
+    if (job.kind === "answer" && isAnswerOutcome(result)) {
+      const outcome = result;
+      model.snapshot = {
+        ...model.snapshot,
+        cards: model.snapshot.cards.map((card) =>
+          card.id === outcome.card.id ? { ...card, ...outcome.card } : card,
+        ),
+      };
+    } else if (job.kind === "teach") {
+      const cardId = (job.body as { cardId?: string }).cardId;
+      model.snapshot = {
+        ...model.snapshot,
+        cards: model.snapshot.cards.map((card) =>
+          card.id === cardId ? { ...card, taught: true } : card,
+        ),
+      };
+    }
+    void store.set(SNAPSHOT_KEY, model.snapshot);
+  };
   const outbox = createOutbox({
+    store,
+    transport: (job) =>
+      requestJson<unknown>(job.url, { method: "POST", body: JSON.stringify(job.body) }),
     isRetryable: (error) => error instanceof TypeError,
+    shouldWait: () => navigator.onLine === false,
+    onSent: applySent,
     onChange: (state) => {
       const drained = state.pending === 0 && model.sync.pending > 0;
       model.sync = state;
       draw();
-      if (drained) void refresh().then(draw, draw);
+      if (drained) void refreshStatus().then(draw, draw);
     },
   });
+  window.addEventListener("online", () => {
+    model.offline = false;
+    outbox.resume();
+    draw();
+  });
+  window.addEventListener("offline", () => {
+    model.offline = true;
+    draw();
+  });
+  window.setInterval(() => {
+    if (model.sync.stalled && navigator.onLine !== false) outbox.resume();
+  }, 30_000);
   window.addEventListener("beforeunload", (event) => {
-    if (model.sync.pending > 0) {
+    if (model.sync.pending > 0 && !model.sync.stalled) {
       event.preventDefault();
       event.returnValue = "";
     }
   });
+  const enqueue = (
+    kind: OutboxJob["kind"],
+    label: string,
+    url: string,
+    body: unknown,
+  ): void => outbox.enqueue({ id: crypto.randomUUID(), kind, label, url, body });
 
   // One pronunciation at a time. A rejected play() is the browser's autoplay
   // policy, not a fault: the Listen button is right there.
@@ -488,6 +555,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const first = items[0];
     if (first === undefined) return;
     model.session = { kind, items, index: 0 };
+    void store.set(SESSION_KEY, model.session);
     present(first);
   };
 
@@ -500,9 +568,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
       model.session = null;
       model.presentation = null;
       model.revealed = false;
+      void store.delete(SESSION_KEY);
       return false;
     }
     model.session = { ...session, index: session.index + 1 };
+    void store.set(SESSION_KEY, model.session);
     present(next);
     return true;
   };
@@ -728,14 +798,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
-    outbox.enqueue({
-      label: `Seen it: ${current.material.targetSurface}`,
-      send: () =>
-        requestJson("/api/study/session/teach", {
-          method: "POST",
-          body: JSON.stringify({ cardId: current.cardId, presentationId: current.id }),
-        }),
-    });
+    enqueue(
+      "teach",
+      `Seen it: ${current.material.targetSurface}`,
+      "/api/study/session/teach",
+      {
+        cardId: current.cardId,
+        presentationId: current.id,
+      },
+    );
     const more = advanceSession();
     model.message = more
       ? "Teaching seen. Here is the next Card to learn."
@@ -752,18 +823,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
     const permit = current.permit.token;
-    outbox.enqueue({
-      label: `Grade: ${current.material.targetSurface}`,
-      send: () =>
-        requestJson("/api/study/session/answer", {
-          method: "POST",
-          body: JSON.stringify({
-            cardId: current.cardId,
-            grade: correct ? "good" : "again",
-            permit,
-          }),
-        }),
-    });
+    enqueue(
+      "answer",
+      `Grade: ${current.material.targetSurface}`,
+      "/api/study/session/answer",
+      {
+        cardId: current.cardId,
+        grade: correct ? "good" : "again",
+        permit,
+      },
+    );
     const more = advanceSession();
     if (!more) model.batch = null;
     model.message = more
@@ -775,6 +844,53 @@ export const mountStudyApp = (root: HTMLElement): void => {
     draw();
     if (!more) void refreshStatus().then(draw, draw);
   };
+
+  const presentationView = (presentation: PreparedMaterial): TemplateResult =>
+    html`<article class="presentation presentation--${presentation.mode}">
+                        <span class="pill">${presentation.mode}</span>
+                        ${
+                          // A review opens on its situation. A teach card's
+                          // context is only "<target> in use." and its prompt
+                          // repeats the answer box heading, so neither earns a
+                          // line above the sentence.
+                          presentation.mode === "review"
+                            ? html`<p class="context">${presentation.material.context}</p>`
+                            : ""
+                        }
+                        <p class="japanese" lang="ja" data-japanese-sentence>${rubyText(presentation.material, presentation.material.targetSpan)}</p>
+                        <div class="sentence-tools">
+                          ${
+                            presentation.audioUrl !== null
+                              ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
+                              : ""
+                          }
+                          <p class="hint">Highlight a word for Jisho.</p>
+                        </div>
+                        ${
+                          presentation.mode === "teach"
+                            ? html`<div class="answer" data-testid="material-answer">
+                                <strong>${presentation.material.answer}</strong>
+                                <p class="answer-copy">${presentation.material.explanation}</p>
+                                <p class="answer-copy">${presentation.material.usageNote}</p>
+                              </div>
+                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — next Card</button>`
+                            : model.revealed
+                              ? html`<div class="answer" data-testid="material-answer">
+                                  <strong>${presentation.material.answer}</strong>
+                                  <p class="answer-copy">${presentation.material.explanation}</p>
+                                  <p class="answer-copy">${presentation.material.usageNote}</p>
+                                </div>
+                                <div class="grades" aria-label="Self grade">
+                                  <p>Were you right?</p>
+                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)}>Correct</button>
+                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)}>Incorrect</button>
+                                </div>`
+                              : html`<button type="button" @click=${() => {
+                                  model.revealed = true;
+                                  draw();
+                                }}>Explanation</button>`
+                        }
+                      </article>`;
 
   const lookupDialog = (): TemplateResult | "" => {
     const lookup = model.lookup;
@@ -875,6 +991,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
             : ""
         }
         ${
+          model.offline || model.sync.stalled
+            ? html`<p class="notice notice--neutral" data-testid="offline">Offline. ${model.sync.pending === 1 ? "1 update" : `${model.sync.pending} updates`} will sync when you're back.</p>`
+            : ""
+        }
+        ${
           model.sync.failed.length > 0
             ? html`<p class="notice notice--error" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. The Cards stay due.</p>`
             : ""
@@ -882,7 +1003,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
         ${
           snapshot === null
-            ? html`<section class="panel"><p>Opening the local Study database…</p></section>`
+            ? model.presentation !== null
+              ? html`<section class="panel review-panel" data-testid="review-panel">${presentationView(model.presentation)}</section>`
+              : html`<section class="panel"><p>Opening the local Study database…</p></section>`
             : html`
               <section class="metrics metrics--study" aria-label="Study status">
                 <article data-testid="tile-staged"><strong>${snapshot.status.stagedCount}</strong><span>staged</span></article>
@@ -944,51 +1067,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 ${
                   model.presentation === null
                     ? ""
-                    : html`<article class="presentation presentation--${model.presentation.mode}">
-                        <span class="pill">${model.presentation.mode}</span>
-                        ${
-                          // A review opens on its situation. A teach card's
-                          // context is only "<target> in use." and its prompt
-                          // repeats the answer box heading, so neither earns a
-                          // line above the sentence.
-                          model.presentation.mode === "review"
-                            ? html`<p class="context">${model.presentation.material.context}</p>`
-                            : ""
-                        }
-                        <p class="japanese" lang="ja" data-japanese-sentence>${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
-                        <div class="sentence-tools">
-                          ${
-                            model.presentation.audioUrl !== null
-                              ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${model.presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
-                              : ""
-                          }
-                          <p class="hint">Highlight a word for Jisho.</p>
-                        </div>
-                        ${
-                          model.presentation.mode === "teach"
-                            ? html`<div class="answer" data-testid="material-answer">
-                                <strong>${model.presentation.material.answer}</strong>
-                                <p class="answer-copy">${model.presentation.material.explanation}</p>
-                                <p class="answer-copy">${model.presentation.material.usageNote}</p>
-                              </div>
-                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — next Card</button>`
-                            : model.revealed
-                              ? html`<div class="answer" data-testid="material-answer">
-                                  <strong>${model.presentation.material.answer}</strong>
-                                  <p class="answer-copy">${model.presentation.material.explanation}</p>
-                                  <p class="answer-copy">${model.presentation.material.usageNote}</p>
-                                </div>
-                                <div class="grades" aria-label="Self grade">
-                                  <p>Were you right?</p>
-                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)}>Correct</button>
-                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)}>Incorrect</button>
-                                </div>`
-                              : html`<button type="button" @click=${() => {
-                                  model.revealed = true;
-                                  draw();
-                                }}>Explanation</button>`
-                        }
-                      </article>`
+                    : presentationView(model.presentation)
                 }
               </section>
 
@@ -1174,8 +1253,27 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
 
   draw();
-  void run(async () => {
-    await refresh();
-    return "Card bank ready. No Cards are admitted until study asks for a queue.";
-  });
+  void (async () => {
+    // Paint from what this device saved, then pick up the session and the
+    // writes a previous page left, then ask the server for the latest.
+    const saved = await store.get<BrowserSnapshot>(SNAPSHOT_KEY);
+    if (saved !== undefined && "baseline" in saved && "session" in saved)
+      model.snapshot = saved;
+    const session = await store.get<NonNullable<BrowserModel["session"]>>(SESSION_KEY);
+    const current = session?.items[session.index];
+    if (session !== undefined && current !== undefined) {
+      model.session = session;
+      model.presentation = current;
+      model.revealed = false;
+    }
+    model.busy = false;
+    draw();
+    await outbox.restore();
+    void run(async () => {
+      await refresh();
+      return model.session !== null
+        ? "Picking up where you left off."
+        : "Card bank ready. No Cards are admitted until study asks for a queue.";
+    });
+  })();
 };

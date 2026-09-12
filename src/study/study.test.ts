@@ -538,7 +538,7 @@ describe("Study admission and review", () => {
     second.value.close();
   });
 
-  test("records FSRS reviews, rejects permit replay, and earns delayed support", () => {
+  test("records FSRS reviews, answers a replayed grade once, refuses a changed one, and earns delayed support", () => {
     const { study, clock } = openTestStudy();
     const card = create(study, vocabulary).card;
     study.setPreferences({ newCardsPerDay: 1, timeZone: "Australia/Sydney" });
@@ -550,8 +550,21 @@ describe("Study admission and review", () => {
       ok: true,
       value: { card: { reviewCount: 1, supportReadyAt: null } },
     });
+    // The outbox may resend the same grade after an ambiguous failure: the
+    // answer is the one already given, and nothing is recorded twice.
+    const replayed = study.answer({
+      cardId: card.id,
+      grade: "good",
+      permit: firstPermit,
+    });
+    expect(replayed).toMatchObject({ ok: true, value: { card: { reviewCount: 1 } } });
+    if (first.ok && replayed.ok) {
+      expect(replayed.value.reviewedAt).toBe(first.value.reviewedAt);
+      expect(replayed.value.nextDueAt).toBe(first.value.nextDueAt);
+    }
+    // A different grade on the spent permit is not a replay.
     expect(
-      study.answer({ cardId: card.id, grade: "good", permit: firstPermit }),
+      study.answer({ cardId: card.id, grade: "again", permit: firstPermit }),
     ).toEqual({
       ok: false,
       error: { kind: "presentationAlreadyUsed" },
@@ -590,7 +603,12 @@ describe("Study admission and review", () => {
       study.answer({
         cardId: card.id,
         grade: "good",
-        permit: permit("old", card.id, new Date("2026-09-08T09:00:00.000Z")),
+        // Issued thirteen hours ago: past the twelve-hour lifetime.
+        permit: permit(
+          "old",
+          card.id,
+          new Date(clock.now().getTime() - 13 * 60 * 60 * 1_000),
+        ),
       }),
     ).toEqual({ ok: false, error: { kind: "presentationExpired" } });
     expect(study.listCards()).toMatchObject({

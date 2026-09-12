@@ -190,10 +190,19 @@ describe("Phase 2 generated study lifecycle", () => {
       permit: recalled.value.permit,
     });
     expect(answered.ok).toBe(true);
+    // The same grade again is a replay and answers as before; a different
+    // grade on the spent permit is refused.
     expect(
       app.study.answer({
         cardId: created.value.card.id,
         grade: "good",
+        permit: recalled.value.permit,
+      }),
+    ).toMatchObject({ ok: true, value: { card: { reviewCount: 1 } } });
+    expect(
+      app.study.answer({
+        cardId: created.value.card.id,
+        grade: "again",
         permit: recalled.value.permit,
       }),
     ).toMatchObject({ ok: false, error: { kind: "presentationAlreadyUsed" } });
