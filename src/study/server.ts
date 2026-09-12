@@ -387,9 +387,6 @@ const handleApi = async (
   if (request.method === "POST" && url.pathname === "/api/study/learn") {
     return serveFirst(study, material, true);
   }
-  if (request.method === "POST" && url.pathname === "/api/study/session/review") {
-    return serveFirst(study, material, false);
-  }
   if (request.method === "POST" && url.pathname === "/api/study/review-batch") {
     const body = await readJson(request);
     if (body instanceof Response) return body;

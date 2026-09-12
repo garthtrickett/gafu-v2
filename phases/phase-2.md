@@ -456,7 +456,8 @@ next untaught admitted (learn) and due taught-or-reviewing (review).
   immediately.
 - Review serving is unchanged per card; the browser's Review button asks for
   the next due card that is not an untaught new card, and reports `nothingDue`
-  when there is none.
+  when there is none. (Superseded by Patch 2.19: reviews run only through the
+  batch.)
 - First-exposure content contract: the authoring agent writes the sentence
   from the subtitle cue, and the Card meaning carries that subtitle sense, so
   the first thing seen means what the show meant. The validator cannot prove
@@ -708,6 +709,28 @@ failure mapping, and for the material module's eager and lazy synthesis, the
 ceiling, and audio-less serving; the journey sees Listen on a teach card and
 on a generated review, and fetches the clip; the full required validation
 passes.
+
+### Patch 2.19 — Review batch is the review
+
+The single Review button generated one sentence per press with nothing on
+screen but dimmed buttons, and a ready batch still asked for a Review press to
+begin. Both go.
+
+- The Review button and `POST /api/study/session/review` are removed. Review
+  batch is the one way to review: dispatch, pump, then the first banked Card
+  is served without another press, and grading chains the rest as before.
+  Patch 2.10's Review button and the Review half of Patch 2.11's work-through
+  are superseded here; their server routes for learn, batch, and per-card
+  prepare are unchanged.
+- While a session request is in flight the study panel names the wait with an
+  elapsed-seconds counter: opening the next Card to learn, teaching seen,
+  saving an answer, starting a batch, opening the first review. The batching
+  line says why each Card takes 20 to 60 seconds: a fresh sentence is
+  generated, checked, and spoken.
+
+**Gate:** the journey dispatches a batch, sees the first review arrive on its
+own with the wait named while its serve is held, then grades through; the
+full required validation passes.
 
 ## Exit gate
 

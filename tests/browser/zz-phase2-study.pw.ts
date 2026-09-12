@@ -204,7 +204,23 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(page.getByRole("status")).toContainText("has no teaching yet");
 
   // The review session dispatches one batch through the UI and pumps it to
-  // done; work-through then serves from banked reserves through Review.
+  // done; work-through then serves from banked reserves on its own. A ready
+  // batch is the review session: the first Card is served without another
+  // press, and the second arrives chained after the grade. The first serve is
+  // held, with the hold armed before dispatch, so the waiting state can be
+  // seen and named.
+  let releaseFirst = (): void => {};
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let held = false;
+  await page.route("**/api/study/session/prepare", async (route) => {
+    if (!held) {
+      held = true;
+      await firstGate;
+    }
+    await route.continue();
+  });
   await review.getByRole("button", { name: "Review batch" }).click();
   await expect(review.getByTestId("batch-progress")).toContainText("Batch ready: 2", {
     timeout: 30_000,
@@ -239,8 +255,11 @@ test("configures a key and teaches before the first generated review", async ({
     worked.push(shown.includes("cat") ? "cat" : "bird");
     await review.getByRole("button", { name: grade, exact: true }).click();
   };
-  // The first Card is served by hand; the second arrives chained.
-  await review.getByRole("button", { name: "Review", exact: true }).click();
+  const progress = page.getByTestId("session-progress");
+  await expect(progress).toContainText("Opening the first review");
+  await expect(progress.locator(".pending-elapsed")).toHaveText(/^\d+s$/u);
+  releaseFirst();
+  await expect(progress).toHaveCount(0);
   await reviewOne("Correct");
   await expect(
     review.getByRole("button", { name: "Correct", exact: true }),

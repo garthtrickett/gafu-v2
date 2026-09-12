@@ -367,6 +367,56 @@ label {
   color: #c8a75a;
 }
 
+.pending {
+  margin: 0.8rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid #333a31;
+  border-radius: 0.8rem;
+  background: #141914;
+}
+
+.pending-bar {
+  position: relative;
+  height: 0.3rem;
+  overflow: hidden;
+  border-radius: 0.3rem;
+  background: #242923;
+}
+
+.pending-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -40%;
+  width: 40%;
+  border-radius: 0.3rem;
+  background: #a7cf64;
+  animation: pending-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes pending-sweep {
+  to {
+    left: 100%;
+  }
+}
+
+.pending-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.6rem 0 0;
+}
+
+.pending-elapsed {
+  color: #7f877b;
+  font-variant-numeric: tabular-nums;
+}
+
+.pending-detail {
+  margin: 0.3rem 0 0;
+  color: #aeb5aa;
+  font-size: 0.9rem;
+}
+
 .sentence-tools {
   display: flex;
   align-items: center;
