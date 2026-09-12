@@ -140,7 +140,10 @@ describe("generated material validation boundary", () => {
       }),
     ).toMatchObject({
       ok: false,
-      error: { kind: "validationRejected", reasons: ["unknownVocabulary"] },
+      error: {
+        kind: "validationRejected",
+        reasons: [expect.stringMatching(/^unknownVocabulary: /u)],
+      },
     });
   });
 

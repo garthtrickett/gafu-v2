@@ -418,7 +418,7 @@ const batchRequestBody = (
     background: true,
     store: false,
     reasoning: { effort: "low" },
-    instructions: `For every target Card in "targets", create exactly ${perCard} materially different Japanese learning presentations. Return one item per target, in the same order, with cardId copied exactly. Use only the supplied supporting vocabulary and grammar, shared by all targets. The English context describes the situation and must not translate the Japanese answer. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct Japanese exactly. Do not include another learning target in any sentence.`,
+    instructions: `For every target Card in "targets", create exactly ${perCard} materially different Japanese learning presentations. Return one item per target, in the same order, with cardId copied exactly. Use only the supplied supporting vocabulary and grammar, shared by all targets. Where a target lists previousRejections, an earlier attempt was refused for those reasons (for example an unknown word it used); do not repeat them. The English context describes the situation and must not translate the Japanese answer. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct Japanese exactly. Do not include another learning target in any sentence.`,
     input: JSON.stringify({
       targets: targets.map((target) => {
         const { usageNotes: _cue, ...contentWithoutCue } = target.card.content;
@@ -427,6 +427,7 @@ const batchRequestBody = (
           mode: target.mode,
           target: { ...target.card, content: contentWithoutCue },
           recentJapaneseToAvoid: target.recentJapanese,
+          previousRejections: target.previousRejections,
         };
       }),
       allowedSupportingVocabulary: knowledge.vocabulary.map((word) => ({

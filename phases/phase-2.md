@@ -788,6 +788,29 @@ malformed item; batch tests for dispatch-then-complete, a dropped Card, and
 banked reviews serving with no further calls; the journey unchanged; the full
 required validation passes.
 
+### Patch 2.23 — Refused sentences get two more rounds
+
+The first production run of Patch 2.22 generated seven Cards and kept two:
+with two candidates per Card and no second attempt, the validator's i+1
+constraint dropped far more than the per-Card flow (three attempts of three)
+ever did. V1 dropped rarely because its checks were looser; V2 keeps the
+checks and retries instead.
+
+- A Card whose candidates were all refused (or which the provider omitted)
+  goes back into the next whole-batch request rather than failing, up to
+  three rounds in all; the completing advance of one round leaves the next
+  to dispatch. Rounds and the last refusal reasons live on the batch item
+  (`attempts`, `hints_json`; forward-only migration).
+- Refusal reasons now name the words at fault (`unknownVocabulary: 動物, 園`,
+  `unknownGrammar: 〜ても`) and travel with the retried target as
+  `previousRejections`, so the model is told what to avoid rather than asked
+  to guess. Progress reports the round, and the batching line says so.
+
+**Gate:** a Card refused in round one and accepted in round two completes
+with the reasons visible in the second request; a Card refused in every
+round is dropped after the third with `validationRejected`; the full
+required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
