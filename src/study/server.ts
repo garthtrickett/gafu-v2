@@ -20,6 +20,7 @@ import {
 import type {
   LearningMaterial,
   MaterialFailure,
+  PreparedMaterial,
 } from "../learning-material/generated-contracts.ts";
 import { createGeneratedMaterialValidator } from "../learning-material/generated-validator.ts";
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
@@ -297,12 +298,42 @@ const serveFirst = async (
   } else {
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    const first = (wantUntaught ? split.value.untaught : split.value.review)[0];
-    if (first !== undefined) selected = first.card;
+    if (wantUntaught) {
+      // An untaught Card without stored teaching cannot be shown yet, so
+      // Learn passes over it looking for the first teachable one. Anything
+      // else (including infrastructure failures) returns immediately. An
+      // empty-handed pass ends where a single miss always did.
+      for (const item of split.value.untaught) {
+        const candidate = await material.prepare({
+          card: item.card,
+          knowledge: knowledge.value,
+        });
+        if (!candidate.ok && candidate.error.kind === "teachingNotPrepared") continue;
+        if (!candidate.ok) return materialResponse(candidate);
+        return servePrepared(study, candidate.value);
+      }
+      return Response.json({ error: { kind: "teachingNotPrepared" } }, { status: 422 });
+    } else {
+      const first = split.value.review[0];
+      if (first !== undefined) selected = first.card;
+    }
   }
   if (selected === null)
     return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
   return finishServe(study, material, knowledge.value, selected);
+};
+
+/**
+ * Re-checks a prepared presentation is still due before serving. Shared by
+ * mode serving and batch work-through so both hand out the same guarantees.
+ */
+const servePrepared = (study: Study, prepared: PreparedMaterial): Response => {
+  const current = study.studyQueue();
+  if (!current.ok) return failureResponse(current.error);
+  if (!current.value.due.some((item) => item.card.id === prepared.cardId)) {
+    return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+  }
+  return Response.json(prepared);
 };
 
 /**
@@ -317,12 +348,7 @@ const finishServe = async (
 ): Promise<Response> => {
   const prepared = await material.prepare({ card, knowledge });
   if (!prepared.ok) return materialResponse(prepared);
-  const current = study.studyQueue();
-  if (!current.ok) return failureResponse(current.error);
-  if (!current.value.due.some((item) => item.card.id === prepared.value.cardId)) {
-    return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
-  }
-  return Response.json(prepared.value);
+  return servePrepared(study, prepared.value);
 };
 
 const handleApi = async (
@@ -545,7 +571,7 @@ const handleApi = async (
     if (!isRecord(body)) return invalidRequest("Missing state action.");
     const action = body["action"];
     if (
-      action !== "markKnown" &&
+      action !== "markSupportReady" &&
       action !== "markNotKnown" &&
       action !== "suspend" &&
       action !== "restore"

@@ -102,21 +102,11 @@ different bytes is rejected. Apply commits Cards, identity claims, learner
 state, approximate V1 schedules, preferences, audit rows, and quarantine rows
 in one SQLite transaction.
 
-For the owner-approved one-off cutover where every imported Card is already
-learned, mark only the Cards linked to that exact import receipt as known while
-V2 remains stopped:
-
-```bash
-bun run migration:v1:mark-known -- \
-  --database ./data/gafu-v2.sqlite \
-  --import-key v1-owner-cutover-2026-09 \
-  --confirm-imported-known
-```
-
-This correction does not touch unrelated V2 Cards and does not invent Review
-Events. It preserves imported schedules, quarantine records, and reversible
-prior-state fields, verifies those invariants inside the same transaction, and
-is safe to retry. Retain its count-only receipt with the migration report.
+For the owner-approved one-off cutover, imported Cards keep the states the
+migration assigns: earned V1 progress stays in rotation on its schedule, and
+only an explicit V1 dismissal lands in `known`. Nothing enters `known`
+afterwards — support-ready language is vouched explicitly or earned through
+delayed recall, never by exiting study.
 
 Start V2 once so all current module schemas are present, stop it again, then run:
 

@@ -212,8 +212,10 @@ describe("Preparation deep module", () => {
     });
     if (!known.ok) throw new Error(known.error.kind);
     expect(
-      context.study.setCardState({ cardId: known.value.card.id, action: "markKnown" })
-        .ok,
+      context.study.setCardState({
+        cardId: known.value.card.id,
+        action: "markSupportReady",
+      }).ok,
     ).toBe(true);
     const set = await commit(context.preparation, direct, "import-gap");
     const analyzed = await analyze(context, set.id);

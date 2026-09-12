@@ -396,26 +396,25 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     if (!current.ok) return current;
     const { state } = current.value;
     try {
-      if (
-        (command.action === "markKnown" && state === "known") ||
-        (command.action === "suspend" && state === "suspended")
-      ) {
+      if (command.action === "suspend" && state === "suspended") {
         return current;
       }
       const now = safeNow(dependencies.clock);
       if (!now.ok) return now;
       const transition = database.transaction(() => {
+        // Explicit confirmation that the Card's language counts as known,
+        // without leaving study. Nothing enters `known` through the
+        // interface; earned cards stay in rotation on their schedules.
         if (
-          command.action === "markKnown" &&
+          command.action === "markSupportReady" &&
           (state === "staged" || state === "active")
         ) {
           database
             .query(
-              `UPDATE card_progress
-               SET state = 'known', known_return_state = ?, support_ready_at = ?
-               WHERE card_id = ?`,
+              `UPDATE card_progress SET support_ready_at = ?
+               WHERE card_id = ? AND support_ready_at IS NULL`,
             )
-            .run(state, now.value.toISOString(), command.cardId);
+            .run(now.value.toISOString(), command.cardId);
           return;
         }
         if (command.action === "markNotKnown" && state === "known") {

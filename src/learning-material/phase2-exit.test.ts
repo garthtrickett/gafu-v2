@@ -129,7 +129,7 @@ describe("Phase 2 generated study lifecycle", () => {
         throw new Error(`background ${canonicalForm} setup`);
       const known = app.study.setCardState({
         cardId: background.value.card.id,
-        action: "markKnown",
+        action: "markSupportReady",
       });
       if (!known.ok) throw new Error(`background ${canonicalForm} known`);
     }
@@ -305,7 +305,7 @@ describe("Phase 2 generated study lifecycle", () => {
         throw new Error(`background ${canonicalForm} setup`);
       const backgroundKnown = app.study.setCardState({
         cardId: background.value.card.id,
-        action: "markKnown",
+        action: "markSupportReady",
       });
       if (!backgroundKnown.ok) throw new Error(`background ${canonicalForm} known`);
     }
@@ -420,7 +420,7 @@ describe("Phase 2 generated study lifecycle", () => {
         throw new Error(`background ${canonicalForm} setup`);
       const known = app.study.setCardState({
         cardId: background.value.card.id,
-        action: "markKnown",
+        action: "markSupportReady",
       });
       if (!known.ok) throw new Error(`background ${canonicalForm} known`);
     }

@@ -205,13 +205,22 @@ const desiredProgress = (
   const learning = clean(progress.learningState)?.toLocaleLowerCase() ?? "";
   const archived =
     clean(progress.participationStatus)?.toLocaleLowerCase() === "archived";
-  const known = learning === "stable" || learning === "known";
+  // Earned stability stays in rotation on its schedule; only an explicit
+  // dismissal leaves study. Nothing enters `known` through the interface, so
+  // a V1 dismissal is the one mapping that still lands there.
+  const stable = learning === "stable";
+  const dismissed = learning === "known";
+  const known = stable || dismissed;
   const importedSchedule = schedule(progress);
   const admittedAt = validDate(progress.introducedAt);
   let base: Exclude<CardState, "suspended"> = "staged";
   let quarantine: string | null = null;
-  if (known) {
+  if (dismissed) {
     base = "known";
+  } else if (stable) {
+    // Earned rotation needs its dates; without them the Card enters through
+    // admission like anything new rather than stranding schedule-less.
+    base = importedSchedule !== null ? "active" : "staged";
   } else if (
     learning === "unintroduced" &&
     (progress.repetitions ?? 0) === 0 &&

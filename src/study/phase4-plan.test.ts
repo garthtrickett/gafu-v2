@@ -254,7 +254,7 @@ describe("Phase 4 Preparation Plans", () => {
     for (const member of episodeOneCards) {
       context.study.setCardState({
         cardId: member.cardId as never,
-        action: "markKnown",
+        action: "markSupportReady",
       });
     }
     expect(context.study.plan(started.value.id)).toMatchObject({

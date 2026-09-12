@@ -88,7 +88,7 @@ export type CardQuery = Readonly<{
 
 export type CardStateCommand = Readonly<{
   cardId: CardId;
-  action: "markKnown" | "markNotKnown" | "suspend" | "restore";
+  action: "markSupportReady" | "markNotKnown" | "suspend" | "restore";
 }>;
 
 export type StudyPreferences = Readonly<{

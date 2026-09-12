@@ -303,7 +303,7 @@ describe("Study Cards and knowledge", () => {
       },
     });
     if (!captured.ok) throw new Error(captured.error.kind);
-    study.setCardState({ cardId: captured.value.card.id, action: "markKnown" });
+    study.setCardState({ cardId: captured.value.card.id, action: "markSupportReady" });
     expect(
       study.updateCard(captured.value.card.id, {
         lemma: "犬",
@@ -323,12 +323,14 @@ describe("Study Cards and knowledge", () => {
     study.close();
   });
 
-  test("makes known and suspended transitions reversible without losing schedule", () => {
+  test("makes support-ready and suspended transitions reversible without losing schedule", () => {
     const { study } = openTestStudy();
     const card = create(study, vocabulary).card;
-    expect(study.setCardState({ cardId: card.id, action: "markKnown" })).toMatchObject({
+    expect(
+      study.setCardState({ cardId: card.id, action: "markSupportReady" }),
+    ).toMatchObject({
       ok: true,
-      value: { state: "known", supportReadyAt: expect.any(String) },
+      value: { state: "staged", supportReadyAt: expect.any(String) },
     });
     expect(study.knowledgeSnapshot()).toMatchObject({
       ok: true,
@@ -340,13 +342,13 @@ describe("Study Cards and knowledge", () => {
     });
     expect(study.setCardState({ cardId: card.id, action: "restore" })).toMatchObject({
       ok: true,
-      value: { state: "known" },
+      value: { state: "staged" },
     });
     expect(
-      study.setCardState({ cardId: card.id, action: "markNotKnown" }),
+      study.setCardState({ cardId: card.id, action: "markSupportReady" }),
     ).toMatchObject({
       ok: true,
-      value: { state: "staged", supportReadyAt: null },
+      value: { state: "staged", supportReadyAt: expect.any(String) },
     });
     expect(study.setCardState({ cardId: card.id, action: "restore" })).toEqual({
       ok: false,

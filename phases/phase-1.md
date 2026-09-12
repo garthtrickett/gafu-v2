@@ -85,7 +85,8 @@ Every Card has one learner-owned **Card State**:
 
 - `staged`: unseen and waiting for the shared daily allowance;
 - `active`: admitted and scheduled for learning or review;
-- `known`: explicitly marked known and omitted from review;
+- `known`: dismissed at import and omitted from review; no interface action
+  targets it afterwards;
 - `suspended`: temporarily omitted from admission and review while preserving
   the state to which it will be restored.
 
@@ -93,7 +94,7 @@ State commands follow one table:
 
 | Command | Allowed from | Result |
 |---|---|---|
-| `markKnown` | staged, active | known; remember the prior state and set support readiness |
+| `markSupportReady` | staged, active | support readiness without leaving study |
 | `markNotKnown` | known | restore the remembered staged/active state and clear support readiness |
 | `suspend` | staged, active, known | suspended; remember the complete prior state |
 | `restore` | suspended | restore the remembered state without changing admission or due time |
@@ -107,7 +108,7 @@ to correct a mistaken knowledge assertion.
 `supportReadyAt` is separate from Card State. It records that the Card may be
 used as already-known supporting language in generated material. It is set by:
 
-1. an explicit `markKnown` action; or
+1. an explicit `markSupportReady` action; or
 2. two non-`again` answers on different learner-local calendar days, with at
    least 20 hours between the answers.
 
@@ -291,7 +292,7 @@ The browser route provides:
 - explicit created-versus-existing feedback;
 - editable display content with a clear warning that the immutable Identity
   Claim and existing progress do not silently move to a different sense;
-- mark known, mark not known, suspend, and restore controls;
+- mark support-ready, mark not known, suspend, and restore controls;
 - New Cards per Day and IANA time-zone settings;
 - queue counts that distinguish due, learning, and staged Cards;
 - Known Word baseline availability and enabled count; and
@@ -364,30 +365,38 @@ evidence and update the parent plan.
 permitted open closure item is the explicitly reported production Kaishi source;
 all code paths and synthetic conformance tests for it must already be complete.
 
-### Patch 1.7 — Earned cards stay in rotation; known means hand-marked
+### Patch 1.7 — Earned cards stay in rotation; nothing enters known
 
 V1 settles this: `stable` (earned through repetition) keeps queuing by
 `nextReview`, `graduated` is display-only, and only an explicit `mark_known`
 leaves the queue (`orderReviewQueue`, `transitionLearnerProgress`,
-`learnerProgressIsDue`). V2 matches that from here on: `known` is manual-only
-and terminal, and earned cards live in `active` with FSRS dates. No new state;
-long intervals already express stability.
+`learnerProgressIsDue`). V2 matches that from here on, one step stricter:
+no transition targets `known` at all. Explicit confirmation becomes its own
+action, `markSupportReady`, which stamps support-ready language without
+leaving study; delayed recall keeps working unchanged. Earned cards live in
+`active` with FSRS dates. No new state; long intervals already express
+stability. The one exception is an explicit V1 dismissal arriving through
+migration, which still lands in `known` with `markNotKnown` kept as its way
+back — the interface itself offers no path in.
 
-Two changes:
+Three changes:
 
-1. **Going-forward migration mapping** (`src/migration/v1-migration.ts`):
+1. **State actions** (`src/study/` + bank UI): remove `markKnown`, add
+   `markSupportReady` (staged/active only, idempotent when already set).
+   Delete the bulk `migration:v1:mark-known` script, its tests, and its docs:
+   piling cards into `known` is exactly what ends.
+2. **Going-forward migration mapping** (`src/migration/v1-migration.ts`):
    V1-stable maps to `active` (keeping its v1-derived schedule and
-   support-ready stamp); V1-known maps to `known`. Update the mapping tests
-   that assert stable-to-known.
-2. **Backfill script** (`scripts/backfill-stable-known.ts`, file-to-file
+   support-ready stamp, admission-ready when schedule-less); V1-known maps to
+   `known`. Update the mapping tests that assert stable-to-known.
+3. **Backfill script** (`scripts/backfill-stable-known.ts`, file-to-file
    only — it never touches production directly): on a backup copy, flip
-   untouched-import knowns to `staged` with taught markers, then the operator
-   restores through the existing restore flow:
-   - Flip set: `card_progress.state = 'known'` with `support_ready_at`
-     exactly equal to the import cluster timestamp (one shared value; a
-     manual mark lands on its own second and is excluded, as is anything
-     already un-known). Report the count and a sample before writing; an
-     empty set is a clean no-op on re-run, which is the idempotency story.
+   knowns to `staged` with taught markers, then the operator restores through
+   the existing restore flow:
+   - Flip set: every `card_progress.state = 'known'` row. Forensics shows no
+     manual marks in V2 (all share import timestamps), so no untouched/touched
+     split is needed; a second run finds an empty set, which is the
+     idempotency story. Report the count and a sample before writing.
    - Per flipped card, in one transaction: set state `staged` and clear
      `known_return_state`; delete any `schedule` row (admission inserts its
      own — a leftover row would collide); insert an active `staging_source`
@@ -400,17 +409,20 @@ Two changes:
      which is stated honestly — V2 never held that history.
    - Safety: export and verify a backup first; dry-run listing requires
      operator confirmation; post-restore counts must match the script report;
-     rollback is restore-from-backup through the existing flow.
+     rollback is restore-from-backup through the existing flow. Execution
+     needs a production write path (Railway file access or a restore
+     endpoint, neither of which exists yet) and waits on it.
 
 Out of scope: per-card V1 learning states (the persisted reconciliation
 report does not record them and the import snapshot is gone, so
 stable-versus-known origin inside the flip set is approximate by
 construction); analyzer, validator, or scheduler behavior, all unchanged.
 
-**Gate:** mapping unit tests assert stable-to-active; transform unit tests on
-a fixture database cover untouched, touched, scheduled, and already-flipped
-rows; a dry run on the production backup reports without writing; the full
-required validation passes.
+**Gate:** mapping unit tests assert stable-to-active; support-ready flows use
+the new action in every suite; the journey vouches background cards through
+the bank UI; transform unit tests on a fixture database cover scheduled and
+already-flipped rows; a dry run on the production backup reports without
+writing; the full required validation passes.
 
 ## Refinement scenarios
 

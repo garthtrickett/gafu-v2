@@ -450,7 +450,10 @@ framed on its own. The server splits the same due set into two owned queues:
 next untaught admitted (learn) and due taught-or-reviewing (review).
 
 - `POST /api/study/learn` serves the next untaught card's stored teaching, or
-  `teachingNotPrepared` when there is none. It never generates.
+  `teachingNotPrepared` when there is none. It never generates. Untaught
+  cards without stored teaching are passed over looking for the first
+  teachable one, so one gap never wedges the queue; anything else returns
+  immediately.
 - Review serving is unchanged per card; the browser's Review button asks for
   the next due card that is not an untaught new card, and reports `nothingDue`
   when there is none.

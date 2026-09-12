@@ -91,9 +91,14 @@ const stateActions = (
         ? html`<button type="button" class="secondary" @click=${() => act("markNotKnown")}>
           Mark not known
         </button>`
-        : html`<button type="button" class="secondary" @click=${() => act("markKnown")}>
-          Mark known
+        : html``
+    }
+    ${
+      card.supportReadyAt === null
+        ? html`<button type="button" class="secondary" @click=${() => act("markSupportReady")}>
+          Support-ready
         </button>`
+        : html``
     }
     <button type="button" class="secondary" @click=${() => act("suspend")}>
       Suspend
@@ -264,8 +269,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
         body: JSON.stringify({ action }),
       });
       return `Card is now ${
-        action === "markKnown"
-          ? "known"
+        action === "markSupportReady"
+          ? "support-ready"
           : action === "markNotKnown"
             ? "back in study"
             : action === "suspend"
