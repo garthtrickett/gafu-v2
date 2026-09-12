@@ -225,6 +225,17 @@ export type LearningMaterial = Readonly<{
    */
   canTeach: (cardId: CardSummary["id"]) => Result<boolean, MaterialFailure>;
   /**
+   * `taught` and `canTeach` for every Card at once, two queries instead of
+   * two per Card: the bank snapshot asks about hundreds of Cards per refresh.
+   */
+  teachingFlags: () => Result<
+    Readonly<{
+      taught: ReadonlySet<CardSummary["id"]>;
+      teachable: ReadonlySet<CardSummary["id"]>;
+    }>,
+    MaterialFailure
+  >;
+  /**
    * Records a review batch without generating anything. Each status poll
    * advances one card (banking reserves, never taking), so progress is
    * client-pumped and resumable with no daemon.

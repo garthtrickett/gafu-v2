@@ -811,6 +811,28 @@ with the reasons visible in the second request; a Card refused in every
 round is dropped after the third with `validationRejected`; the full
 required validation passes.
 
+### Patch 2.24 — A snapshot the size of the bank
+
+Every click refetched `GET /api/study`: a megabyte, four-fifths of it the
+1,437-word baseline listed twice, plus two teaching lookups per Card for
+hundreds of Cards. From a distance that alone was most of a second per click.
+
+- Knowledge leaves the bank snapshot for `GET /api/study/knowledge`, loaded
+  when the baseline panel is opened or by the cards CLI; the snapshot keeps
+  only the baseline's availability and enabled count. The snapshot is about a
+  fifth of its former size.
+- `GET /api/study/status` returns the tile counts alone. Session actions
+  (learn, teach, batch) refetch that instead of the bank; a moved staged or
+  active count means admission changed Card states, and only then is the
+  bank refetched. Grades still refetch the bank, whose review counts they
+  change.
+- Teaching flags come from two set-valued queries for all Cards, not two
+  queries per Card.
+
+**Gate:** the deployment test reads the baseline summary from the snapshot
+and the words from the knowledge route; the journey asserts knowledge is
+absent from the snapshot; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

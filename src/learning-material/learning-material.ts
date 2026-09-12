@@ -445,6 +445,30 @@ export const openLearningMaterial = (
     }
   };
 
+  const teachingFlags: LearningMaterial["teachingFlags"] = () => {
+    try {
+      const taught = new Set(
+        (
+          database.query("SELECT card_id FROM teaching_acknowledgement").all() as {
+            card_id: CardId;
+          }[]
+        ).map((row) => row.card_id),
+      );
+      const teachable = new Set(
+        (
+          database
+            .query(
+              "SELECT DISTINCT card_id FROM validated_presentation WHERE mode = 'teach'",
+            )
+            .all() as { card_id: CardId }[]
+        ).map((row) => row.card_id),
+      );
+      return ok({ taught, teachable });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const presentationAudio: LearningMaterial["presentationAudio"] = (presentationId) => {
     try {
       const row = database
@@ -1068,6 +1092,7 @@ export const openLearningMaterial = (
     },
     presentationAudio,
     canTeach,
+    teachingFlags,
     permitVerifier,
     close: () => database.close(),
   });
