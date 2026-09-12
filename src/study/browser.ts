@@ -610,11 +610,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
                         <p class="context">${model.presentation.material.context}</p>
-                        ${
-                          model.presentation.mode === "teach"
-                            ? html`<p class="prompt">${model.presentation.material.prompt}</p>`
-                            : ""
-                        }
                         <p class="japanese" lang="ja">${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
                         ${
                           model.presentation.mode === "teach"
