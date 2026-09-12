@@ -20,7 +20,7 @@ import type {
   StudyPreferences,
   StudyStatus,
 } from "./contracts.ts";
-import { splitFurigana } from "./furigana.ts";
+import { alignFurigana } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
@@ -240,15 +240,15 @@ const rubyText = (
     colourable ? (inside.length > 0 ? inside : overlapping) : [],
   );
   return located.map((item) => {
-    const { before, body, over, after } = splitFurigana(
-      item.segment.written,
-      item.segment.reading,
+    const ruby = alignFurigana(item.segment.written, item.segment.reading).map(
+      (piece) =>
+        piece.reading === null
+          ? html`${piece.text}`
+          : html`<ruby>${piece.text}<rt>${piece.reading}</rt></ruby>`,
     );
-    const ruby =
-      body === ""
-        ? html`${before}`
-        : html`${before}<ruby>${body}<rt>${over}</rt></ruby>${after}`;
-    return coloured.has(item) ? html`<span class="target">${ruby}</span>` : ruby;
+    return coloured.has(item)
+      ? html`<span class="target">${ruby}</span>`
+      : html`${ruby}`;
   });
 };
 

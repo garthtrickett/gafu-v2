@@ -922,6 +922,21 @@ day from tomorrow, leaves the seventh (unsupported) in place, keeps today's
 allowance and queue empty, and answers a graduated Card two days later
 through FSRS; the full required validation passes.
 
+### Patch 2.28 — Ruby only over the kanji
+
+A reading segment can be a whole phrase, and the splitter trimmed only the
+kana the two ends agreed on, stopping at punctuation: 噂だけでなく、 carried
+うわさだけでなく、 over the lot. The reading is now aligned to the writing:
+every non-kanji run must appear literally in the reading (katakana and
+hiragana taken as the same syllables), and what each kanji run captures is
+its furigana. Kana before, between, and after kanji stand as themselves. A
+reading the writing cannot explain falls back to the old trimming, so nothing
+renders worse than before. The cards CLI preview uses the same alignment.
+
+**Gate:** unit tests for edge punctuation, kana between kanji runs, katakana
+writing, the fallback, and text recoverability; the full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
