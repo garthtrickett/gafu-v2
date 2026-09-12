@@ -23,8 +23,21 @@ import { splitFurigana } from "./furigana.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
 import type { SessionCounts } from "./session-split.ts";
 
+/**
+ * A Card as the bank shows it: Study's summary plus whether its teaching has
+ * been acknowledged and whether a teaching sentence is banked. Learn walks
+ * past a Card with neither.
+ */
+type BankCard = CardSummary & Readonly<{ taught: boolean; teachable: boolean }>;
+
+const needsTeaching = (card: BankCard): boolean =>
+  !card.taught &&
+  !card.teachable &&
+  card.state !== "known" &&
+  card.state !== "suspended";
+
 type BrowserSnapshot = Readonly<{
-  cards: readonly CardSummary[];
+  cards: readonly BankCard[];
   preferences: StudyPreferences;
   knowledge: KnowledgeSnapshot;
   status: StudyStatus;
@@ -468,6 +481,25 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * duplicate text. A segment whose reading is its own writing is kana already
    * and takes no ruby: putting が over が is noise that pushes the line apart.
    */
+  // Names the due Cards Learn walked past, so the fix is a specific sentence
+  // to author rather than a hunt through the bank.
+  const untaughtMessage = (): string => {
+    const now = model.snapshot?.status.observedAt ?? "";
+    const names = (model.snapshot?.cards ?? [])
+      .filter(
+        (card) =>
+          needsTeaching(card) &&
+          card.state === "active" &&
+          card.schedulePhase === "new" &&
+          card.dueAt !== null &&
+          card.dueAt <= now,
+      )
+      .map(cardTitle);
+    return names.length === 0
+      ? "Nothing left to learn has teaching yet. Import sentences with the cards CLI."
+      : `No teaching yet for ${names.join(", ")}. Import sentences for them with the cards CLI.`;
+  };
+
   const startLearn = (): void => {
     void run(
       async () => {
@@ -480,9 +512,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           // New Cards show only what the import stored. Anything else is an
           // onboarding gap, not something retrying will fix.
           if (cause instanceof Error && cause.message === "teachingNotPrepared") {
-            throw new Error(
-              "This Card has no teaching yet. Import it with the cards CLI first.",
-            );
+            throw new Error(untaughtMessage());
           }
           throw cause;
         }
@@ -1024,6 +1054,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                 card.supportReadyAt === null
                                   ? ""
                                   : html`<span class="pill pill--ready">support-ready</span>`
+                              }
+                              ${
+                                needsTeaching(card)
+                                  ? html`<span class="pill pill--untaught">no teaching yet</span>`
+                                  : ""
                               }
                             </div>
                             <h3>${cardTitle(card)}</h3>

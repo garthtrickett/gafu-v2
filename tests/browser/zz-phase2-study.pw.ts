@@ -201,7 +201,15 @@ test("configures a key and teaches before the first generated review", async ({
   // instead of idling on the first gap.
   await expect(page.getByRole("status")).toContainText("Nothing more to learn");
   await review.getByRole("button", { name: "Learn new" }).click();
-  await expect(page.getByRole("status")).toContainText("has no teaching yet");
+  await expect(page.getByRole("status")).toContainText("No teaching yet for");
+  // The bank says the same per Card: the taught pair carry no flag, the
+  // untaught background grammar does.
+  await expect(page.locator(".bank-card", { hasText: "鳥" })).not.toContainText(
+    "no teaching yet",
+  );
+  await expect(
+    page.locator(".bank-card", { hasText: "no teaching yet" }).first(),
+  ).toBeVisible();
 
   // The review session dispatches one batch through the UI and pumps it to
   // done; work-through then serves from banked reserves on its own. A ready

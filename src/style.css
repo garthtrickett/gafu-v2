@@ -685,6 +685,11 @@ form {
   background: #292d28;
 }
 
+.pill--untaught {
+  color: #ffb5a9;
+  background: #3a2622;
+}
+
 .pill--ready {
   color: #8ce7cb;
   background: #153128;

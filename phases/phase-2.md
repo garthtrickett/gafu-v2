@@ -732,6 +732,17 @@ begin. Both go.
 own with the wait named while its serve is held, then grades through; the
 full required validation passes.
 
+### Patch 2.20 — The bank says which Cards have no teaching
+
+Learn walked past five due Cards with "This Card has no teaching yet" and no
+way to tell which five. The snapshot now carries `taught` (acknowledged) and
+`teachable` (a teach presentation is banked) per Card. The bank flags each
+active or staged Card with neither, and the Learn message names the due Cards
+it walked past, so the fix is a specific sentence to author.
+
+**Gate:** the journey sees the flag on untaught Cards and not on taught ones,
+and the Learn message names the Cards; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
