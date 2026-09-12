@@ -353,9 +353,11 @@ label {
 }
 
 .presentation .japanese .target {
-  /* The Card's own word, so the eye lands on what is being tested. */
+  /* The Card's own word, so the eye lands on what is being tested. Colour
+     alone marks it: a bold weight makes machines without a bold Japanese
+     face fall back to a different font for just this word, so it rendered
+     at a fraction of the size of the rest of the sentence. */
   color: #f2c14e;
-  font-weight: 700;
 }
 
 .presentation .japanese .target rt {

@@ -629,6 +629,21 @@ own review; only the next first exposure follows.
 it alone, watching the tiles move each time, then lands on the buttons with
 the end-of-session message; the full required validation passes.
 
+### Patch 2.16 — Teach card reads as one sentence
+
+Two presentation fixes on the teach card, from the operator's screen.
+
+- The "`<target>` in use." prompt line is gone. The context line above it
+  already names the target, reading, and meaning, so the prompt repeated the
+  word with no new information and pushed the sentence down.
+- The coloured target word in the sentence is no longer bold. On a machine
+  without a bold Japanese face the browser substituted a different font for
+  just that word, so it rendered at a fraction of the size of its
+  neighbours. Colour alone marks the target now.
+
+**Gate:** the browser journeys pass unchanged; the full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
