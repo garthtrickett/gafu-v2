@@ -364,6 +364,54 @@ evidence and update the parent plan.
 permitted open closure item is the explicitly reported production Kaishi source;
 all code paths and synthetic conformance tests for it must already be complete.
 
+### Patch 1.7 — Earned cards stay in rotation; known means hand-marked
+
+V1 settles this: `stable` (earned through repetition) keeps queuing by
+`nextReview`, `graduated` is display-only, and only an explicit `mark_known`
+leaves the queue (`orderReviewQueue`, `transitionLearnerProgress`,
+`learnerProgressIsDue`). V2 matches that from here on: `known` is manual-only
+and terminal, and earned cards live in `active` with FSRS dates. No new state;
+long intervals already express stability.
+
+Two changes:
+
+1. **Going-forward migration mapping** (`src/migration/v1-migration.ts`):
+   V1-stable maps to `active` (keeping its v1-derived schedule and
+   support-ready stamp); V1-known maps to `known`. Update the mapping tests
+   that assert stable-to-known.
+2. **Backfill script** (`scripts/backfill-stable-known.ts`, file-to-file
+   only — it never touches production directly): on a backup copy, flip
+   untouched-import knowns to `staged` with taught markers, then the operator
+   restores through the existing restore flow:
+   - Flip set: `card_progress.state = 'known'` with `support_ready_at`
+     exactly equal to the import cluster timestamp (one shared value; a
+     manual mark lands on its own second and is excluded, as is anything
+     already un-known). Report the count and a sample before writing; an
+     empty set is a clean no-op on re-run, which is the idempotency story.
+   - Per flipped card, in one transaction: set state `staged` and clear
+     `known_return_state`; delete any `schedule` row (admission inserts its
+     own — a leftover row would collide); insert an active `staging_source`
+     row (`migration` kind, `backfill-stable-known-v1` key, priority 0) so
+     admission can see it; insert a `teaching_acknowledgement` row with a
+     `v1-history` presentation id, evidencing V1 review history instead of a
+     V2 first exposure the learner already had.
+   - The daily budget then absorbs them as reviews over coming days: no due
+     flood, no 295-sentence authoring wall. Their V2 intervals start fresh,
+     which is stated honestly — V2 never held that history.
+   - Safety: export and verify a backup first; dry-run listing requires
+     operator confirmation; post-restore counts must match the script report;
+     rollback is restore-from-backup through the existing flow.
+
+Out of scope: per-card V1 learning states (the persisted reconciliation
+report does not record them and the import snapshot is gone, so
+stable-versus-known origin inside the flip set is approximate by
+construction); analyzer, validator, or scheduler behavior, all unchanged.
+
+**Gate:** mapping unit tests assert stable-to-active; transform unit tests on
+a fixture database cover untouched, touched, scheduled, and already-flipped
+rows; a dry run on the production backup reports without writing; the full
+required validation passes.
+
 ## Refinement scenarios
 
 The implementation and tests must answer these without caller-side workarounds:
@@ -388,6 +436,7 @@ The implementation and tests must answer these without caller-side workarounds:
 16. A baseline word is disabled and remains disabled after a newer seed version.
 17. The application opens a database written by a newer incompatible version.
 18. Backup fails while Cards remain readable and unchanged.
+19. A V1-stable import is re-run through the backfill and finds nothing to flip.
 
 ## Exit gate
 
