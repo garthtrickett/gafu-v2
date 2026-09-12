@@ -115,7 +115,7 @@ const markBackgroundKnown = (study: ReturnType<typeof harness>["study"]) => {
       throw new Error("background setup");
     const known = study.setCardState({
       cardId: background.value.card.id,
-      action: "markKnown",
+      action: "markSupportReady",
     });
     if (!known.ok) throw new Error("background known");
   }

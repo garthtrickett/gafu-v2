@@ -187,8 +187,7 @@ describe("V1 migration", () => {
         .query("SELECT state, count(*) AS count FROM card_progress GROUP BY state")
         .all(),
     ).toEqual([
-      { state: "active", count: 1 },
-      { state: "known", count: 1 },
+      { state: "active", count: 2 },
       { state: "staged", count: 1 },
       { state: "suspended", count: 1 },
     ]);
@@ -208,18 +207,13 @@ describe("V1 migration", () => {
     ).toEqual({
       count: 3,
     });
+    // Earned V1 progress stays in rotation: nothing lands in `known`,
+    // which remains a hand-marked state the migration never assigns here.
     expect(
       database
-        .query(
-          `SELECT support_ready_at, known_return_state FROM card_progress p
-           JOIN card c ON c.id = p.card_id
-           WHERE p.state = 'known'`,
-        )
+        .query("SELECT count(*) AS count FROM card_progress WHERE state = 'known'")
         .get(),
-    ).toEqual({
-      support_ready_at: "2026-09-01T10:00:00.000Z",
-      known_return_state: "active",
-    });
+    ).toEqual({ count: 0 });
     database.close();
 
     expect(
@@ -351,7 +345,7 @@ describe("V1 migration", () => {
     }
   });
 
-  test("keeps known progress reversible when V1 has no usable schedule", () => {
+  test("keeps schedule-less stable progress admission-ready instead of known", () => {
     const context = setup();
     const snapshot = JSON.parse(new TextDecoder().decode(v1Snapshot())) as {
       sync: {
@@ -375,8 +369,8 @@ describe("V1 migration", () => {
         .query("SELECT state, known_return_state, support_ready_at FROM card_progress")
         .get(),
     ).toEqual({
-      state: "known",
-      known_return_state: "staged",
+      state: "staged",
+      known_return_state: null,
       support_ready_at: "2026-09-01T10:00:00.000Z",
     });
     expect(database.query("SELECT count(*) AS count FROM schedule").get()).toEqual({

@@ -49,16 +49,9 @@ unset GAFU_V1_BEARER_TOKEN
 ```
 
 Keep the snapshot and all reports outside source control. Dry-run, inspect every
-disposition, apply to a new explicit database, and perform any owner-approved
-one-off learner-state correction while the database is offline. The documented
-import-scoped correction is:
-
-```bash
-bun run migration:v1:mark-known -- \
-  --database ./data/gafu-v2-production.sqlite \
-  --import-key <the-exact-applied-import-key> \
-  --confirm-imported-known
-```
+disposition, and apply to a new explicit database. Imported Cards keep the
+states the migration assigns — earned progress stays in rotation, and nothing
+enters `known` afterwards.
 
 Start Gafu once against that database and the private Kaishi manifest so the
 baseline is materialized, stop it, then require both commands to pass:

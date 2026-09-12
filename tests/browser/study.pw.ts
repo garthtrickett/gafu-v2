@@ -34,7 +34,7 @@ test("manages durable typed Cards and settings through the local Study server", 
   await expect(page.getByText("2 durable Cards")).toBeVisible();
 
   const vocabularyCard = page.locator(".bank-card", { hasText: "開く" });
-  await vocabularyCard.getByRole("button", { name: "Mark known" }).click();
+  await vocabularyCard.getByRole("button", { name: "Support-ready" }).click();
   await expect(vocabularyCard).toContainText("support-ready");
 
   await page.getByLabel("New Cards per Day").fill("7");

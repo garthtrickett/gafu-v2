@@ -18,7 +18,7 @@ test("configures a key and teaches before the first generated review", async ({
 
   const earlierStagedGrammar = page.locator(".bank-card", { hasText: "〜てしまう" });
   if ((await earlierStagedGrammar.count()) > 0) {
-    await earlierStagedGrammar.getByRole("button", { name: "Mark known" }).click();
+    await earlierStagedGrammar.getByRole("button", { name: "Support-ready" }).click();
   }
 
   // The key is a deployment value now, so there is nothing to enter: the
@@ -73,7 +73,7 @@ test("configures a key and teaches before the first generated review", async ({
     // :text-is matches the card title exactly; substring hasText would confuse
     // か with かな, だ with だけ, and も with でも.
     const background = page.locator(`.bank-card:has(h3:text-is("${form}"))`);
-    await background.getByRole("button", { name: "Mark known" }).click();
+    await background.getByRole("button", { name: "Support-ready" }).click();
     await expect(background).toContainText("support-ready");
   }
 
@@ -145,9 +145,11 @@ test("configures a key and teaches before the first generated review", async ({
   }
   expect(learned.sort()).toEqual(["bird", "cat"]);
 
-  // Both taught Cards are out of the learn queue now.
+  // Both taught Cards are out of the learn queue now. What remains untaught
+  // has no stored teaching anywhere, so Learn walks past all of it and says
+  // so instead of idling on the first gap.
   await review.getByRole("button", { name: "Learn new" }).click();
-  await expect(page.getByRole("status")).toContainText("nothingDue");
+  await expect(page.getByRole("status")).toContainText("has no teaching yet");
 
   // The review session dispatches one batch through the UI and pumps it to
   // done; work-through then serves from banked reserves through Review.
