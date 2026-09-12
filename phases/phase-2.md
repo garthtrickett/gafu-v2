@@ -743,6 +743,24 @@ it walked past, so the fix is a specific sentence to author.
 **Gate:** the journey sees the flag on untaught Cards and not on taught ones,
 and the Learn message names the Cards; the full required validation passes.
 
+### Patch 2.21 — Teaching stays servable until it is seen
+
+Taking a teach presentation set `shown_at`, and Learn only served unshown
+reserves. A tab closed before Seen it therefore stranded the Card: no reserve,
+no acknowledgement, `teachingNotPrepared` for ever. Four production Cards were
+found in that state, two of them ones the operator had seen on screen.
+
+Teaching is display-only (Patch 2.8), so re-showing it is harmless. When a
+Card's unshown teach reserve is empty, Learn serves its most recently shown
+teach presentation again; only a Card with no teach presentation at all fails
+fast. `canTeach` (any teach presentation exists) replaces the unshown-reserve
+check as the bank's `teachable` flag. Acknowledgement already accepted any
+shown teach presentation, so Seen it on the re-served one works unchanged.
+
+**Gate:** unit test takes teaching, skips the acknowledgement, and is served
+the same presentation again, then acknowledges and moves to review; a Card
+with nothing stored still fails fast; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

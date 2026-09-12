@@ -354,6 +354,50 @@ export const openLearningMaterial = (
     return { ...prepared, audioUrl: present ? audioUrlFor(prepared.id) : null };
   };
 
+  /**
+   * Teaching is display-only, so a teach presentation stays servable until
+   * the learner says Seen it. Taking it set `shown_at`; a tab closed before
+   * the acknowledgement must not strand the Card with nothing to show.
+   */
+  const latestShownTeaching = (
+    cardId: CardId,
+  ): Result<PreparedMaterial | null, MaterialFailure> => {
+    try {
+      const row = database
+        .query(`SELECT id, card_id, mode, payload_json
+        FROM validated_presentation
+        WHERE card_id = ? AND mode = 'teach' AND shown_at IS NOT NULL
+        ORDER BY shown_at DESC, id DESC LIMIT 1`)
+        .get(cardId) as MaterialRow | null;
+      if (row === null) return ok(null);
+      return ok({
+        id: row.id,
+        cardId,
+        mode: "teach",
+        material: JSON.parse(row.payload_json) as GeneratedMaterial,
+        permit: null,
+        source: "reserve",
+        audioUrl: null,
+      });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
+  const canTeach: LearningMaterial["canTeach"] = (cardId) => {
+    try {
+      return ok(
+        database
+          .query(
+            "SELECT 1 FROM validated_presentation WHERE card_id = ? AND mode = 'teach'",
+          )
+          .get(cardId) !== null,
+      );
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const presentationAudio: LearningMaterial["presentationAudio"] = (presentationId) => {
     try {
       const row = database
@@ -560,7 +604,12 @@ export const openLearningMaterial = (
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
-    if (mode === "teach") return err({ kind: "teachingNotPrepared" });
+    if (mode === "teach") {
+      const shown = latestShownTeaching(input.card.id);
+      if (!shown.ok) return shown;
+      if (shown.value !== null) return ok(await withAudio(shown.value, input.signal));
+      return err({ kind: "teachingNotPrepared" });
+    }
     const stocked = await stockReserve(input, mode);
     if (!stocked.ok) return stocked;
     const prepared = takeReserve(input.card.id, mode, "generated");
@@ -736,6 +785,7 @@ export const openLearningMaterial = (
       return request === null ? err({ kind: "presentationNotFound" }) : ok(request);
     },
     presentationAudio,
+    canTeach,
     permitVerifier,
     close: () => database.close(),
   });

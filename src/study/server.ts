@@ -270,7 +270,7 @@ const snapshot = (study: Study, material: LearningMaterial): Response => {
   for (const card of cards.value) {
     const taught = material.hasTeaching(card.id);
     if (!taught.ok) return materialResponse(taught);
-    const teachable = material.hasReserve(card.id, "teach");
+    const teachable = material.canTeach(card.id);
     if (!teachable.ok) return materialResponse(teachable);
     bank.push({ ...card, taught: taught.value, teachable: teachable.value });
   }

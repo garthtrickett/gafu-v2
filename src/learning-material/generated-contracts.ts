@@ -176,6 +176,12 @@ export type LearningMaterial = Readonly<{
     mode: MaterialMode,
   ) => Result<boolean, MaterialFailure>;
   /**
+   * Whether any teach presentation exists for the Card, shown or not.
+   * Teaching stays servable until acknowledged, so this, not the unshown
+   * reserve, is what decides whether Learn can show the Card.
+   */
+  canTeach: (cardId: CardSummary["id"]) => Result<boolean, MaterialFailure>;
+  /**
    * Records a review batch without generating anything. Each status poll
    * advances one card (banking reserves, never taking), so progress is
    * client-pumped and resumable with no daemon.
