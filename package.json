@@ -21,7 +21,8 @@
     "spike:provider": "bun run scripts/phase-0-provider-smoke.ts",
     "subs:scan": "bun run scripts/scan-subtitles.ts",
     "subs:context": "bun run scripts/subtitle-context.ts",
-    "cards:add": "bun run scripts/add-cards.ts"
+    "cards:add": "bun run scripts/add-cards.ts",
+    "known:graduate": "bun run scripts/graduate-known.ts"
   },
   "dependencies": {
     "@faanau/kuromoji": "0.2.1",

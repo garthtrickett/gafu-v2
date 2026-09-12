@@ -764,6 +764,20 @@ const handleApi = async (
       ? jsonResult(study.setBaselineWordEnabled(decodedKey.value, body["enabled"]))
       : invalidRequest("Baseline word key encoding is invalid.");
   }
+  if (request.method === "POST" && url.pathname === "/api/study/known/graduate") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      typeof body["spreadDays"] !== "number" ||
+      typeof body["dryRun"] !== "boolean"
+    ) {
+      return invalidRequest("Graduation needs spreadDays and dryRun.");
+    }
+    return jsonResult(
+      study.graduateKnown({ spreadDays: body["spreadDays"], dryRun: body["dryRun"] }),
+    );
+  }
   if (request.method === "GET" && url.pathname === "/api/study/backup") {
     const backup = study.exportBackup();
     if (!backup.ok) return failureResponse(backup.error);

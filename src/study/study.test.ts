@@ -804,3 +804,92 @@ describe("Study persistence and recovery", () => {
     inspection.close();
   });
 });
+
+describe("graduating known Cards into rotation", () => {
+  const grammarCard = (canonicalForm: string): CreateCard => ({
+    type: "grammar",
+    content: {
+      canonicalForm,
+      meaning: `m ${canonicalForm}`,
+      formation: "f",
+      usageNotes: "",
+    },
+  });
+
+  test("spreads first reviews across the window, skips unsupported forms, and answers like any mature Card", () => {
+    const databasePath = join(mkdtempSync(join(tmpdir(), "gafu-grad-")), "gafu.sqlite");
+    // Creation refuses an unsupported form, so support is withdrawn after
+    // the Card exists: a detector change between import and graduation.
+    let supported = true;
+    const { study, clock } = openTestStudy({
+      databasePath,
+      grammarTargetSupported: (form) => supported || form !== "〜unsupported",
+    });
+    study.setPreferences({ newCardsPerDay: 20, timeZone: "Australia/Sydney" });
+    const forms = ["〜A", "〜B", "〜C", "〜D", "〜E", "〜F", "〜unsupported"];
+    const ids = forms.map((form) => create(study, grammarCard(form)).card.id);
+    // A V1 dismissal: known, never admitted, no schedule.
+    const raw = new Database(databasePath);
+    raw.exec("UPDATE card_progress SET state = 'known', known_return_state = 'staged'");
+    raw.close();
+    supported = false;
+    expect(study.status()).toMatchObject({
+      ok: true,
+      value: { knownCount: 7, activeCount: 0 },
+    });
+
+    const planned = study.graduateKnown({ spreadDays: 3, dryRun: true });
+    if (!planned.ok) throw new Error(JSON.stringify(planned.error));
+    expect(planned.value.graduated).toHaveLength(6);
+    expect(planned.value.skipped.map((item) => item.title)).toEqual(["〜unsupported"]);
+    expect(planned.value.skipped[0]?.cardId).toBe(ids[6]);
+    expect(planned.value.skipped[0]?.reason).toBe("unsupportedGrammarTarget");
+    // Six Cards over three days: two a day, from tomorrow, nothing written yet.
+    expect(planned.value.graduated.map((item) => item.intervalDays)).toEqual([
+      1, 1, 2, 2, 3, 3,
+    ]);
+    expect(planned.value.perDay.map((day) => day.count)).toEqual([2, 2, 2]);
+    expect(study.status()).toMatchObject({
+      ok: true,
+      value: { knownCount: 7, activeCount: 0 },
+    });
+
+    const applied = study.graduateKnown({ spreadDays: 3, dryRun: false });
+    if (!applied.ok) throw new Error(JSON.stringify(applied.error));
+    expect(study.status()).toMatchObject({
+      ok: true,
+      value: { knownCount: 1, activeCount: 6 },
+    });
+    const listed = study.listCards();
+    if (!listed.ok) throw new Error("list");
+    const graduatedCards = listed.value.filter((card) => card.state === "active");
+    expect(graduatedCards.every((card) => card.schedulePhase === "review")).toBe(true);
+    expect(graduatedCards.every((card) => card.admittedAt !== null)).toBe(true);
+    // Nothing is due today, and today's allowance is untouched.
+    const queue = study.studyQueue();
+    expect(queue).toMatchObject({ ok: true, value: { due: [], admittedToday: 0 } });
+
+    // Two days on, exactly the first two waves are due; a graduated Card
+    // answers through FSRS like any mature Card and moves further out.
+    clock.set(
+      new Date(clock.now().getTime() + 2 * 24 * 60 * 60 * 1_000 + 60_000).toISOString(),
+    );
+    const later = study.studyQueue();
+    if (!later.ok) throw new Error("queue");
+    expect(later.value.due).toHaveLength(4);
+    const first = later.value.due[0];
+    if (first === undefined) throw new Error("no due card");
+    const answered = study.answer({
+      cardId: first.card.id,
+      grade: "good",
+      permit: permit("grad-permit", first.card.id, clock.now()),
+    });
+    expect(answered).toMatchObject({ ok: true, value: { card: { reviewCount: 1 } } });
+    if (answered.ok) {
+      expect(new Date(answered.value.nextDueAt).getTime()).toBeGreaterThan(
+        clock.now().getTime() + 24 * 60 * 60 * 1_000,
+      );
+    }
+    study.close();
+  });
+});

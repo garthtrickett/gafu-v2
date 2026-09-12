@@ -897,6 +897,31 @@ the store; the journey grades with the network gone, reloads from the worker
 with the second Card and the queued grade intact, and sees the grade sent
 when the network returns; the full required validation passes.
 
+### Patch 2.27 — Known Cards graduate into rotation
+
+The 296 Cards a V1 dismissal left in `known` were never going to be seen
+again, which was not the operator's intent: they are known well enough to
+review rarely, not never. Patch 1.7's backfill plan (flip to staged with
+taught markers, absorbed under the daily allowance) is superseded.
+
+- `graduateKnown({ spreadDays, dryRun })` moves every `known` Card to
+  `active` with a synthesised graduated schedule: FSRS review phase, past its
+  learning steps, three repetitions, no lapses, default difficulty, and a
+  stability equal to the interval it is given. Intervals run from one day to
+  `spreadDays`, evenly in bank order, so the first reviews arrive a few a
+  day rather than all at once; each later review is FSRS's own.
+- Admission is dated to the day the Card was staged, so graduating hundreds
+  leaves today's new-Card allowance alone. Support readiness is kept: these
+  Cards' language counts as known. A grammar form the generator cannot serve
+  is skipped and reported, never activated into a queue it would jam.
+- `POST /api/study/known/graduate` runs it; `bun run known:graduate` downloads
+  a backup first, prints the plan per day, and writes only with `--commit`.
+
+**Gate:** a unit test graduates six of seven Cards over three days, two a
+day from tomorrow, leaves the seventh (unsupported) in place, keeps today's
+allowance and queue empty, and answers a graduated Card two days later
+through FSRS; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
