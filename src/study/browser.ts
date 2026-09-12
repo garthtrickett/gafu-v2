@@ -609,7 +609,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     ? html`<p>Learn shows the next untaught Card from its stored teaching. Review prepares the next due review. Staged Cards are admitted under your daily limit.</p>`
                     : html`<article class="presentation presentation--${model.presentation.mode}">
                         <span class="pill">${model.presentation.mode}</span>
-                        <p class="context">${model.presentation.material.context}</p>
+                        ${
+                          // A review opens on its situation. A teach card's
+                          // context is only "<target> in use." and its prompt
+                          // repeats the answer box heading, so neither earns a
+                          // line above the sentence.
+                          model.presentation.mode === "review"
+                            ? html`<p class="context">${model.presentation.material.context}</p>`
+                            : ""
+                        }
                         <p class="japanese" lang="ja">${rubyText(model.presentation.material, model.presentation.material.targetSpan)}</p>
                         ${
                           model.presentation.mode === "teach"

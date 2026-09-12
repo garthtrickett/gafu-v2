@@ -633,9 +633,11 @@ the end-of-session message; the full required validation passes.
 
 Two presentation fixes on the teach card, from the operator's screen.
 
-- The "`<target>` in use." prompt line is gone. The context line above it
-  already names the target, reading, and meaning, so the prompt repeated the
-  word with no new information and pushed the sentence down.
+- Nothing sits between the pill and the sentence on a teach card. The
+  context line was only "`<target>` in use.", and the prompt line repeated
+  the answer box heading (target, reading, meaning), so both pushed the
+  sentence down without adding anything. Review cards keep their context,
+  which is the situation the sentence is read in.
 - The coloured target word in the sentence is no longer bold. On a machine
   without a bold Japanese face the browser substituted a different font for
   just that word, so it rendered at a fraction of the size of its
