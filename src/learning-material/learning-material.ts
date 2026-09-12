@@ -23,7 +23,7 @@ import type {
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 3;
+export const MATERIAL_SCHEMA_VERSION = 4;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 const PRESENTATION_PERMIT_TTL_MS = 10 * 60 * 1_000;
 const MAXIMUM_PENDING_PERMITS = 1_024;
@@ -179,6 +179,21 @@ const migrate = (
       database
         .query(
           "INSERT INTO learning_material_migration(version, applied_at) VALUES (3, ?)",
+        )
+        .run(appliedAt);
+      if (current.version >= 4) return;
+      // The provider job a review batch dispatched, so polls across
+      // processes find it again instead of generating twice.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS review_batch_job (
+          batch_id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL,
+          dispatched_at TEXT NOT NULL
+        );
+      `);
+      database
+        .query(
+          "INSERT INTO learning_material_migration(version, applied_at) VALUES (4, ?)",
         )
         .run(appliedAt);
     });
@@ -619,6 +634,186 @@ export const openLearningMaterial = (
     return err({ kind: "noValidCandidate" });
   };
 
+  type PendingItem = { seq: number; card_id: CardId; input_json: string };
+  type BatchInput = { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
+
+  const setItemStatus = (
+    batchId: string,
+    seq: number,
+    status: "ready" | "failed",
+    failureKind: string | null,
+    at: string,
+  ): void => {
+    database
+      .query(
+        `UPDATE review_batch_item SET status = ?, failure_kind = ?, updated_at = ?
+         WHERE batch_id = ? AND seq = ?`,
+      )
+      .run(status, failureKind, at, batchId, seq);
+  };
+
+  /** Speaks the banked sentences a few at a time, as V1 did. */
+  const speakAll = async (
+    banked: readonly { id: string; japanese: string }[],
+    concurrency = 3,
+  ): Promise<void> => {
+    for (let index = 0; index < banked.length; index += concurrency) {
+      await Promise.all(
+        banked
+          .slice(index, index + concurrency)
+          .map((item) => synthesizeAudio(item.id, item.japanese)),
+      );
+    }
+  };
+
+  /**
+   * One provider request for every pending Card. The first advance dispatches
+   * it and records the job; later advances poll; the completing advance
+   * validates and banks every Card's candidates, marks each ready or failed,
+   * then speaks the banked sentences. A Card the provider returned nothing
+   * usable for fails alone. A provider-level failure fails every pending Card
+   * with its kind, so the learner can batch again; nothing is retried here.
+   */
+  const advanceWholeBatch = async (
+    batchId: string,
+    batch: NonNullable<MaterialProvider["batch"]>,
+  ): Promise<Result<void, MaterialFailure>> => {
+    let pending: PendingItem[];
+    let job: { job_id: string } | null;
+    try {
+      pending = database
+        .query(
+          `SELECT seq, card_id, input_json FROM review_batch_item
+           WHERE batch_id = ? AND status = 'pending' ORDER BY seq`,
+        )
+        .all(batchId) as PendingItem[];
+      job = database
+        .query("SELECT job_id FROM review_batch_job WHERE batch_id = ?")
+        .get(batchId) as { job_id: string } | null;
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+    if (pending.length === 0) return ok(undefined);
+    const observedAt = safeNow(options.clock);
+    if (!observedAt.ok) return observedAt;
+    const at = observedAt.value.toISOString();
+    const inputs = new Map<number, BatchInput>();
+    for (const item of pending) {
+      try {
+        inputs.set(item.seq, JSON.parse(item.input_json) as BatchInput);
+      } catch {
+        return err({ kind: "writeFailed", detail: "review batch input is corrupt" });
+      }
+    }
+    const failAll = (kind: string): Result<void, MaterialFailure> => {
+      try {
+        const apply = database.transaction(() => {
+          for (const item of pending)
+            setItemStatus(batchId, item.seq, "failed", kind, at);
+          database
+            .query("DELETE FROM review_batch_job WHERE batch_id = ?")
+            .run(batchId);
+        });
+        apply.immediate();
+        return ok(undefined);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    };
+
+    if (job === null) {
+      // Cards that already hold a review reserve need no generation.
+      const targets: { item: PendingItem; input: BatchInput }[] = [];
+      for (const item of pending) {
+        const input = inputs.get(item.seq);
+        if (input === undefined) continue;
+        const reserve = hasReserve(item.card_id, "review");
+        if (!reserve.ok) return reserve;
+        if (reserve.value) {
+          try {
+            setItemStatus(batchId, item.seq, "ready", null, at);
+          } catch (cause) {
+            return err({ kind: "writeFailed", detail: detail(cause) });
+          }
+          continue;
+        }
+        targets.push({ item, input });
+      }
+      const first = targets[0];
+      if (first === undefined) return ok(undefined);
+      const batchTargets = [];
+      for (const target of targets) {
+        const recent = recentJapanese(target.item.card_id);
+        if (!recent.ok) return recent;
+        batchTargets.push({
+          mode: "review" as const,
+          card: target.input.card,
+          recentJapanese: recent.value,
+        });
+      }
+      const dispatched = await batch.dispatch(batchTargets, first.input.knowledge);
+      if (!dispatched.ok) return failAll(dispatched.error.kind);
+      try {
+        database
+          .query(
+            "INSERT INTO review_batch_job(batch_id, job_id, dispatched_at) VALUES (?, ?, ?)",
+          )
+          .run(batchId, dispatched.value.jobId, at);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+      return ok(undefined);
+    }
+
+    const polled = await batch.poll(job.job_id);
+    if (!polled.ok) return failAll(polled.error.kind);
+    if (polled.value.status === "pending") return ok(undefined);
+    const byCard = new Map(
+      polled.value.items.map((item) => [item.cardId, item.candidates]),
+    );
+    const banked: { id: string; japanese: string }[] = [];
+    for (const item of pending) {
+      const input = inputs.get(item.seq);
+      const candidates = byCard.get(item.card_id);
+      let status: "ready" | "failed" = "failed";
+      let failureKind: string | null = "noValidCandidate";
+      if (input !== undefined && candidates !== undefined) {
+        let rejected: string | null = null;
+        for (const value of candidates) {
+          const validated = await options.validate({ ...input, value, mode: "review" });
+          if (!validated.ok) {
+            rejected = validated.error.kind;
+            continue;
+          }
+          const saved = storeCandidate(
+            item.card_id,
+            "review",
+            validated.value,
+            observedAt.value,
+          );
+          if (!saved.ok) return saved;
+          if (saved.value !== null)
+            banked.push({ id: saved.value, japanese: validated.value.japanese });
+          status = "ready";
+          failureKind = null;
+        }
+        if (status === "failed" && rejected !== null) failureKind = rejected;
+      }
+      try {
+        setItemStatus(batchId, item.seq, status, failureKind, at);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    }
+    try {
+      database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(batchId);
+    } catch (cause) {
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+    await speakAll(banked);
+    return ok(undefined);
+  };
+
   return ok({
     prepare,
     hasTeaching,
@@ -689,6 +884,11 @@ export const openLearningMaterial = (
           return err({ kind: "readFailed", detail: detail(cause) });
         }
       };
+      if (options.provider.batch !== undefined) {
+        const advanced = await advanceWholeBatch(batchId, options.provider.batch);
+        if (!advanced.ok) return advanced;
+        return progress();
+      }
       let next: { seq: number; card_id: CardId; input_json: string } | null;
       try {
         next = database

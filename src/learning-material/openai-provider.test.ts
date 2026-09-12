@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { asCardId } from "../study/contracts.ts";
+import { asCardId, type CardSummary } from "../study/contracts.ts";
 import type { MaterialProviderRequest } from "./generated-contracts.ts";
 import {
   createOpenAiMaterialProvider,
@@ -254,5 +254,131 @@ describe("OpenAI Learning Material adapter", () => {
 
     expect(result.ok ? "ok" : result.error.kind).toBe("cancelled");
     expect(JSON.stringify(result)).not.toContain("sk-secret");
+  });
+});
+
+describe("whole-batch generation", () => {
+  const batchResponse = (status: string, items: unknown) => ({
+    id: "batch-1",
+    status,
+    error: null,
+    output:
+      status === "completed"
+        ? [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: JSON.stringify({ items }) }],
+            },
+          ]
+        : [],
+  });
+  const second: CardSummary = {
+    ...request.card,
+    id: asCardId("card-2"),
+    content: {
+      lemma: "犬",
+      reading: "いぬ",
+      partOfSpeech: "noun",
+      meaning: "dog",
+      usageNotes: "",
+    },
+  };
+  const targets = [
+    { mode: "review" as const, card: request.card, recentJapanese: ["猫よね。"] },
+    { mode: "review" as const, card: second, recentJapanese: [] },
+  ];
+
+  test("dispatches one request naming every card, with knowledge attached once", async () => {
+    const posts: RequestInit[] = [];
+    const material = provider(async (_url, init) => {
+      if (init?.method === "POST") {
+        posts.push(init);
+        return Response.json(batchResponse("queued", []));
+      }
+      return Response.json(batchResponse("completed", []));
+    });
+    const dispatched = await material.batch?.dispatch(targets, request.knowledge);
+    expect(dispatched).toEqual({ ok: true, value: { jobId: "batch-1" } });
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(String(posts[0]?.body)) as Record<string, unknown>;
+    expect(body["background"]).toBe(true);
+    const input = JSON.parse(String(body["input"])) as Record<string, unknown>;
+    expect((input["targets"] as unknown[]).length).toBe(2);
+    expect((input["targets"] as { cardId: string }[]).map((t) => t.cardId)).toEqual([
+      "card-1",
+      "card-2",
+    ]);
+    expect(input["candidateCountPerTarget"]).toBe(2);
+    expect(input["allowedSupportingVocabulary"]).toEqual([]);
+    const schema = (body["text"] as { format: { schema: Record<string, unknown> } })
+      .format.schema;
+    expect(JSON.stringify(schema)).toContain('"cardId"');
+    // The cue never travels: usageNotes are stripped from every target.
+    expect(JSON.stringify(input)).not.toContain("usageNotes");
+  });
+
+  test("a poll reports pending until terminal, then drops malformed items alone", async () => {
+    let polls = 0;
+    const material = provider(async (_url, init) => {
+      if (init?.method === "POST") return Response.json(batchResponse("queued", []));
+      polls += 1;
+      return Response.json(
+        polls === 1
+          ? batchResponse("in_progress", [])
+          : batchResponse("completed", [
+              { cardId: "card-1", materials: [{}, {}] },
+              { cardId: "card-2", materials: [] },
+              "garbage",
+              { materials: [{}] },
+            ]),
+      );
+    });
+    const dispatched = await material.batch?.dispatch(targets, request.knowledge);
+    if (dispatched?.ok !== true) throw new Error("dispatch");
+    expect(await material.batch?.poll("batch-1")).toEqual({
+      ok: true,
+      value: { status: "pending" },
+    });
+    expect(await material.batch?.poll("batch-1")).toEqual({
+      ok: true,
+      value: {
+        status: "complete",
+        items: [{ cardId: asCardId("card-1"), candidates: [{}, {}] }],
+      },
+    });
+  });
+
+  test("a create that is already terminal is handed over on the first poll", async () => {
+    const material = provider(async () =>
+      Response.json(
+        batchResponse("completed", [{ cardId: "card-2", materials: [{}, {}] }]),
+      ),
+    );
+    const dispatched = await material.batch?.dispatch(targets, request.knowledge);
+    expect(dispatched).toEqual({ ok: true, value: { jobId: "batch-1" } });
+    expect(await material.batch?.poll("batch-1")).toEqual({
+      ok: true,
+      value: {
+        status: "complete",
+        items: [{ cardId: asCardId("card-2"), candidates: [{}, {}] }],
+      },
+    });
+  });
+
+  test("a refused or failed batch is one failure for the caller to fail every card with", async () => {
+    const material = provider(async (_url, init) =>
+      init?.method === "POST"
+        ? Response.json(batchResponse("queued", []))
+        : Response.json({
+            id: "batch-1",
+            status: "failed",
+            error: { message: "x" },
+            output: [],
+          }),
+    );
+    await material.batch?.dispatch(targets, request.knowledge);
+    const polled = await material.batch?.poll("batch-1");
+    expect(polled?.ok).toBe(false);
+    if (polled?.ok === false) expect(polled.error.kind).toBe("refusal");
   });
 });

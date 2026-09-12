@@ -1,5 +1,8 @@
 import { ok, type Result } from "../result.ts";
+import type { KnowledgeSnapshot as StudyKnowledgeSnapshot } from "../study/contracts.ts";
 import type {
+  MaterialBatchItem,
+  MaterialBatchTarget,
   MaterialProvider,
   MaterialProviderFailure,
   MaterialProviderRequest,
@@ -19,6 +22,24 @@ export const createScriptedMaterialProvider = (
 ): MaterialProvider => {
   let index = 0;
   let last: RedactedProviderRequest | null = null;
+  const nextStep = (
+    request: MaterialProviderRequest,
+  ): Result<MaterialProviderResult, MaterialProviderFailure> => {
+    const step = steps[Math.min(index, steps.length - 1)];
+    index += 1;
+    if (step === undefined) {
+      return { ok: false, error: { kind: "offline", detail: "script exhausted" } };
+    }
+    return typeof step === "function" ? step(request) : step;
+  };
+  // Whole-batch generation runs the script once per target when the job is
+  // polled. A target whose step fails is dropped from the answer, which is
+  // how a provider that cannot serve one Card behaves.
+  const jobs = new Map<
+    string,
+    { targets: readonly MaterialBatchTarget[]; knowledge: StudyKnowledgeSnapshot }
+  >();
+  let jobCount = 0;
   return {
     identity: {
       provider: "scripted",
@@ -28,12 +49,39 @@ export const createScriptedMaterialProvider = (
     inspectLastRequest: () => last,
     generate: async (request) => {
       last = { endpoint: "scripted://learning-material", body: request };
-      const step = steps[Math.min(index, steps.length - 1)];
-      index += 1;
-      if (step === undefined) {
-        return { ok: false, error: { kind: "offline", detail: "script exhausted" } };
-      }
-      return typeof step === "function" ? step(request) : step;
+      return nextStep(request);
+    },
+    batch: {
+      dispatch: async (targets, knowledge) => {
+        jobCount += 1;
+        const jobId = `scripted-batch-${jobCount}`;
+        jobs.set(jobId, { targets, knowledge });
+        last = { endpoint: "scripted://learning-material/batch", body: { targets } };
+        return ok({ jobId });
+      },
+      poll: async (jobId) => {
+        const job = jobs.get(jobId);
+        if (job === undefined) {
+          return { ok: false, error: { kind: "offline", detail: "unknown batch job" } };
+        }
+        jobs.delete(jobId);
+        const items: MaterialBatchItem[] = [];
+        for (const target of job.targets) {
+          const generated = nextStep({
+            mode: target.mode,
+            card: target.card,
+            knowledge: job.knowledge,
+            recentJapanese: target.recentJapanese,
+            candidateCount: 3,
+          });
+          if (!generated.ok) continue;
+          items.push({
+            cardId: target.card.id,
+            candidates: generated.value.candidates,
+          });
+        }
+        return ok({ status: "complete", items });
+      },
     },
   };
 };

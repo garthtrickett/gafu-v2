@@ -149,7 +149,7 @@ const teachCard = async (
 };
 
 describe("review batch job", () => {
-  test("advances one card per call and serves banked reviews without new calls", async () => {
+  test("dispatches one request for every card, completes together, and serves banked reviews without new calls", async () => {
     let calls = 0;
     const inner = createDeterministicMaterialProvider();
     const provider: MaterialProvider = {
@@ -185,8 +185,13 @@ describe("review batch job", () => {
     ]);
     if (!begun.ok) throw new Error(begun.error.kind);
 
+    // The first advance dispatches the whole batch; nothing is ready yet.
     const one = await app.material.advanceReviewBatch(begun.value);
-    expect(one).toMatchObject({ ok: true, value: { done: false, pending: 1 } });
+    expect(one).toMatchObject({ ok: true, value: { done: false, pending: 2 } });
+    expect(provider.inspectLastRequest()?.endpoint).toBe(
+      "scripted://learning-material/batch",
+    );
+    // The second advance polls the finished job and banks both together.
     const two = await app.material.advanceReviewBatch(begun.value);
     expect(two).toMatchObject({
       ok: true,
@@ -240,13 +245,14 @@ describe("review batch job", () => {
     if (!begun.ok) throw new Error(begun.error.kind);
     await app.material.advanceReviewBatch(begun.value);
     const done = await app.material.advanceReviewBatch(begun.value);
+    // The provider answered for one card only; the other is dropped alone.
     expect(done).toMatchObject({
       ok: true,
       value: {
         done: true,
         pending: 0,
         completed: [first.id],
-        failed: [{ kind: "timeout" }],
+        failed: [{ kind: "noValidCandidate" }],
       },
     });
     if (done.ok)
