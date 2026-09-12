@@ -584,27 +584,31 @@ mis-coloured.
 explanation, marks one Card correct and the other incorrect, and records
 both; module grades are untouched; the full required validation passes.
 
-### Patch 2.14 — Status tiles show the two session queues
+### Patch 2.14 — Status tiles partition the deck
 
 Seen it writes only a teaching acknowledgement: the Card stays active and
 stays due, so the four tiles (staged, active, due, known) could not move and
 the learner had no evidence the click did anything. Phase 1 already asked for
 queue counts that distinguish learning from due; Patch 2.10 made the split
-real on the server but never surfaced it.
+real on the server but never surfaced it. The old row also overlapped: due
+was a subset of active, so the numbers did not add up to the deck.
 
-- The browser snapshot carries `session.learnCount` and `session.reviewCount`,
-  counted from the Card listing already in hand with the same rule Learn and
-  Review serve by: due, new, and unacknowledged is Learn; everything else due
-  is Review. Counting admits and prepares nothing.
-- The due tile is replaced by "to learn" and "to review". Staged, active, and
-  known are unchanged.
+- The browser snapshot carries `session.learnCount`, `session.reviewCount`,
+  and `session.laterCount`, bucketing the active Cards from the listing
+  already in hand with the same rule Learn and Review serve by: due, new, and
+  unacknowledged is Learn; everything else due is Review; not yet due is
+  later. The three sum to the active count. Counting admits and prepares
+  nothing.
+- The tiles read staged, not due yet, to learn, to review, known. Every Card
+  is in exactly one, so the row sums to the deck.
 - The session-mode rule lives in one place (`session-split.ts`) and both the
   serving split and the counts read it, so the numbers cannot drift from the
   buttons.
 
-**Gate:** unit tests for the mode rule and the counts, including a failed
-teaching read failing the count; the journey watches one Card move from "to
-learn" to "to review" on each Seen it; the full required validation passes.
+**Gate:** unit tests for the mode rule and the buckets, including that the
+three buckets cover exactly the active set and that a failed teaching read
+fails the count; the journey watches one Card move from "to learn" to "to
+review" on each Seen it; the full required validation passes.
 
 ## Exit gate
 

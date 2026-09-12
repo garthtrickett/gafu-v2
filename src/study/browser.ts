@@ -549,7 +549,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             : html`
               <section class="metrics metrics--study" aria-label="Study status">
                 <article data-testid="tile-staged"><strong>${snapshot.status.stagedCount}</strong><span>staged</span></article>
-                <article data-testid="tile-active"><strong>${snapshot.status.activeCount}</strong><span>active</span></article>
+                <article data-testid="tile-later"><strong>${snapshot.session.laterCount}</strong><span>not due yet</span></article>
                 <article data-testid="tile-learn"><strong>${snapshot.session.learnCount}</strong><span>to learn</span></article>
                 <article data-testid="tile-review"><strong>${snapshot.session.reviewCount}</strong><span>to review</span></article>
                 <article data-testid="tile-known"><strong>${snapshot.status.knownCount}</strong><span>known</span></article>
