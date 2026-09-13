@@ -1100,7 +1100,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 <article data-testid="tile-later"><strong>${snapshot.session.laterCount}</strong><span>not due yet</span></article>
                 <article data-testid="tile-learn"><strong>${snapshot.session.learnCount}</strong><span>to learn</span></article>
                 <article data-testid="tile-review"><strong>${snapshot.session.reviewCount}</strong><span>to review</span></article>
-                <article data-testid="tile-known"><strong>${snapshot.status.knownCount}</strong><span>known</span></article>
               </section>
 
               <section class="panel review-panel" data-testid="review-panel">
