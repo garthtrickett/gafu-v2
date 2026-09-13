@@ -64,6 +64,7 @@ type BrowserModel = {
     completed: number;
     completedIds: string[];
     failed: number;
+    failures: readonly ReviewBatchProgress["failed"][number][];
     pending: number;
     done: boolean;
     round: number;
@@ -780,6 +781,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             completed: progress.completed.length,
             completedIds: [...progress.completed],
             failed: progress.failed.length,
+            failures: [...progress.failed],
             pending: progress.pending,
             done: progress.done,
             round: progress.round,
@@ -814,6 +816,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           completed: 0,
           completedIds: [],
           failed: 0,
+          failures: [],
           pending: dispatched.total,
           done: false,
           round: 1,
@@ -1134,6 +1137,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         </p>
                         ${model.pending.detail !== null ? html`<p class="pending-detail">${model.pending.detail}</p>` : ""}
                       </div>`
+                    : ""
+                }
+                ${
+                  model.batch !== null && model.batch.failures.length > 0
+                    ? html`<ul class="batch-failures" data-testid="batch-failures">
+                        ${model.batch.failures.map((failure) => {
+                          const card = model.snapshot?.cards.find(
+                            (item) => item.id === failure.cardId,
+                          );
+                          return html`<li>
+                            <strong lang="ja">${card === undefined ? failure.cardId : cardTitle(card)}</strong>
+                            stays due: ${failure.reasons.length > 0 ? failure.reasons.join("; ") : failure.kind}
+                          </li>`;
+                        })}
+                      </ul>`
                     : ""
                 }
                 ${

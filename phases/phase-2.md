@@ -1047,6 +1047,17 @@ word the validator has been allowing can be turned off where it was met.
 sees the dialog and that the word is one of its Cards; the full required
 validation passes.
 
+### Patch 2.36 — A failed Card says why
+
+"1 failed and stay due" named neither the Card nor the cause, and the
+reasons the validator gave were kept only until the next round overwrote
+them. The final round's reasons are now stored with the failure, returned
+with the batch progress, and listed under it by Card: the word the sentence
+leaned on, the identity check it missed, or the provider failure kind.
+
+**Gate:** batch tests see the reasons on a dropped Card; the full required
+validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

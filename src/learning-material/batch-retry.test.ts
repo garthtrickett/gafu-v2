@@ -192,7 +192,13 @@ describe("whole-batch retry rounds", () => {
       value: {
         done: true,
         completed: [],
-        failed: [{ cardId: app.cat.id, kind: "validationRejected" }],
+        failed: [
+          {
+            cardId: app.cat.id,
+            kind: "validationRejected",
+            reasons: ["unknownVocabulary: 難語3"],
+          },
+        ],
       },
     });
   });

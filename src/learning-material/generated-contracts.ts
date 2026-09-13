@@ -191,6 +191,8 @@ export type PrepareMaterial = Readonly<{
 export type ReviewBatchFailure = Readonly<{
   cardId: CardSummary["id"];
   kind: MaterialFailure["kind"];
+  /** Why the last round's candidates were refused, when validation was the cause. */
+  reasons: readonly string[];
 }>;
 
 export type ReviewBatchProgress = Readonly<{
