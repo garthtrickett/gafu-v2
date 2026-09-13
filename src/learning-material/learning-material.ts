@@ -1001,13 +1001,23 @@ export const openLearningMaterial = (
               item.seq,
             );
         } else {
+          // The last round's reasons are kept with the failure, so the
+          // learner can see why a Card could not be served.
           database
             .query(
               `UPDATE review_batch_item
-               SET status = ?, attempts = ?, failure_kind = ?, updated_at = ?
+               SET status = ?, attempts = ?, failure_kind = ?, hints_json = ?, updated_at = ?
                WHERE batch_id = ? AND seq = ?`,
             )
-            .run(status, attempts, failureKind, at, batchId, item.seq);
+            .run(
+              status,
+              attempts,
+              failureKind,
+              JSON.stringify([...new Set(hints)]),
+              at,
+              batchId,
+              item.seq,
+            );
         }
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
@@ -1059,7 +1069,7 @@ export const openLearningMaterial = (
         try {
           const rows = database
             .query(
-              `SELECT card_id, status, failure_kind, attempts FROM review_batch_item
+              `SELECT card_id, status, failure_kind, attempts, hints_json FROM review_batch_item
                WHERE batch_id = ? ORDER BY seq`,
             )
             .all(batchId) as {
@@ -1067,7 +1077,18 @@ export const openLearningMaterial = (
             status: string;
             failure_kind: string | null;
             attempts: number;
+            hints_json: string | null;
           }[];
+          const reasonsOf = (hints: string | null): string[] => {
+            try {
+              const parsed: unknown = hints === null ? [] : JSON.parse(hints);
+              return Array.isArray(parsed)
+                ? parsed.filter((item): item is string => typeof item === "string")
+                : [];
+            } catch {
+              return [];
+            }
+          };
           if (rows.length === 0) return err({ kind: "reviewBatchNotFound", batchId });
           const completed: CardId[] = [];
           const failed: ReviewBatchFailure[] = [];
@@ -1079,6 +1100,7 @@ export const openLearningMaterial = (
               failed.push({
                 cardId: row.card_id,
                 kind: (row.failure_kind ?? "offline") as ReviewBatchFailure["kind"],
+                reasons: reasonsOf(row.hints_json),
               });
             else {
               pending += 1;

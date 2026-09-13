@@ -387,6 +387,17 @@ label {
   font-variant-numeric: tabular-nums;
 }
 
+.batch-failures {
+  margin: 0.6rem 0 0;
+  padding-left: 1.2rem;
+  color: #ffb5a9;
+  font-size: 0.9rem;
+}
+
+.batch-failures li {
+  margin: 0.2rem 0;
+}
+
 .pending {
   margin: 0.8rem 0;
   padding: 0.9rem 1rem;
