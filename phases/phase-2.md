@@ -937,6 +937,25 @@ renders worse than before. The cards CLI preview uses the same alignment.
 writing, the fallback, and text recoverability; the full required validation
 passes.
 
+### Patch 2.29 — The scene must not give the word away, and the card says its kind
+
+"You are putting items into a box." above 箱に詰める。 left nothing to recall:
+the context paraphrased the target. The generation instructions (single and
+whole-batch; prompt version `study-v3`) now ask for a one-sentence scene —
+who, where, mood — that must not state, paraphrase, translate, or hint at
+the target's meaning or action, such that the context alone cannot give the
+target away, and never restates the Japanese in English. The validator
+cannot check this semantically; it is asked for, and reserves banked under
+`study-v2` keep their old contexts until they are shown.
+
+Every teach and review card now carries a second pill naming its kind,
+vocabulary or grammar, so the learner knows what is being asked before
+reading the sentence.
+
+**Gate:** provider tests assert the instruction in both request shapes; the
+journey sees the kind pill on a taught card; the full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

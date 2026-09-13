@@ -875,10 +875,12 @@ const materialProvider = fakeAi
       apiKey: keyCustody.readForServerAdapter,
       model: openAiModel,
       // Bumped whenever what the provider is asked for changes, because a
-      // generation completed under an older ask is not re-checked. v2 stops
+      // generation completed under an older ask is not re-checked. v2 stopped
       // sending usageNotes: the quoted media cue was copied into candidates
-      // together with whatever unknown language it leans on.
-      promptVersion: "study-v2",
+      // together with whatever unknown language it leans on. v3 forbids the
+      // English context from giving the target away: "You are putting items
+      // into a box" over 詰める left nothing to recall.
+      promptVersion: "study-v3",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
