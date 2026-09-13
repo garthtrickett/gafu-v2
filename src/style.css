@@ -554,6 +554,26 @@ label {
   }
 }
 
+.answer-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #2c3428;
+}
+
+.answer-target strong {
+  color: #f2c14e;
+  font-size: 1.25rem;
+}
+
+.answer-formation {
+  color: #7f877b;
+  font-size: 0.9rem;
+}
+
 .presentation .answer {
   margin: 1rem 0;
   padding: 1rem;

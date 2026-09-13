@@ -209,6 +209,12 @@ test("configures a key and teaches before the first generated review", async ({
       await page.keyboard.press("Escape");
       await expect(lookup).toHaveCount(0);
     }
+    // The target's own meaning is always there, whatever prose the model
+    // wrote: it comes from the Card through the validated metadata.
+    const gloss = review.getByTestId("answer-target");
+    await expect(gloss).toBeVisible();
+    await expect(gloss).toContainText(/[鳥猫]（(とり|ねこ)）/u);
+    await expect(gloss).toContainText(/bird|cat/u);
     const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
     learned.push(taught.includes("cat") ? "cat" : "bird");
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
@@ -291,14 +297,17 @@ test("configures a key and teaches before the first generated review", async ({
     // Nothing to recall from, and the target word stands out.
     await expect(review.getByTestId("material-answer")).toHaveCount(0);
     await expect(review.locator(".japanese .target").first()).toBeVisible();
-    // Generated reviews were spoken when they were banked.
+    // Generated reviews were spoken when they were banked. The target's
+    // meaning is part of the answer, so it waits for the explanation.
     await expect(review.getByTestId("listen")).toBeVisible();
+    await expect(review.getByTestId("answer-target")).toHaveCount(0);
     // One explanation by button, the other by its key.
     if (grade === "Correct") {
       await review.getByRole("button", { name: "Explanation" }).click();
     } else {
       await page.keyboard.press("e");
     }
+    await expect(review.getByTestId("answer-target")).toBeVisible();
     const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
     worked.push(shown.includes("cat") ? "cat" : "bird");
     // One grade by button, the other by its key.

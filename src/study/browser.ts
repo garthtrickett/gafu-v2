@@ -200,6 +200,24 @@ const editForm = (
   return html``;
 };
 
+/**
+ * What the target itself means, from the metadata the validator holds equal
+ * to the Card. The sentence gloss beside it is the model's prose and answers
+ * a different question: what the whole line says. Both are wanted, and only
+ * this one can be relied on to be there.
+ */
+const targetGloss = (material: PreparedMaterial["material"]): TemplateResult =>
+  material.targetKind === "vocabulary"
+    ? html`<p class="answer-target" data-testid="answer-target">
+        <strong lang="ja">${material.target.lemma}（${material.target.reading}）</strong>
+        <span>${material.target.meaning}</span>
+      </p>`
+    : html`<p class="answer-target" data-testid="answer-target">
+        <strong lang="ja">${material.target.canonicalForm}</strong>
+        <span>${material.target.meaning}</span>
+        <span class="answer-formation" lang="ja">${material.target.formationHint}</span>
+      </p>`;
+
 const rubyText = (
   material: PreparedMaterial["material"],
   targetSpan: { start: number; end: number } | null,
@@ -901,6 +919,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         ${
                           presentation.mode === "teach"
                             ? html`<div class="answer" data-testid="material-answer">
+                                ${targetGloss(presentation.material)}
                                 <strong>${presentation.material.answer}</strong>
                                 <p class="answer-copy">${presentation.material.explanation}</p>
                                 <p class="answer-copy">${presentation.material.usageNote}</p>
@@ -908,6 +927,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                               <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — next Card</button>`
                             : model.revealed
                               ? html`<div class="answer" data-testid="material-answer">
+                                  ${targetGloss(presentation.material)}
                                   <strong>${presentation.material.answer}</strong>
                                   <p class="answer-copy">${presentation.material.explanation}</p>
                                   <p class="answer-copy">${presentation.material.usageNote}</p>
