@@ -1031,6 +1031,22 @@ history are untouched; the new rule applies from the next answer.
 later and a lapse returning after at least a day; the full required
 validation passes.
 
+### Patch 2.35 — Jisho on Alt, and "I don't know this word" in the dialog
+
+Every drag over the sentence opened the dictionary, which got in the way of
+plain reading. Now a highlight does nothing until Alt is pressed (Option on
+a Mac; browsers report both as `Alt`). The hint under the sentence says so.
+
+The dialog also says whether the word counts as known: one of the learner's
+own Cards, an enabled or disabled Known Word baseline entry (matched on the
+term, or any form or reading Jisho returned), or neither. A baseline entry
+carries the switch — "I don't know this word" or "Restore as known" — so a
+word the validator has been allowing can be turned off where it was met.
+
+**Gate:** the journey highlights the target, sees no dialog, presses Alt,
+sees the dialog and that the word is one of its Cards; the full required
+validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

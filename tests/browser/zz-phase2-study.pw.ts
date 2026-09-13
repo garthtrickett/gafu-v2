@@ -181,9 +181,9 @@ test("configures a key and teaches before the first generated review", async ({
       expect(clip.status()).toBe(200);
       expect(clip.headers()["content-type"]).toBe("audio/wav");
       expect((await clip.body()).byteLength).toBeGreaterThan(44);
-      // Highlighting a word in the sentence opens Jisho for it. The selection
+      // Highlighting a word and pressing Alt opens Jisho for it. The selection
       // is made the way a drag ends: a range over the target's kanji with the
-      // furigana excluded, then mouseup on the document.
+      // furigana excluded. The highlight alone does nothing; Alt does.
       await page.evaluate(() => {
         const target = document.querySelector("[data-japanese-sentence] .target");
         if (target === null) throw new Error("no target span");
@@ -192,11 +192,16 @@ test("configures a key and teaches before the first generated review", async ({
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(range);
-        document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       });
+      await expect(page.getByTestId("jisho-lookup")).toHaveCount(0);
+      await page.keyboard.press("Alt");
       const lookup = page.getByTestId("jisho-lookup");
       await expect(lookup).toBeVisible();
       await expect(lookup).toContainText("deterministic sense of");
+      // The word is one of the learner's own Cards, and the dialog says so.
+      await expect(lookup.getByTestId("lookup-known")).toContainText(
+        "one of your Cards",
+      );
       await expect(lookup.getByRole("link", { name: /jisho\.org/u })).toHaveAttribute(
         "href",
         /^https:\/\/jisho\.org\/search\//u,
