@@ -83,6 +83,12 @@ describe("aligning a reading to a written phrase", () => {
     expect(aligned("食べ放題", "タベホウダイ")).toBe("[食:タ]べ[放題:ホウダイ]");
   });
 
+  test("spaces in a reading are ignored, so a spaced phrase still aligns", () => {
+    expect(aligned("成功はおごりを生む。", "せいこうは おごりを うむ。")).toBe(
+      "[成功:せいこう]はおごりを[生:う]む。",
+    );
+  });
+
   test("a reading the writing cannot explain falls back to trimming the edges", () => {
     // Reading has no る: no literal match, so the old behaviour applies.
     expect(aligned("広がる", "ひろい")).toBe("[広がる:ひろい]");
@@ -156,6 +162,28 @@ describe("colouring the target within a sentence", () => {
         end: 4,
       }),
     ).toBe("食(た)べ*放題(ほうだい)*だ");
+  });
+
+  test("a kana-only target inside an aligned phrase is coloured alone", () => {
+    expect(
+      marked(
+        "成功はおごりを生む。",
+        [{ written: "成功はおごりを生む。", reading: "せいこうは おごりを うむ。" }],
+        { start: 3, end: 6 },
+      ),
+    ).toBe("成功(せいこう)は*おごり*を生(う)む。");
+  });
+
+  test("a whole-sentence ruby fallback is never coloured as the target", () => {
+    // The reading cannot be aligned (it lacks the は), so the fallback puts one
+    // ruby over the sentence; painting that yellow would mark the whole line.
+    expect(
+      marked(
+        "成功はおごりを生む。",
+        [{ written: "成功はおごりを生む。", reading: "せいこうおごりをうむ。" }],
+        { start: 3, end: 6 },
+      ),
+    ).toBe("成功はおごりを生む。(せいこうおごりをうむ。)");
   });
 
   test("segments that do not rejoin into the sentence colour nothing", () => {
