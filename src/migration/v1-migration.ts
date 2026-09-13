@@ -205,9 +205,10 @@ const desiredProgress = (
   const learning = clean(progress.learningState)?.toLocaleLowerCase() ?? "";
   const archived =
     clean(progress.participationStatus)?.toLocaleLowerCase() === "archived";
-  // Earned stability stays in rotation on its schedule; only an explicit
-  // dismissal leaves study. Nothing enters `known` through the interface, so
-  // a V1 dismissal is the one mapping that still lands there.
+  // Earned stability stays in rotation on its schedule. A V1 dismissal has
+  // no schedule and no separate state any more: it enters staged, marked
+  // support-ready, and is admitted under the daily allowance like anything
+  // new, its language already counting as known.
   const stable = learning === "stable";
   const dismissed = learning === "known";
   const known = stable || dismissed;
@@ -216,7 +217,7 @@ const desiredProgress = (
   let base: Exclude<CardState, "suspended"> = "staged";
   let quarantine: string | null = null;
   if (dismissed) {
-    base = "known";
+    base = "staged";
   } else if (stable) {
     // Earned rotation needs its dates; without them the Card enters through
     // admission like anything new rather than stranding schedule-less.
@@ -563,26 +564,17 @@ const insertProgress = (
 ): void => {
   const state = item.desiredState ?? "suspended";
   const underlying = item.suspendedReturnState;
-  const knownReturnState =
-    state === "known" || underlying === "known"
-      ? item.schedule === null
-        ? "staged"
-        : "active"
-      : null;
   database
     .query(
       `INSERT INTO card_progress(
-         card_id, state, known_return_state, suspended_return_state, support_ready_at
-       ) VALUES (?, ?, ?, ?, ?)`,
+         card_id, state, suspended_return_state, support_ready_at
+       ) VALUES (?, ?, ?, ?)`,
     )
     .run(
       cardId,
       state,
-      knownReturnState,
       state === "suspended" ? (underlying ?? "staged") : null,
-      state === "known" || underlying === "known"
-        ? (item.supportReadyAt ?? capturedAt)
-        : item.supportReadyAt,
+      item.supportReadyAt,
     );
   if (state === "staged" || underlying === "staged") {
     database
@@ -593,13 +585,7 @@ const insertProgress = (
       )
       .run(cardId, item.report.sourceId, capturedAt);
   }
-  if (
-    item.schedule !== null &&
-    (state === "active" ||
-      state === "known" ||
-      underlying === "active" ||
-      underlying === "known")
-  ) {
+  if (item.schedule !== null && (state === "active" || underlying === "active")) {
     database
       .query(
         `INSERT INTO schedule(card_id, due_at, phase, schedule_json, scheduler_version)
@@ -774,23 +760,16 @@ export const createV1Migration = (
                   planned.value.snapshot.capturedAt,
                   timeZone,
                 );
-              } else {
-                const existing = database
-                  ?.query("SELECT state FROM card_progress WHERE card_id = ?")
-                  .get(cardId) as { state: CardState };
-                if (
-                  item.desiredState === "known" &&
-                  (existing.state === "staged" || existing.state === "active")
-                ) {
-                  database
-                    ?.query(
-                      `UPDATE card_progress
-                     SET state = 'known', known_return_state = state,
-                         support_ready_at = coalesce(support_ready_at, ?)
+              } else if (item.supportReadyAt !== null) {
+                // An existing Card the snapshot marks as known language keeps
+                // its state and gains the stamp, never losing one it has.
+                database
+                  ?.query(
+                    `UPDATE card_progress
+                     SET support_ready_at = coalesce(support_ready_at, ?)
                      WHERE card_id = ?`,
-                    )
-                    .run(item.supportReadyAt ?? now.value.toISOString(), cardId);
-                }
+                  )
+                  .run(item.supportReadyAt, cardId);
               }
               database
                 ?.query(

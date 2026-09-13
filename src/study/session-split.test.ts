@@ -85,7 +85,6 @@ describe("counting the two session queues", () => {
     const counts = countSessionModes(
       [
         card("staged", { state: "staged", dueAt: null, schedulePhase: null }),
-        card("known", { state: "known" }),
         card("suspended", { state: "suspended" }),
         card("later", { dueAt: "2026-09-13T00:00:00.000Z" }),
         card("exactly-now", { dueAt: NOW }),

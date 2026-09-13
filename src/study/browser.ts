@@ -34,10 +34,7 @@ import type { SessionCounts } from "./session-split.ts";
 type BankCard = CardSummary & Readonly<{ taught: boolean; teachable: boolean }>;
 
 const needsTeaching = (card: BankCard): boolean =>
-  !card.taught &&
-  !card.teachable &&
-  card.state !== "known" &&
-  card.state !== "suspended";
+  !card.taught && !card.teachable && card.state !== "suspended";
 
 type BrowserSnapshot = Readonly<{
   cards: readonly BankCard[];
@@ -154,13 +151,6 @@ const stateActions = (
     </button>`;
   }
   return html`
-    ${
-      card.state === "known"
-        ? html`<button type="button" class="secondary" @click=${() => act("markNotKnown")}>
-          Mark not known
-        </button>`
-        : html``
-    }
     ${
       card.supportReadyAt === null
         ? html`<button type="button" class="secondary" @click=${() => act("markSupportReady")}>
@@ -364,11 +354,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
       return `Card is now ${
         action === "markSupportReady"
           ? "support-ready"
-          : action === "markNotKnown"
-            ? "back in study"
-            : action === "suspend"
-              ? "suspended"
-              : "restored"
+          : action === "suspend"
+            ? "suspended"
+            : "restored"
       }.`;
     });
   };

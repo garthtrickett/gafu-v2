@@ -169,7 +169,7 @@ const relationFor = (
     study.cards,
   );
   if (card === null) return { relation: "missing", cardId: null };
-  return card.state === "known" || card.supportReady
+  return card.supportReady
     ? { relation: "known", cardId: card.cardId }
     : { relation: "existing", cardId: card.cardId };
 };

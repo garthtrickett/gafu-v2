@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 6;
+export const STUDY_SCHEMA_VERSION = 7;
 
 const migrations: readonly Migration[] = [
   {
@@ -269,6 +269,36 @@ const migrations: readonly Migration[] = [
     sql: `
       ALTER TABLE preparation_plan ADD COLUMN deleted_at TEXT;
       ALTER TABLE review_event ADD COLUMN presentation_id TEXT;
+    `,
+  },
+  {
+    // The known state is retired: nothing entered it but a V1 dismissal, and
+    // its Cards were graduated into rotation. Any straggler returns to staged
+    // with a staging source so admission can reach it; suspended Cards that
+    // would have returned to known return to staged.
+    version: 7,
+    sql: `
+      CREATE TABLE card_progress_v7 (
+        card_id TEXT PRIMARY KEY REFERENCES card(id) ON DELETE RESTRICT,
+        state TEXT NOT NULL CHECK (state IN ('staged', 'active', 'suspended')),
+        suspended_return_state TEXT CHECK (suspended_return_state IN ('staged', 'active')),
+        support_ready_at TEXT,
+        first_success_at TEXT,
+        first_success_day TEXT
+      );
+      INSERT INTO card_progress_v7(
+        card_id, state, suspended_return_state, support_ready_at, first_success_at, first_success_day
+      )
+      SELECT card_id,
+             CASE WHEN state = 'known' THEN 'staged' ELSE state END,
+             CASE WHEN suspended_return_state = 'known' THEN 'staged' ELSE suspended_return_state END,
+             support_ready_at, first_success_at, first_success_day
+      FROM card_progress;
+      INSERT OR IGNORE INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
+      SELECT card_id, 'manual', 'known-retired', 0, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM card_progress WHERE state = 'known';
+      DROP TABLE card_progress;
+      ALTER TABLE card_progress_v7 RENAME TO card_progress;
     `,
   },
 ];

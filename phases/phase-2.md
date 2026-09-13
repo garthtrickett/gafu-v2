@@ -1076,6 +1076,21 @@ memory bound shared by export and restore, not a policy; it is 512 MiB.
 
 **Gate:** the full required validation passes.
 
+### Patch 2.40 — The known state is retired
+
+With its Cards graduated (Patch 2.27) and its tile gone (Patch 2.37), the
+`known` state had no remaining entrance and one remaining exit. It is
+removed: `CardState` is staged, active, suspended; `markNotKnown` and the
+graduation command, route, and script go with it; status and health counts
+drop it. Study schema version 7 rebuilds `card_progress` without the state
+or `known_return_state`; any straggler becomes staged with a staging source,
+and a suspended Card that would have returned to known returns to staged.
+The V1 migration maps a dismissal to staged and support-ready. Support
+readiness alone now decides which language generated sentences may lean on.
+
+**Gate:** migration and status tests use the three states; the V1 migration
+test asserts no Card is outside them; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
