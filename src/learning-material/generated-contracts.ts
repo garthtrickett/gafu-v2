@@ -131,6 +131,8 @@ export type ProviderStatus = Readonly<{
   model: string;
   configured: boolean;
   keyPersistence: "server-memory";
+  /** The voice speaking sentences, or null when clips are off. */
+  speech: Readonly<{ provider: string; voice: string }> | null;
 }>;
 
 export type MaterialFailure =

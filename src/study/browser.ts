@@ -1134,6 +1134,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   <div class="provider-settings">
                     <h3>AI provider</h3>
                     <p>${model.provider?.provider ?? "OpenAI"} · ${model.provider?.model ?? "gpt-5.6-luna"}</p>
+                    <p data-testid="speech-voice">Speech: ${
+                      model.provider?.speech
+                        ? `${model.provider.speech.provider} · ${model.provider.speech.voice}`
+                        : "off"
+                    }</p>
                     <p>${
                       model.provider?.configured
                         ? "API key supplied by the server environment."
