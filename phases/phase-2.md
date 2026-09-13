@@ -997,6 +997,19 @@ span, and segments that do not rejoin into the sentence colour nothing.
 straddling kanji run, and non-rejoining segments; the full required
 validation passes.
 
+### Patch 2.33 — Reviewing starts as Cards land
+
+The batch waited for every Card, including retry rounds, before the first
+review opened. Now each poll hands over whatever has become ready: Cards
+that already held a reserve on the first poll, the rest as each round lands.
+A landing opens the session if the learner is waiting, or is appended to the
+running session. Finishing the Cards in hand while more are still being
+prepared says so, and the next landing opens on its own; the batch closes
+once everything has landed and been worked through.
+
+**Gate:** the journey unchanged (under the fake AI the batch lands whole);
+the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
