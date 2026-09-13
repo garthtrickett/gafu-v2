@@ -358,6 +358,13 @@ export const openLearningMaterial = (
     model: options.provider.identity.model,
     configured: options.keyCustody.isConfigured(),
     keyPersistence: "server-memory",
+    speech:
+      options.speech === undefined
+        ? null
+        : {
+            provider: options.speech.identity.provider,
+            voice: options.speech.identity.voice,
+          },
   });
 
   const hasTeaching = (cardId: CardId): Result<boolean, MaterialFailure> => {
