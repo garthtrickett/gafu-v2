@@ -11,7 +11,7 @@ declare const cardIdBrand: unique symbol;
 export type CardId = string & { readonly [cardIdBrand]: true };
 
 export type CardType = "grammar" | "vocabulary";
-export type CardState = "staged" | "active" | "known" | "suspended";
+export type CardState = "staged" | "active" | "suspended";
 export type AnswerGrade = "again" | "hard" | "good" | "easy";
 export type SchedulePhase = "new" | "learning" | "review" | "relearning";
 
@@ -88,7 +88,7 @@ export type CardQuery = Readonly<{
 
 export type CardStateCommand = Readonly<{
   cardId: CardId;
-  action: "markSupportReady" | "markNotKnown" | "suspend" | "restore";
+  action: "markSupportReady" | "suspend" | "restore";
 }>;
 
 export type StudyPreferences = Readonly<{
@@ -121,7 +121,6 @@ export type StudyStatus = Readonly<{
   dueCount: number;
   stagedCount: number;
   activeCount: number;
-  knownCount: number;
   suspendedCount: number;
 }>;
 
@@ -279,30 +278,6 @@ export type StudyFailure =
   | { readonly kind: "invalidCapture"; readonly detail: string }
   | { readonly kind: "captureOperationConflict" };
 
-export type GraduateKnown = Readonly<{
-  /** Days to spread the first reviews over, from tomorrow. */
-  spreadDays: number;
-  /** Plan only: nothing is written. */
-  dryRun: boolean;
-}>;
-
-export type GraduationPlan = Readonly<{
-  dryRun: boolean;
-  graduated: readonly Readonly<{
-    cardId: CardId;
-    title: string;
-    intervalDays: number;
-    dueAt: string;
-  }>[];
-  skipped: readonly Readonly<{
-    cardId: CardId;
-    title: string;
-    reason: "unsupportedGrammarTarget";
-  }>[];
-  /** First reviews per local day, in due order. */
-  perDay: readonly Readonly<{ day: string; count: number }>[];
-}>;
-
 export type Study = Readonly<{
   createCard: (input: CreateCard) => Result<CreateCardOutcome, StudyFailure>;
   listCards: (query?: CardQuery) => Result<readonly CardSummary[], StudyFailure>;
@@ -311,13 +286,6 @@ export type Study = Readonly<{
     content: CardContent,
   ) => Result<CardSummary, StudyFailure>;
   setCardState: (command: CardStateCommand) => Result<CardSummary, StudyFailure>;
-  /**
-   * Moves every `known` Card into rotation as a graduated review Card: a
-   * mature FSRS state whose first review is spread over the given days so
-   * they do not all land at once. A V1 dismissal carried no schedule, so
-   * the state is synthesised; a form the generator cannot serve is skipped.
-   */
-  graduateKnown: (command: GraduateKnown) => Result<GraduationPlan, StudyFailure>;
   studyQueue: () => Result<StudyQueue, StudyFailure>;
   status: () => Result<StudyStatus, StudyFailure>;
   answer: (command: AnswerCard) => Result<AnswerOutcome, StudyFailure>;

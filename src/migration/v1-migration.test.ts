@@ -207,11 +207,13 @@ describe("V1 migration", () => {
     ).toEqual({
       count: 3,
     });
-    // Earned V1 progress stays in rotation: nothing lands in `known`,
-    // which remains a hand-marked state the migration never assigns here.
+    // Every Card is in one of the three states; a V1 dismissal is staged and
+    // support-ready rather than retired.
     expect(
       database
-        .query("SELECT count(*) AS count FROM card_progress WHERE state = 'known'")
+        .query(
+          "SELECT count(*) AS count FROM card_progress WHERE state NOT IN ('staged', 'active', 'suspended')",
+        )
         .get(),
     ).toEqual({ count: 0 });
     database.close();
@@ -365,12 +367,9 @@ describe("V1 migration", () => {
     expect(applied).toMatchObject({ ok: true });
     const database = new Database(context.destination, { readonly: true });
     expect(
-      database
-        .query("SELECT state, known_return_state, support_ready_at FROM card_progress")
-        .get(),
+      database.query("SELECT state, support_ready_at FROM card_progress").get(),
     ).toEqual({
       state: "staged",
-      known_return_state: null,
       support_ready_at: "2026-09-01T10:00:00.000Z",
     });
     expect(database.query("SELECT count(*) AS count FROM schedule").get()).toEqual({

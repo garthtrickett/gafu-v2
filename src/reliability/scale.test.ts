@@ -110,7 +110,7 @@ describe("Phase 6 release scale", () => {
            VALUES ('vocabulary-v1', ?, ?)`,
         );
         const progress = database.query(
-          "INSERT INTO card_progress(card_id, state, support_ready_at) VALUES (?, 'known', ?)",
+          "INSERT INTO card_progress(card_id, state, support_ready_at) VALUES (?, 'active', ?)",
         );
         for (let index = 0; index < ROWS; index += 1) {
           const id = `scale-card-${index}`;
@@ -142,7 +142,7 @@ describe("Phase 6 release scale", () => {
       const listed = await duration(() => opened.value.listCards());
       const status = await duration(() => opened.value.status());
       expect(listed.value).toMatchObject({ ok: true, value: { length: ROWS } });
-      expect(status.value).toMatchObject({ ok: true, value: { knownCount: ROWS } });
+      expect(status.value).toMatchObject({ ok: true, value: { activeCount: ROWS } });
       expect(listed.elapsedMs).toBeLessThan(CEILING_MS);
       expect(status.elapsedMs).toBeLessThan(CEILING_MS);
       opened.value.close();

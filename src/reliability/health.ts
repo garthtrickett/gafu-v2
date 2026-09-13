@@ -14,7 +14,6 @@ export type HealthReport = Readonly<{
     vocabulary: number;
     staged: number;
     active: number;
-    known: number;
     suspended: number;
   }>;
   preparation: Readonly<{
@@ -83,7 +82,6 @@ export const inspectHealth = (
         vocabulary: types.get("vocabulary") ?? 0,
         staged: states.get("staged") ?? 0,
         active: states.get("active") ?? 0,
-        known: states.get("known") ?? 0,
         suspended: states.get("suspended") ?? 0,
       },
       preparation: {

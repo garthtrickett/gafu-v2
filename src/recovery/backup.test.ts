@@ -18,6 +18,7 @@ import {
 } from "../preparation/preparation.ts";
 import { err, ok } from "../result.ts";
 import type { KnownWordSeed } from "../study/contracts.ts";
+import { STUDY_SCHEMA_VERSION } from "../study/migrations.ts";
 import { openStudy, unavailableKaishiSeed } from "../study/study.ts";
 import { createProviderKeyCustody } from "../topology/provider-key-custody.ts";
 import { createBackupRecovery, inspectBackup } from "./backup.ts";
@@ -106,7 +107,7 @@ describe("backup recovery", () => {
       expect(inspected).toMatchObject({
         ok: true,
         value: {
-          studySchemaVersion: 6,
+          studySchemaVersion: 7,
           preparationSchemaVersion: PREPARATION_SCHEMA_VERSION,
           cardCount: 1,
           integrity: "ok",
@@ -284,7 +285,7 @@ describe("backup recovery", () => {
       const source = join(directory, "incomplete.sqlite");
       const database = new Database(source);
       for (const [table, version] of [
-        ["schema_migration", 6],
+        ["schema_migration", STUDY_SCHEMA_VERSION],
         ["preparation_migration", PREPARATION_SCHEMA_VERSION],
         ["learning_material_migration", MATERIAL_SCHEMA_VERSION],
       ] as const) {

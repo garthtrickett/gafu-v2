@@ -191,7 +191,7 @@ describe("public deployment composition", () => {
       // The bank snapshot carries only the baseline summary; the words
       // themselves are behind their own route, also login-gated.
       expect(await study.json()).toMatchObject({
-        status: { knownCount: 0 },
+        status: { stagedCount: 0 },
         baseline: { availability: "available", enabledCount: 1 },
       });
       const knowledge = await fetch(`${origin}/api/study/knowledge`, {

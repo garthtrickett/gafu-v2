@@ -85,7 +85,7 @@ Every Card has one learner-owned **Card State**:
 
 - `staged`: unseen and waiting for the shared daily allowance;
 - `active`: admitted and scheduled for learning or review;
-- `known`: dismissed at import and omitted from review; no interface action
+- `known`: retired in Patch 2.40; formerly dismissed at import and omitted from review; no interface action
   targets it afterwards;
 - `suspended`: temporarily omitted from admission and review while preserving
   the state to which it will be restored.

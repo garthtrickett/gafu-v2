@@ -78,7 +78,7 @@ export type PlanMemberSnapshot = Readonly<{
   classification: "required" | "helpful";
   preparationPriority: number;
   firstNeededEpisodeOrder: number;
-  state: "staged" | "active" | "known" | "suspended";
+  state: "staged" | "active" | "suspended";
   supportReady: boolean;
   ready: boolean;
   evidenceCount: number;

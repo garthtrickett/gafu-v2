@@ -14,8 +14,6 @@ import type {
   CardSummary,
   CreateCard,
   CreateCardOutcome,
-  GraduateKnown,
-  GraduationPlan,
   KnowledgeSnapshot,
   KnownWordSeed,
   PreferenceChange,
@@ -391,160 +389,6 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
-  const graduateKnown = (
-    command: GraduateKnown,
-  ): Result<GraduationPlan, StudyFailure> => {
-    const spreadDays = Math.floor(command.spreadDays);
-    if (!Number.isFinite(spreadDays) || spreadDays < 1 || spreadDays > 365) {
-      return err({
-        kind: "invalidPreference",
-        field: "spreadDays",
-        detail: "1 to 365 days",
-      });
-    }
-    const now = safeNow(dependencies.clock);
-    if (!now.ok) return now;
-    const preference = preferences();
-    if (!preference.ok) return preference;
-    try {
-      const rows = database
-        .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at,
-                  c.staged_at, a.admitted_at, s.due_at, s.phase,
-                  count(r.id) AS review_count
-           FROM card c
-           JOIN card_progress p ON p.card_id = c.id
-           LEFT JOIN admission_event a ON a.card_id = c.id
-           LEFT JOIN schedule s ON s.card_id = c.id
-           LEFT JOIN review_event r ON r.card_id = c.id
-           WHERE p.state = 'known'
-           GROUP BY c.id
-           ORDER BY c.staged_at, c.id`,
-        )
-        .all() as CardRow[];
-      const cards = rows.map(toSummary);
-      const title = (card: CardSummary): string =>
-        "canonicalForm" in card.content
-          ? card.content.canonicalForm
-          : card.content.lemma;
-      const skipped: GraduationPlan["skipped"][number][] = [];
-      const eligible: CardSummary[] = [];
-      for (const card of cards) {
-        if (
-          card.type === "grammar" &&
-          "canonicalForm" in card.content &&
-          !dependencies.grammarTargetSupported(card.content.canonicalForm)
-        ) {
-          skipped.push({
-            cardId: card.id,
-            title: title(card),
-            reason: "unsupportedGrammarTarget",
-          });
-        } else {
-          eligible.push(card);
-        }
-      }
-      const dayMs = 24 * 60 * 60 * 1_000;
-      const graduated: GraduationPlan["graduated"][number][] = [];
-      const schedules = new Map<CardId, StoredSchedule>();
-      eligible.forEach((card, index) => {
-        // Evenly across the window, deterministic in bank order, from tomorrow.
-        const intervalDays = 1 + Math.floor((index * spreadDays) / eligible.length);
-        const dueAt = new Date(now.value.getTime() + intervalDays * dayMs);
-        // A graduated review Card: past its learning steps, never lapsed, at
-        // the default difficulty, with a stability equal to the interval it
-        // is being given, so FSRS grows it from here like any mature Card.
-        const schedule: StoredSchedule = {
-          dueAt: dueAt.toISOString(),
-          stability: intervalDays,
-          difficulty: 5,
-          elapsedDays: 0,
-          scheduledDays: intervalDays,
-          learningSteps: 0,
-          reps: 3,
-          lapses: 0,
-          phase: "review",
-          lastReviewAt: now.value.toISOString(),
-        };
-        schedules.set(card.id, schedule);
-        graduated.push({
-          cardId: card.id,
-          title: title(card),
-          intervalDays,
-          dueAt: schedule.dueAt,
-        });
-      });
-      const perDayCounts = new Map<string, number>();
-      for (const item of graduated) {
-        const day = localDayKey(new Date(item.dueAt), preference.value.timeZone);
-        if (!day.ok) return day;
-        perDayCounts.set(day.value, (perDayCounts.get(day.value) ?? 0) + 1);
-      }
-      const perDay = [...perDayCounts.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([day, count]) => ({ day, count }));
-      if (!command.dryRun) {
-        const apply = database.transaction(() => {
-          const activate = database.query(
-            `UPDATE card_progress SET state = 'active', known_return_state = NULL
-             WHERE card_id = ? AND state = 'known'`,
-          );
-          // Admission is dated to a past day — the day the Card was staged,
-          // or yesterday if that was today — so graduating hundreds of Cards
-          // leaves today's new-Card allowance untouched.
-          const today = localDayKey(now.value, preference.value.timeZone);
-          if (!today.ok) throw new Error(today.error.kind);
-          const yesterday = localDayKey(
-            new Date(now.value.getTime() - dayMs),
-            preference.value.timeZone,
-          );
-          if (!yesterday.ok) throw new Error(yesterday.error.kind);
-          const admit = database.query(
-            `INSERT OR IGNORE INTO admission_event(card_id, admitted_at, local_day, time_zone)
-             VALUES (?, ?, ?, ?)`,
-          );
-          const upsertSchedule = database.query(
-            `INSERT INTO schedule(card_id, due_at, phase, schedule_json, scheduler_version)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(card_id) DO UPDATE SET
-               due_at = excluded.due_at, phase = excluded.phase,
-               schedule_json = excluded.schedule_json,
-               scheduler_version = excluded.scheduler_version`,
-          );
-          for (const card of eligible) {
-            const schedule = schedules.get(card.id);
-            if (schedule === undefined) continue;
-            const stagedDay = localDayKey(
-              new Date(card.stagedAt),
-              preference.value.timeZone,
-            );
-            if (!stagedDay.ok) throw new Error(stagedDay.error.kind);
-            const admissionDay =
-              stagedDay.value < today.value ? stagedDay.value : yesterday.value;
-            activate.run(card.id);
-            admit.run(
-              card.id,
-              now.value.toISOString(),
-              admissionDay,
-              preference.value.timeZone,
-            );
-            upsertSchedule.run(
-              card.id,
-              schedule.dueAt,
-              schedule.phase,
-              JSON.stringify(schedule),
-              SCHEDULER_VERSION,
-            );
-          }
-        });
-        apply.immediate();
-      }
-      return ok({ dryRun: command.dryRun, graduated, skipped, perDay });
-    } catch (cause) {
-      return err({ kind: "writeFailed", detail: detail(cause) });
-    }
-  };
-
   const setCardState = (
     command: CardStateCommand,
   ): Result<CardSummary, StudyFailure> => {
@@ -571,18 +415,6 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
                WHERE card_id = ? AND support_ready_at IS NULL`,
             )
             .run(now.value.toISOString(), command.cardId);
-          return;
-        }
-        if (command.action === "markNotKnown" && state === "known") {
-          database
-            .query(
-              `UPDATE card_progress
-               SET state = known_return_state, known_return_state = NULL,
-                   support_ready_at = NULL, first_success_at = NULL,
-                   first_success_day = NULL
-               WHERE card_id = ?`,
-            )
-            .run(command.cardId);
           return;
         }
         if (command.action === "suspend" && state !== "suspended") {
@@ -1039,14 +871,12 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           `SELECT
              sum(CASE WHEN state = 'staged' THEN 1 ELSE 0 END) AS staged_count,
              sum(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active_count,
-             sum(CASE WHEN state = 'known' THEN 1 ELSE 0 END) AS known_count,
              sum(CASE WHEN state = 'suspended' THEN 1 ELSE 0 END) AS suspended_count
            FROM card_progress`,
         )
         .get() as {
         staged_count: number | null;
         active_count: number | null;
-        known_count: number | null;
         suspended_count: number | null;
       };
       const due = database
@@ -1061,7 +891,6 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         dueCount: due.count,
         stagedCount: counts.staged_count ?? 0,
         activeCount: counts.active_count ?? 0,
-        knownCount: counts.known_count ?? 0,
         suspendedCount: counts.suspended_count ?? 0,
       });
     } catch (cause) {
@@ -1460,7 +1289,6 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     listCards,
     updateCard,
     setCardState,
-    graduateKnown,
     studyQueue,
     status,
     answer,

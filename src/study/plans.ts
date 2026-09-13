@@ -41,7 +41,7 @@ type MemberRow = Readonly<{
   classification: "required" | "helpful";
   preparation_priority: number;
   first_needed_episode_order: number;
-  state: "staged" | "active" | "known" | "suspended";
+  state: "staged" | "active" | "suspended";
   support_ready_at: string | null;
   rank_reasons_json: string;
   evidence_count: number;
@@ -266,7 +266,7 @@ export const createPlanOperations = (
 
       const memberSnapshots = members.map((member) => {
         const content = JSON.parse(member.content_json) as CardContent;
-        const ready = member.state === "known" || member.support_ready_at !== null;
+        const ready = member.support_ready_at !== null;
         return {
           cardId: member.card_id,
           findingKey: member.finding_key,
