@@ -848,6 +848,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const presentationView = (presentation: PreparedMaterial): TemplateResult =>
     html`<article class="presentation presentation--${presentation.mode}">
                         <span class="pill">${presentation.mode}</span>
+                        <span class="pill pill--state" data-testid="card-kind">${presentation.material.targetKind}</span>
                         ${
                           // A review opens on its situation. A teach card's
                           // context is only "<target> in use." and its prompt

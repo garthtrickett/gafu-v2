@@ -168,6 +168,8 @@ test("configures a key and teaches before the first generated review", async ({
     });
     const toLearn = await tile("learn");
     const toReview = await tile("review");
+    // The card says what kind it is before the sentence is read.
+    await expect(review.getByTestId("card-kind")).toHaveText("vocabulary");
     if (round === 0) {
       // The authored sentence is spoken too: the clip is filled in on first
       // serve, the Listen button appears, and the clip itself is real audio.

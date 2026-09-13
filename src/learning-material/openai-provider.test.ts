@@ -89,6 +89,10 @@ describe("OpenAI Learning Material adapter", () => {
     // The model spans the whole grammar word; the detector only ever matches
     // its suffix, so the instructions say the detected form falls inside.
     expect(String(body["instructions"])).toContain("falls inside");
+    // The scene must not hand the learner the answer.
+    expect(String(body["instructions"])).toContain(
+      "must not be able to guess the target",
+    );
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
     expect(JSON.stringify(material.inspectLastRequest())).not.toContain("sk-private");
@@ -323,6 +327,9 @@ describe("whole-batch generation", () => {
       (input["targets"] as { previousRejections: string[] }[])[0]?.previousRejections,
     ).toEqual(["unknownVocabulary: 難語"]);
     expect(String(body["instructions"])).toContain("previousRejections");
+    expect(String(body["instructions"])).toContain(
+      "must not be able to guess the target",
+    );
     expect(input["allowedSupportingVocabulary"]).toEqual([]);
     const schema = (body["text"] as { format: { schema: Record<string, unknown> } })
       .format.schema;
