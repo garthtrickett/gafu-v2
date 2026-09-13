@@ -10,7 +10,11 @@ import {
 import { err, ok, type Result } from "../result.ts";
 import type { AnswerGrade, SchedulePhase, StudyFailure } from "./contracts.ts";
 
-export const SCHEDULER_VERSION = `${FSRSVersion};gafu-parameters-v1`;
+// v2: short-term steps off. A lapse or a first success is scheduled by the
+// Card's stability, which lands on the next day at the earliest, not ten
+// minutes later. Same-day re-tests add little once the answer has been shown
+// with feedback; the gap that helps is the one to tomorrow.
+export const SCHEDULER_VERSION = `${FSRSVersion};gafu-parameters-v2`;
 
 export type StoredSchedule = Readonly<{
   dueAt: string;
@@ -29,9 +33,9 @@ const scheduler = fsrs({
   request_retention: 0.9,
   maximum_interval: 36_500,
   enable_fuzz: false,
-  enable_short_term: true,
-  learning_steps: ["1m", "10m"],
-  relearning_steps: ["10m"],
+  enable_short_term: false,
+  learning_steps: [],
+  relearning_steps: [],
 });
 
 const phases: Record<State, SchedulePhase> = {
