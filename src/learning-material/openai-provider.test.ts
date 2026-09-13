@@ -93,6 +93,7 @@ describe("OpenAI Learning Material adapter", () => {
     expect(String(body["instructions"])).toContain(
       "must not be able to guess the target",
     );
+    expect(String(body["instructions"])).toContain("are English prose");
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
     expect(JSON.stringify(material.inspectLastRequest())).not.toContain("sk-private");
@@ -330,6 +331,7 @@ describe("whole-batch generation", () => {
     expect(String(body["instructions"])).toContain(
       "must not be able to guess the target",
     );
+    expect(String(body["instructions"])).toContain("are English prose");
     expect(input["allowedSupportingVocabulary"]).toEqual([]);
     const schema = (body["text"] as { format: { schema: Record<string, unknown> } })
       .format.schema;

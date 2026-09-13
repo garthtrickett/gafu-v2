@@ -1119,6 +1119,22 @@ while it runs and is for a quiet moment, run by hand.
 shrink; the batch test sees maintenance leave a pending batch alone; the
 full required validation passes.
 
+### Patch 2.43 — The English fields are English
+
+A review arrived with its scene, answer, and explanations written in
+Japanese: a card the learner could not read yet. The instructions (prompt
+version `study-v4`) now say which fields are English prose, with Japanese
+in them only as the target word or a short quoted form; and the validator
+refuses a candidate whose context, answer, or explanation does not read as
+English — Latin letters present and at least as many as Japanese characters
+— or whose usage note has no English at all (it may quote a cue at length),
+naming the field in the reason.
+
+**Gate:** validator tests for English with the target quoted, Japanese
+prose, and an empty field; provider tests assert the instruction; the
+authored-teaching tests still pass with cue-bearing usage notes; the full
+required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

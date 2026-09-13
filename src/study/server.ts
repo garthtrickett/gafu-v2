@@ -870,8 +870,10 @@ const materialProvider = fakeAi
       // sending usageNotes: the quoted media cue was copied into candidates
       // together with whatever unknown language it leans on. v3 forbids the
       // English context from giving the target away: "You are putting items
-      // into a box" over 詰める left nothing to recall.
-      promptVersion: "study-v3",
+      // into a box" over 詰める left nothing to recall. v4 says which fields
+      // are English: a scene and explanation written in Japanese reached the
+      // learner.
+      promptVersion: "study-v4",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
