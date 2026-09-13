@@ -61,6 +61,13 @@ const metadataMatches = (
   return false;
 };
 
+/** English prose with at most incidental Japanese: Latin letters lead. */
+export const readsAsEnglish = (text: string): boolean => {
+  const latin = (text.match(/[A-Za-z]/gu) ?? []).length;
+  const japanese = (text.match(/[぀-ヿ一-鿿々〆]/gu) ?? []).length;
+  return latin > 0 && latin >= japanese;
+};
+
 export const createGeneratedMaterialValidator = (
   dependencies: ValidationDependencies,
 ): ((
@@ -71,6 +78,22 @@ export const createGeneratedMaterialValidator = (
     if (!decoded.ok) return decoded;
     if (decoded.value.mode !== mode) {
       return err({ kind: "validationRejected", reasons: ["wrongMode"] });
+    }
+    // The scene, the answer, and the explanations are English prose; Japanese
+    // belongs in them only as the target word or a short quoted form. A model
+    // that writes them in Japanese has produced a card the learner cannot read
+    // yet, so it is refused before anything deeper is checked.
+    // The usage note may quote a subtitle cue at length, so it need only
+    // contain some English; the other three must read as English.
+    const notEnglish: string[] = (["context", "answer", "explanation"] as const).filter(
+      (field) => !readsAsEnglish(decoded.value[field]),
+    );
+    if (!/[A-Za-z]/u.test(decoded.value.usageNote)) notEnglish.push("usageNote");
+    if (notEnglish.length > 0) {
+      return err({
+        kind: "validationRejected",
+        reasons: notEnglish.map((field) => `notEnglish: ${field}`),
+      });
     }
 
     if (card.type === "grammar" && "canonicalForm" in card.content) {

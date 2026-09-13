@@ -13,7 +13,10 @@ import type {
   MaterialProviderRequest,
 } from "./generated-contracts.ts";
 import { parseBroadPartOfSpeech } from "./generated-decode.ts";
-import { createGeneratedMaterialValidator } from "./generated-validator.ts";
+import {
+  createGeneratedMaterialValidator,
+  readsAsEnglish,
+} from "./generated-validator.ts";
 import { deterministicMaterialResult } from "./scripted-provider.ts";
 
 const card: CardSummary = {
@@ -183,5 +186,15 @@ describe("generated material validation boundary", () => {
     expect(await validate({ value, mode: "teach", card, knowledge })).toMatchObject({
       ok: false,
     });
+  });
+});
+
+describe("English fields read as English", () => {
+  test("English with the target quoted passes; Japanese prose does not", () => {
+    expect(readsAsEnglish("A clerk sorts papers, looking calm.")).toBe(true);
+    expect(readsAsEnglish("順位 — ranking, order of preference")).toBe(true);
+    expect(readsAsEnglish("係の人が、会場の隅で紙を整理している。")).toBe(false);
+    expect(readsAsEnglish("「順位」は、上から何番目かという位置です。")).toBe(false);
+    expect(readsAsEnglish("")).toBe(false);
   });
 });
