@@ -985,6 +985,18 @@ Japanese with an accent, slowed after the fact, which blurs.
 MP3 checking; a material test re-speaks a clip under a new voice once and
 keeps it; the full required validation passes.
 
+### Patch 2.32 — The target is coloured by its span
+
+The target colour was applied per reading segment, and a model may hand
+back one segment for the whole sentence, so the entire line turned yellow.
+Colouring now follows the target's character span: plain text is cut at the
+span's edges, a kanji run with a reading is coloured whole if it overlaps the
+span, and segments that do not rejoin into the sentence colour nothing.
+
+**Gate:** unit tests for a single-segment sentence, a segmented one, a
+straddling kanji run, and non-rejoining segments; the full required
+validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

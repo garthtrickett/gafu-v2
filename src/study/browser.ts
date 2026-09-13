@@ -20,7 +20,7 @@ import type {
   StudyPreferences,
   StudyStatus,
 } from "./contracts.ts";
-import { alignFurigana } from "./furigana.ts";
+import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
@@ -210,47 +210,16 @@ const editForm = (
 const rubyText = (
   material: PreparedMaterial["material"],
   targetSpan: { start: number; end: number } | null,
-): TemplateResult[] => {
-  // Colouring by character offset is only sound when the segments rejoin
-  // into exactly the sentence. Otherwise show the sentence uncoloured
-  // rather than colouring the wrong word. Whole segments fully inside the
-  // span colour exactly; anything else falls back to overlapping segments so
-  // model-shaped segmentations still mark the word.
-  const colourable =
-    targetSpan !== null &&
-    material.readingSegments.map((segment) => segment.written).join("") ===
-      material.japanese;
-  let offset = 0;
-  const located = material.readingSegments.map((segment) => {
-    const start = offset;
-    offset += segment.written.length;
-    return { segment, start, end: offset };
-  });
-  const inside = located.filter(
-    (item) =>
-      targetSpan !== null &&
-      item.start >= targetSpan.start &&
-      item.end <= targetSpan.end,
-  );
-  const overlapping = located.filter(
-    (item) =>
-      targetSpan !== null && item.start < targetSpan.end && item.end > targetSpan.start,
-  );
-  const coloured = new Set(
-    colourable ? (inside.length > 0 ? inside : overlapping) : [],
-  );
-  return located.map((item) => {
-    const ruby = alignFurigana(item.segment.written, item.segment.reading).map(
-      (piece) =>
+): TemplateResult[] =>
+  sentencePieces(material.japanese, material.readingSegments, targetSpan).map(
+    (piece) => {
+      const text =
         piece.reading === null
           ? html`${piece.text}`
-          : html`<ruby>${piece.text}<rt>${piece.reading}</rt></ruby>`,
-    );
-    return coloured.has(item)
-      ? html`<span class="target">${ruby}</span>`
-      : html`${ruby}`;
-  });
-};
+          : html`<ruby>${piece.text}<rt>${piece.reading}</rt></ruby>`;
+      return piece.target ? html`<span class="target">${text}</span>` : text;
+    },
+  );
 
 export const mountStudyApp = (root: HTMLElement): void => {
   const model: BrowserModel = {

@@ -134,3 +134,58 @@ export const alignFurigana = (
   }
   return pieces;
 };
+
+/** A piece of a sentence as rendered: text, its ruby, and whether it is the target. */
+export type SentencePiece = FuriganaPiece & Readonly<{ target: boolean }>;
+
+/**
+ * The whole sentence as pieces, with the target coloured by its character
+ * span rather than by segment. A model may hand back one segment for the
+ * entire sentence; colouring segments would then paint the whole line. Plain
+ * text is cut at the span's edges; a kanji run with a reading cannot be cut,
+ * so it is coloured if it overlaps the span at all. When the segments do not
+ * rejoin into the sentence, offsets mean nothing and nothing is coloured.
+ */
+export const sentencePieces = (
+  japanese: string,
+  segments: readonly Readonly<{ written: string; reading: string }>[],
+  span: Readonly<{ start: number; end: number }> | null,
+): readonly SentencePiece[] => {
+  const colourable =
+    span !== null && segments.map((segment) => segment.written).join("") === japanese;
+  const pieces: SentencePiece[] = [];
+  let offset = 0;
+  for (const segment of segments) {
+    for (const piece of alignFurigana(segment.written, segment.reading)) {
+      const start = offset;
+      const end = offset + piece.text.length;
+      offset = end;
+      if (!colourable || span === null) {
+        pieces.push({ ...piece, target: false });
+        continue;
+      }
+      if (piece.reading !== null) {
+        pieces.push({ ...piece, target: start < span.end && end > span.start });
+        continue;
+      }
+      // Plain text: split at the span's edges so only the target is coloured.
+      const cuts = [
+        start,
+        Math.min(Math.max(span.start, start), end),
+        Math.min(Math.max(span.end, start), end),
+        end,
+      ];
+      for (let index = 0; index < 3; index += 1) {
+        const from = cuts[index] ?? start;
+        const to = cuts[index + 1] ?? end;
+        if (to <= from) continue;
+        pieces.push({
+          text: piece.text.slice(from - start, to - start),
+          reading: null,
+          target: from >= span.start && to <= span.end,
+        });
+      }
+    }
+  }
+  return pieces;
+};

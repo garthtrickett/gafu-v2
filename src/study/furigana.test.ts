@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { alignFurigana, splitFurigana } from "./furigana.ts";
+import { alignFurigana, sentencePieces, splitFurigana } from "./furigana.ts";
 
 const shown = (written: string, reading: string): string => {
   const { before, body, over, after } = splitFurigana(written, reading);
@@ -103,5 +103,67 @@ describe("aligning a reading to a written phrase", () => {
           .join(""),
       ).toBe(written);
     }
+  });
+});
+
+describe("colouring the target within a sentence", () => {
+  const marked = (
+    japanese: string,
+    segments: readonly { written: string; reading: string }[],
+    span: { start: number; end: number } | null,
+  ): string =>
+    sentencePieces(japanese, segments, span)
+      .map((piece) => {
+        const text =
+          piece.reading === null ? piece.text : `${piece.text}(${piece.reading})`;
+        return piece.target ? `*${text}*` : text;
+      })
+      .join("");
+
+  test("one segment for the whole sentence colours only the target's characters", () => {
+    // 戦闘で油断する。 with the target 油断する at 3..7.
+    expect(
+      marked(
+        "戦闘で油断する。",
+        [{ written: "戦闘で油断する。", reading: "せんとうでゆだんする。" }],
+        {
+          start: 3,
+          end: 7,
+        },
+      ),
+    ).toBe("戦闘(せんとう)で*油断(ゆだん)**する*。");
+  });
+
+  test("segments that split the sentence colour the same characters", () => {
+    expect(
+      marked(
+        "右から攻める。",
+        [
+          { written: "右", reading: "みぎ" },
+          { written: "から", reading: "から" },
+          { written: "攻める", reading: "せめる" },
+          { written: "。", reading: "。" },
+        ],
+        { start: 3, end: 6 },
+      ),
+    ).toBe("右(みぎ)から*攻(せ)**める*。");
+  });
+
+  test("a kanji run straddling the span edge is coloured whole rather than cut", () => {
+    expect(
+      marked("食べ放題だ", [{ written: "食べ放題だ", reading: "たべほうだいだ" }], {
+        start: 2,
+        end: 4,
+      }),
+    ).toBe("食(た)べ*放題(ほうだい)*だ");
+  });
+
+  test("segments that do not rejoin into the sentence colour nothing", () => {
+    expect(
+      marked("右から攻める。", [{ written: "右から", reading: "みぎから" }], {
+        start: 3,
+        end: 6,
+      }),
+    ).toBe("右(みぎ)から");
   });
 });
