@@ -1091,6 +1091,22 @@ readiness alone now decides which language generated sentences may lean on.
 **Gate:** migration and status tests use the three states; the V1 migration
 test asserts no Card is outside them; the full required validation passes.
 
+### Patch 2.41 — A batch carries its knowledge once
+
+The learner's knowledge snapshot — the 1,437-word baseline and every Card —
+was copied into every review batch item, some 700 KB each, twenty times a
+batch, and finished batches were never removed. In two days that was 168 MB
+of a 235 MB database; the spoken clips were 5 MB. Learning Material schema
+version 7 adds `review_batch`, holding the knowledge once per batch; items
+carry their Card only, and items written before this still read the copy
+inside them. Beginning a batch clears any batch finished more than an hour
+earlier. Space already taken is reused by SQLite; the file does not shrink
+without a vacuum, which is left for a quiet moment.
+
+**Gate:** a batch item is under two kilobytes and the batch row holds the
+knowledge; a finished batch is gone two hours later and reports not found;
+the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
