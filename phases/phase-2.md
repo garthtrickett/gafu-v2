@@ -1154,6 +1154,30 @@ each English field is for: the answer is what the whole sentence means.
 teach card, and sees the line appear on a review only with the explanation;
 provider tests assert the instruction; the full required validation passes.
 
+### Patch 2.45 — A known word written either way is known
+
+The Known Word Bank was matched by comparing a token's written form and its
+reading as a pair. But `token.reading` is the reading of the *surface*, so an
+inflected 分かる arrives as `分かる` paired with `わかっ` and never equalled
+the entry's `わかる`; and a word the model wrote in kana never matched its
+kanji entry at all. Both made known words look new, and the validator then
+refused the sentence for leaning on language the learner already has.
+
+Measured over four episodes of ordinary conversational Japanese, against the
+learner's own bank: 879 of 5,277 content tokens were called new when they
+were known, 213 distinct words among them, する alone 96 times. Sentences in
+which every content word is known — the ones the validator would accept —
+doubled from 6.0% to 12.0% once fixed.
+
+Written forms are compared instead, a kana-written token is also compared
+against the entry's reading, and a な-adjective's copula lemma (清潔だ for
+清潔) is the same word. Parts of speech must still agree, and sense scoping
+is unchanged.
+
+**Gate:** classifier tests for an inflected word, a kana spelling either
+way, a copula lemma, and non-matches across parts of speech and to a
+different word; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
