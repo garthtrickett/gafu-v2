@@ -28,6 +28,7 @@ import type {
   PreparedMaterial,
 } from "../learning-material/generated-contracts.ts";
 import { createGeneratedMaterialValidator } from "../learning-material/generated-validator.ts";
+import { createGoogleSpeechProvider } from "../learning-material/google-speech-provider.ts";
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
 import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
 import { createOpenAiSpeechProvider } from "../learning-material/openai-speech-provider.ts";
@@ -893,21 +894,26 @@ const materialProvider = fakeAi
 // headers. The fake stands in wherever the fake AI does, so journeys never
 // reach the network.
 const dictionary = fakeAi ? createDeterministicDictionary() : createJishoDictionary();
-// Spoken sentences. Same key as material; V1's Google voice needed
-// service-account credentials Railway does not hold. GAFU_SPEECH_DISABLED=1
-// turns clips off entirely; the ceiling bounds a day's synthesis spend.
+// Spoken sentences. With GAFU_GOOGLE_TTS_API_KEY set, V1's native Japanese
+// voice (ja-JP-Neural2-B) speaks; without it, OpenAI's speech model on the
+// material key stands in, at natural speed — its own slowing blurs the
+// audio. GAFU_SPEECH_DISABLED=1 turns clips off; the ceiling bounds a day's
+// synthesis spend. A voice change re-speaks banked clips on their next serve.
 const speechDisabled = process.env["GAFU_SPEECH_DISABLED"] === "1";
+const googleSpeechKey = process.env["GAFU_GOOGLE_TTS_API_KEY"] ?? null;
 const speechProvider = speechDisabled
   ? undefined
   : fakeAi
     ? createDeterministicSpeechProvider()
-    : createOpenAiSpeechProvider({
-        apiKey: keyCustody.readForServerAdapter,
-        model: process.env["GAFU_OPENAI_SPEECH_MODEL"] ?? "gpt-4o-mini-tts",
-        voice: process.env["GAFU_OPENAI_SPEECH_VOICE"] ?? "alloy",
-        speed: 0.95,
-        timeoutMs: 30_000,
-      });
+    : googleSpeechKey !== null && googleSpeechKey !== ""
+      ? createGoogleSpeechProvider({ apiKey: () => googleSpeechKey, timeoutMs: 30_000 })
+      : createOpenAiSpeechProvider({
+          apiKey: keyCustody.readForServerAdapter,
+          model: process.env["GAFU_OPENAI_SPEECH_MODEL"] ?? "gpt-4o-mini-tts",
+          voice: process.env["GAFU_OPENAI_SPEECH_VOICE"] ?? "alloy",
+          speed: 1,
+          timeoutMs: 30_000,
+        });
 const speechDailyLimit = Number(process.env["GAFU_SPEECH_DAILY_LIMIT"] ?? "200");
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),

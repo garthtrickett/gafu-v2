@@ -395,6 +395,33 @@ export const openLearningMaterial = (
       .get(presentationId) !== null;
 
   /**
+   * Whether the stored clip was made by the voice in use now. A clip from
+   * another provider, voice, or synthesis version is stale: the sentence is
+   * re-spoken on its next serve, so a voice change reaches banked material.
+   */
+  const hasCurrentAudio = (presentationId: string, speech: SpeechProvider): boolean => {
+    const row = database
+      .query(
+        `SELECT provider, model, voice, synthesis_version
+         FROM presentation_audio WHERE presentation_id = ?`,
+      )
+      .get(presentationId) as {
+      provider: string;
+      model: string;
+      voice: string;
+      synthesis_version: number;
+    } | null;
+    if (row === null) return false;
+    const identity = speech.identity;
+    return (
+      row.provider === identity.provider &&
+      row.model === identity.model &&
+      row.voice === identity.voice &&
+      row.synthesis_version === identity.synthesisVersion
+    );
+  };
+
+  /**
    * One synthesis attempt counts against the day, cache hits do not. The
    * conditional upsert is atomic, so concurrent stocking cannot overshoot.
    */
@@ -427,12 +454,17 @@ export const openLearningMaterial = (
     const speech = options.speech;
     if (speech === undefined) return;
     try {
-      if (hasAudio(presentationId)) return;
+      if (hasCurrentAudio(presentationId, speech)) return;
       const now = safeNow(options.clock);
       if (!now.ok) return;
       if (!reserveSpeechBudget(now.value)) return;
       const spoken = await speech.synthesize(japanese, signal);
       if (!spoken.ok) return;
+      // A stale clip from another voice gives way; the old one still served
+      // until this moment, so a failed synthesis above kept it.
+      database
+        .query("DELETE FROM presentation_audio WHERE presentation_id = ?")
+        .run(presentationId);
       database
         .query(
           `INSERT OR IGNORE INTO presentation_audio(

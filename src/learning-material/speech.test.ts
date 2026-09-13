@@ -86,7 +86,14 @@ const harness = (speech: SpeechProvider | undefined, speechDailyLimit?: number) 
     explanation: "bird",
     usageNote: "",
   };
-  return { material: material.value, card, knowledge: knowledge.value, teaching };
+  return {
+    material: material.value,
+    card,
+    knowledge: knowledge.value,
+    teaching,
+    databasePath,
+    clock,
+  };
 };
 
 const scripted = (steps: readonly ScriptedSpeechStep[]) => {
@@ -204,6 +211,59 @@ describe("spoken sentences", () => {
     if (!review.ok) throw new Error(review.error.kind);
     expect(review.value.audioUrl).toBeNull();
     expect(spoken).toEqual(["鳥かな。"]);
+  });
+
+  test("a clip from another voice is re-spoken on its next serve", async () => {
+    const first = scripted([clip]);
+    const app = harness(first.provider);
+    await app.material.storeAuthoredTeaching({
+      card: app.card,
+      knowledge: app.knowledge,
+      value: app.teaching,
+    });
+    const taught = await app.material.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!taught.ok) throw new Error(taught.error.kind);
+    expect(first.spoken).toEqual(["鳥かな。"]);
+    app.material.close();
+
+    // The same database, a different voice: the banked sentence is spoken
+    // again by the new voice the first time it is served, then kept.
+    const second = scripted([clip]);
+    const reopened = openLearningMaterial({
+      databasePath: app.databasePath,
+      clock: app.clock.now,
+      nextId: sequentialIds(),
+      nextToken: () => `t-${Math.random()}`,
+      provider: createDeterministicMaterialProvider(),
+      keyCustody: createProviderKeyCustody(
+        { verify: async () => ok(undefined) },
+        "sk-test",
+      ),
+      validate: async ({ value }) => ok(value as GeneratedMaterial),
+      inspectionEnabled: false,
+      speech: {
+        ...second.provider,
+        identity: { ...second.provider.identity, voice: "another-voice" },
+      },
+    });
+    if (!reopened.ok) throw new Error(reopened.error.kind);
+    const again = await reopened.value.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!again.ok) throw new Error(again.error.kind);
+    expect(again.value.audioUrl).not.toBeNull();
+    expect(second.spoken).toEqual(["鳥かな。"]);
+    const once = await reopened.value.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!once.ok) throw new Error(once.error.kind);
+    expect(second.spoken).toHaveLength(1);
+    reopened.value.close();
   });
 
   test("without a speech provider every presentation serves with no clip", async () => {

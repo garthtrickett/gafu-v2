@@ -966,6 +966,25 @@ Letters typed into a field are never taken as shortcuts.
 **Gate:** the journey grades one review by button and one by key; the full
 required validation passes.
 
+### Patch 2.31 — V1's voice, when its key is present
+
+The operator heard the difference: V1 spoke through Google's `ja-JP-Neural2-B`,
+a native Japanese neural voice; V2 had OpenAI's general voice speaking
+Japanese with an accent, slowed after the fact, which blurs.
+
+- A Google Cloud Text-to-Speech provider over REST with an API key
+  (`GAFU_GOOGLE_TTS_API_KEY`), V1's settings exactly: `ja-JP-Neural2-B`, MP3,
+  speaking rate 0.95. When the key is set it speaks; otherwise OpenAI stands
+  in at natural speed.
+- Each stored clip records the voice that made it. A clip from another
+  provider, voice, or synthesis version is re-spoken by the current voice the
+  next time its sentence is served, so a voice change reaches banked material
+  without a purge; a failed re-synthesis keeps the old clip.
+
+**Gate:** provider tests for the request, key handling, status mapping, and
+MP3 checking; a material test re-speaks a clip under a new voice once and
+keeps it; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
