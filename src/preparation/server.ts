@@ -280,7 +280,7 @@ export const handlePreparationApi = async (
       : Response.json({ error: snapshot.error }, { status: 500 });
   }
   const match = url.pathname.match(
-    /^\/api\/preparation\/sets\/([^/]+)(?:\/(preflight|analyze|recompare|evidence|plan-draft|start-plan))?$/u,
+    /^\/api\/preparation\/sets\/([^/]+)(?:\/(preflight|analyze|recompare|evidence|plan-draft|start-plan|coverage))?$/u,
   );
   if (match !== null) {
     const rawId = match[1];
@@ -291,6 +291,13 @@ export const handlePreparationApi = async (
     const operation = match[2];
     if (request.method === "GET" && operation === undefined) {
       return resultResponse(preparation.getSubtitleSet(id));
+    }
+    if (request.method === "POST" && operation === "coverage") {
+      const knowledge = study.knowledgeSnapshot();
+      if (!knowledge.ok) return invalid("Known words could not be read.");
+      return resultResponse(
+        await preparation.measureSetCoverage(id, knowledge.value.vocabulary),
+      );
     }
     if (request.method === "POST" && operation === "preflight") {
       const snapshot = study.preparationSnapshot();

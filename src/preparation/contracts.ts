@@ -167,6 +167,15 @@ export type Preparation = Readonly<{
     pendingImportToken: string,
     vocabulary: readonly KnownVocabulary[],
   ) => Promise<Result<CoverageReport, PreparationFailure>>;
+  /**
+   * The same measure for a Subtitle Set already saved, episode by episode in
+   * watch order. Recomputed against the Known Word Bank each time, so an
+   * episode's readiness rises as its words are learned.
+   */
+  measureSetCoverage: (
+    id: SubtitleSetId,
+    vocabulary: readonly KnownVocabulary[],
+  ) => Promise<Result<CoverageReport, PreparationFailure>>;
   inspectImport: (
     input: ImportInput,
   ) => Promise<Result<ImportReport, PreparationFailure>>;

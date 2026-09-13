@@ -33,6 +33,7 @@ type Model = {
   plans: readonly PlanSummary[];
   report: ImportReport | null;
   coverage: CoverageReport | null;
+  setCoverage: CoverageReport | null;
   draftEpisodes: DraftEpisode[];
   currentSet: SubtitleSetSnapshot | null;
   preflight: AnalysisPreflight | null;
@@ -126,6 +127,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     plans: [],
     report: null,
     coverage: null,
+    setCoverage: null,
     draftEpisodes: [],
     currentSet: null,
     preflight: null,
@@ -192,6 +194,24 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       });
       const percent = (model.coverage.coverage * 100).toFixed(1);
       return `You know ${percent}% of the words spoken across these files.`;
+    });
+  };
+
+  // Readiness for a Set already saved, recomputed against what is known now,
+  // so an episode's number rises as its words are learned.
+  const measureSetReadiness = (): void => {
+    const set = model.currentSet;
+    if (set === null) return;
+    void run(async () => {
+      const coverage = await requestJson<CoverageReport>(
+        `/api/preparation/sets/${encodeURIComponent(set.id)}/coverage`,
+        { method: "POST" },
+      );
+      model.setCoverage = coverage;
+      const ready = coverage.sources.filter(
+        (source) => source.coverage >= coverage.target,
+      ).length;
+      return `${ready} of ${coverage.sources.length} episodes are at ${percent(coverage.target)}.`;
     });
   };
 
@@ -606,6 +626,30 @@ export const mountPreparationApp = (root: HTMLElement): void => {
    * leaves four fifths of it understood; the distinct-word count reads like a
    * disaster and would put a learner off a watchable episode.
    */
+  /**
+   * Which episodes are ready to watch. An episode is ready when the learner
+   * knows the target share of the words spoken in it; below that, the number
+   * of words standing between them and it.
+   */
+  const setReadinessView = (): TemplateResult | "" => {
+    const coverage = model.setCoverage;
+    if (coverage === null) return "";
+    return html`<table class="coverage-sources" data-testid="episode-readiness">
+      <thead><tr><th>Episode</th><th>Known</th><th>Words to ${percent(coverage.target)}</th></tr></thead>
+      <tbody>
+        ${coverage.sources.map(
+          (
+            source,
+          ) => html`<tr class=${source.coverage >= coverage.target ? "episode-ready" : ""}>
+            <td>${source.name}</td>
+            <td>${percent(source.coverage)}</td>
+            <td>${source.wordsForTarget === 0 ? "ready" : source.wordsForTarget}</td>
+          </tr>`,
+        )}
+      </tbody>
+    </table>`;
+  };
+
   const coverageView = (): TemplateResult | "" => {
     const coverage = model.coverage;
     const report = model.report;
@@ -988,7 +1032,8 @@ export const mountPreparationApp = (root: HTMLElement): void => {
                 : html`<section class="panel" data-testid="current-subtitle-set">
                   <p class="eyebrow">Saved locally</p><h2>${model.currentSet.title}</h2>
                   <ol>${model.currentSet.episodes.map((episode) => html`<li>${episode.title} · ${episode.cueCount} cues</li>`)}</ol>
-                  <div class="button-row"><button type="button" @click=${preflight} ?disabled=${model.busy}>Review analysis scope</button><button type="button" class="danger" @click=${deleteSet}>Delete local media data</button></div>
+                  ${setReadinessView()}
+                  <div class="button-row"><button type="button" @click=${measureSetReadiness} ?disabled=${model.busy}>Check episode readiness</button><button type="button" @click=${preflight} ?disabled=${model.busy}>Review analysis scope</button><button type="button" class="danger" @click=${deleteSet}>Delete local media data</button></div>
                 </section>`
             }
             ${preflightView()}
