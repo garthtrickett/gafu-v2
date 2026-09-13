@@ -958,8 +958,8 @@ passes.
 
 ### Patch 2.30 — Grade by key
 
-`c` and `i` grade a review as Correct or Incorrect, only while its
-explanation is open, alongside `r` to hear the sentence again. The buttons
+`e` opens a review's explanation; `c` and `i` then grade it as Correct or
+Incorrect, only while the explanation is open; `r` hears the sentence again. The buttons
 show their keys; the accessible names stay "Correct" and "Incorrect".
 Letters typed into a field are never taken as shortcuts.
 

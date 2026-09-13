@@ -653,6 +653,18 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (grading && (event.key === "c" || event.key === "i")) {
       event.preventDefault();
       answer(event.key === "c");
+      return;
+    }
+    // e opens a review's explanation, the step before grading.
+    if (
+      event.key === "e" &&
+      model.presentation !== null &&
+      model.presentation.mode === "review" &&
+      !model.revealed
+    ) {
+      event.preventDefault();
+      model.revealed = true;
+      draw();
     }
   });
 
@@ -900,10 +912,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                   <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)} aria-keyshortcuts="c" title="Correct (C)">Correct <kbd aria-hidden="true">C</kbd></button>
                                   <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)} aria-keyshortcuts="i" title="Incorrect (I)">Incorrect <kbd aria-hidden="true">I</kbd></button>
                                 </div>`
-                              : html`<button type="button" @click=${() => {
+                              : html`<button type="button" aria-keyshortcuts="e" title="Explanation (E)" @click=${() => {
                                   model.revealed = true;
                                   draw();
-                                }}>Explanation</button>`
+                                }}>Explanation <kbd aria-hidden="true">E</kbd></button>`
                         }
                       </article>`;
 
