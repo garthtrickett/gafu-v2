@@ -1,6 +1,11 @@
 import type { Result } from "../result.ts";
 
-export const MAXIMUM_BACKUP_BYTES = 128 * 1024 * 1024;
+// Export and restore hold the whole file in memory, so the cap is a memory
+// bound, not a policy. 128 MiB was passed on 2026-09-13 once spoken clips
+// were stored beside the material; production is a private single-learner
+// database on a server with headroom to spare, so 512 MiB leaves room to
+// grow for years at the current rate (a clip is tens of kilobytes).
+export const MAXIMUM_BACKUP_BYTES = 512 * 1024 * 1024;
 
 export type BackupInspection = Readonly<{
   byteSize: number;
