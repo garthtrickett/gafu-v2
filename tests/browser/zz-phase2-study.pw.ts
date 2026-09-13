@@ -288,7 +288,12 @@ test("configures a key and teaches before the first generated review", async ({
     await expect(review.locator(".japanese .target").first()).toBeVisible();
     // Generated reviews were spoken when they were banked.
     await expect(review.getByTestId("listen")).toBeVisible();
-    await review.getByRole("button", { name: "Explanation" }).click();
+    // One explanation by button, the other by its key.
+    if (grade === "Correct") {
+      await review.getByRole("button", { name: "Explanation" }).click();
+    } else {
+      await page.keyboard.press("e");
+    }
     const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
     worked.push(shown.includes("cat") ? "cat" : "bird");
     // One grade by button, the other by its key.
