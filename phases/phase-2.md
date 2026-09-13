@@ -1107,6 +1107,18 @@ without a vacuum, which is left for a quiet moment.
 knowledge; a finished batch is gone two hours later and reports not found;
 the full required validation passes.
 
+### Patch 2.42 — Compaction on request
+
+Patch 2.41 stopped the growth but left the space taken; SQLite reuses freed
+pages and never returns them without a vacuum. `POST
+/api/study/maintenance/compact` clears every finished batch at once, then
+vacuums, and reports the file size before and after. It holds the database
+while it runs and is for a quiet moment, run by hand.
+
+**Gate:** a study test frees a scratch table's pages and sees the file
+shrink; the batch test sees maintenance leave a pending batch alone; the
+full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

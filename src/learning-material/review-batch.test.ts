@@ -299,6 +299,8 @@ describe("review batch job", () => {
         .get(begun.value),
     ).toEqual({ count: 1 });
 
+    // Maintenance may clear finished batches at once, but not a pending one.
+    expect(app.material.purgeFinishedBatches(0)).toEqual({ ok: true, value: 0 });
     // Work it to done, then an hour and more passes; the next batch clears it.
     let progress = await app.material.advanceReviewBatch(begun.value);
     for (

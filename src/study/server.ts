@@ -760,6 +760,15 @@ const handleApi = async (
       ? jsonResult(study.setBaselineWordEnabled(decodedKey.value, body["enabled"]))
       : invalidRequest("Baseline word key encoding is invalid.");
   }
+  if (request.method === "POST" && url.pathname === "/api/study/maintenance/compact") {
+    // A quiet-moment operation: clear every finished batch at once, then
+    // rebuild the file so the space comes back. Reports what it freed.
+    const purged = material.purgeFinishedBatches(0);
+    if (!purged.ok) return materialResponse(purged);
+    const compacted = study.compact();
+    if (!compacted.ok) return failureResponse(compacted.error);
+    return Response.json({ batchesRemoved: purged.value, ...compacted.value });
+  }
   if (request.method === "GET" && url.pathname === "/api/study/backup") {
     const backup = study.exportBackup();
     if (!backup.ok) return failureResponse(backup.error);
