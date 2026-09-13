@@ -93,8 +93,11 @@ const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[]
  */
 export const alignFurigana = (
   written: string,
-  reading: string,
+  rawReading: string,
 ): readonly FuriganaPiece[] => {
+  // A model sometimes spaces a reading between words; the writing has no such
+  // spaces, so they would defeat the match. Readings carry no whitespace.
+  const reading = rawReading.replace(/\s+/gu, "");
   if (reading === "" || reading === written || !hasKanji(written)) {
     return [{ text: written, reading: null }];
   }
@@ -165,7 +168,12 @@ export const sentencePieces = (
         continue;
       }
       if (piece.reading !== null) {
-        pieces.push({ ...piece, target: start < span.end && end > span.start });
+        // A ruby run cannot be cut, so it is coloured whole when it overlaps
+        // the span — unless it dwarfs the span, as a whole-sentence fallback
+        // does, in which case colouring it would paint the line, not the word.
+        const overlaps = start < span.end && end > span.start;
+        const modest = end - start <= span.end - span.start + 4;
+        pieces.push({ ...piece, target: overlaps && modest });
         continue;
       }
       // Plain text: split at the span's edges so only the target is coloured.

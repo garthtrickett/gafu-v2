@@ -993,8 +993,13 @@ Colouring now follows the target's character span: plain text is cut at the
 span's edges, a kanji run with a reading is coloured whole if it overlaps the
 span, and segments that do not rejoin into the sentence colour nothing.
 
+Spaces a model puts between words in a reading are ignored when aligning,
+and a ruby run that dwarfs the target span — the whole-sentence fallback —
+is never coloured, since that would paint the line rather than the word.
+
 **Gate:** unit tests for a single-segment sentence, a segmented one, a
-straddling kanji run, and non-rejoining segments; the full required
+straddling kanji run, a spaced reading, a kana-only target, the
+whole-sentence fallback, and non-rejoining segments; the full required
 validation passes.
 
 ### Patch 2.33 — Reviewing starts as Cards land
