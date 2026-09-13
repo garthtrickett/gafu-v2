@@ -43,7 +43,12 @@ const tables = (databasePath: string): Set<string> => {
   return new Set(rows.map((row) => row.name));
 };
 
-const later = ["presentation_audio", "speech_daily_usage", "review_batch_job"];
+const later = [
+  "presentation_audio",
+  "speech_daily_usage",
+  "review_batch_job",
+  "review_batch",
+];
 
 test("a database already at version 2 still receives every later step", () => {
   const directory = mkdtempSync(join(tmpdir(), "gafu-migrate-"));

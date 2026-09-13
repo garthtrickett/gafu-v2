@@ -25,7 +25,7 @@ import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 6;
+export const MATERIAL_SCHEMA_VERSION = 7;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 // One lifetime, owned by Study's contract, enforced here and there.
 const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
@@ -246,6 +246,23 @@ const migrate = (
         database
           .query(
             "INSERT INTO learning_material_migration(version, applied_at) VALUES (6, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 7) {
+        // The learner's knowledge was copied into every batch item — some
+        // 700 KB each, twenty times a batch, never removed — and became the
+        // bulk of the database. It is stored once per batch now.
+        database.exec(`
+        CREATE TABLE IF NOT EXISTS review_batch (
+          batch_id TEXT PRIMARY KEY,
+          knowledge_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (7, ?)",
           )
           .run(appliedAt);
       }
@@ -807,6 +824,34 @@ export const openLearningMaterial = (
   };
   type BatchInput = { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
 
+  /**
+   * The knowledge a batch was begun with: from the batch row, or, for items
+   * written before it existed, from the copy inside the item itself.
+   */
+  const batchInput = (batchId: string, inputJson: string): BatchInput | null => {
+    let parsed: { card?: CardSummary; knowledge?: StudyKnowledgeSnapshot };
+    try {
+      parsed = JSON.parse(inputJson) as typeof parsed;
+    } catch {
+      return null;
+    }
+    if (parsed.card === undefined) return null;
+    if (parsed.knowledge !== undefined)
+      return { card: parsed.card, knowledge: parsed.knowledge };
+    const row = database
+      .query("SELECT knowledge_json FROM review_batch WHERE batch_id = ?")
+      .get(batchId) as { knowledge_json: string } | null;
+    if (row === null) return null;
+    try {
+      return {
+        card: parsed.card,
+        knowledge: JSON.parse(row.knowledge_json) as StudyKnowledgeSnapshot,
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const setItemStatus = (
     batchId: string,
     seq: number,
@@ -869,11 +914,11 @@ export const openLearningMaterial = (
     const at = observedAt.value.toISOString();
     const inputs = new Map<number, BatchInput>();
     for (const item of pending) {
-      try {
-        inputs.set(item.seq, JSON.parse(item.input_json) as BatchInput);
-      } catch {
+      const input = batchInput(batchId, item.input_json);
+      if (input === null) {
         return err({ kind: "writeFailed", detail: "review batch input is corrupt" });
       }
+      inputs.set(item.seq, input);
     }
     const failAll = (kind: string): Result<void, MaterialFailure> => {
       try {
@@ -1040,8 +1085,40 @@ export const openLearningMaterial = (
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
       const batchId = options.nextId();
+      const first = cards[0];
       try {
         const insert = database.transaction(() => {
+          // Housekeeping: a batch finished more than an hour ago has been
+          // worked through or abandoned; its rows only take space.
+          const cutoff = new Date(
+            observedAt.value.getTime() - 60 * 60 * 1_000,
+          ).toISOString();
+          const finished = (
+            database
+              .query(
+                `SELECT batch_id FROM review_batch_item
+                 GROUP BY batch_id
+                 HAVING sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) = 0
+                    AND max(updated_at) < ?`,
+              )
+              .all(cutoff) as { batch_id: string }[]
+          ).map((row) => row.batch_id);
+          for (const old of finished) {
+            database.query("DELETE FROM review_batch_item WHERE batch_id = ?").run(old);
+            database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(old);
+            database.query("DELETE FROM review_batch WHERE batch_id = ?").run(old);
+          }
+          if (first !== undefined) {
+            database
+              .query(
+                "INSERT INTO review_batch(batch_id, knowledge_json, created_at) VALUES (?, ?, ?)",
+              )
+              .run(
+                batchId,
+                JSON.stringify(first.knowledge),
+                observedAt.value.toISOString(),
+              );
+          }
           const add = database.query(
             `INSERT INTO review_batch_item(batch_id, seq, card_id, input_json, status, updated_at)
              VALUES (?, ?, ?, ?, 'pending', ?)`,
@@ -1051,7 +1128,7 @@ export const openLearningMaterial = (
               batchId,
               index,
               input.card.id,
-              JSON.stringify({ card: input.card, knowledge: input.knowledge }),
+              JSON.stringify({ card: input.card }),
               observedAt.value.toISOString(),
             );
           });
@@ -1138,10 +1215,8 @@ export const openLearningMaterial = (
       }
       if (next === null) return progress();
       const item = next;
-      let input: { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
-      try {
-        input = JSON.parse(item.input_json) as typeof input;
-      } catch {
+      const input = batchInput(batchId, item.input_json);
+      if (input === null) {
         return err({ kind: "writeFailed", detail: "review batch input is corrupt" });
       }
       const observedAt = safeNow(options.clock);

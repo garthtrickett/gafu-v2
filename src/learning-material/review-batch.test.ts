@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -83,7 +84,7 @@ const harness = (provider: MaterialProvider) => {
     grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
-  return { material: material.value, study: study.value };
+  return { material: material.value, study: study.value, databasePath, clock };
 };
 
 const createWord = (
@@ -263,6 +264,76 @@ describe("review batch job", () => {
     });
     if (done.ok)
       expect(done.value.failed[0]?.cardId).toBe("bad-card" as CardSummary["id"]);
+    app.study.close();
+    app.material.close();
+  });
+
+  test("knowledge is stored once per batch, and finished batches are cleared after an hour", async () => {
+    const app = harness(createDeterministicMaterialProvider());
+    const createdFirst = createWord(app.study, "鳥", "とり", "bird");
+    markBackgroundKnown(app.study);
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const first = admitted.value.due.find(
+      (item) => item.card.id === createdFirst.id,
+    )?.card;
+    if (first === undefined) throw new Error("card not due");
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, first);
+
+    const begun = app.material.beginReviewBatch([
+      { card: first, knowledge: knowledge.value },
+    ]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    const raw = new Database(app.databasePath);
+    const item = raw
+      .query("SELECT input_json FROM review_batch_item WHERE batch_id = ?")
+      .get(begun.value) as { input_json: string };
+    // The item carries its Card only; the knowledge lives on the batch row.
+    expect(item.input_json.length).toBeLessThan(2_000);
+    expect(JSON.parse(item.input_json)).not.toHaveProperty("knowledge");
+    expect(
+      raw
+        .query("SELECT count(*) AS count FROM review_batch WHERE batch_id = ?")
+        .get(begun.value),
+    ).toEqual({ count: 1 });
+
+    // Work it to done, then an hour and more passes; the next batch clears it.
+    let progress = await app.material.advanceReviewBatch(begun.value);
+    for (
+      let advances = 0;
+      progress.ok && !progress.value.done && advances < 8;
+      advances += 1
+    ) {
+      progress = await app.material.advanceReviewBatch(begun.value);
+    }
+    expect(progress).toMatchObject({
+      ok: true,
+      value: { done: true, completed: [first.id] },
+    });
+    app.clock.set(
+      new Date(app.clock.now().getTime() + 2 * 60 * 60 * 1_000).toISOString(),
+    );
+    const next = app.material.beginReviewBatch([
+      { card: first, knowledge: knowledge.value },
+    ]);
+    if (!next.ok) throw new Error(next.error.kind);
+    expect(
+      raw
+        .query("SELECT count(*) AS count FROM review_batch_item WHERE batch_id = ?")
+        .get(begun.value),
+    ).toEqual({ count: 0 });
+    expect(
+      raw
+        .query("SELECT count(*) AS count FROM review_batch WHERE batch_id = ?")
+        .get(begun.value),
+    ).toEqual({ count: 0 });
+    expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
+      ok: false,
+      error: { kind: "reviewBatchNotFound" },
+    });
+    raw.close();
     app.study.close();
     app.material.close();
   });
