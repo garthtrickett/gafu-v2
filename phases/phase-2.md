@@ -1135,6 +1135,25 @@ prose, and an empty field; provider tests assert the instruction; the
 authored-teaching tests still pass with cue-bearing usage notes; the full
 required validation passes.
 
+### Patch 2.44 — The target's own meaning, always
+
+The answer box showed only the model's prose, and what that prose said
+varied: sometimes the target's meaning, sometimes the sentence's, once the
+Japanese sentence repeated verbatim. The box now opens with the target's own
+meaning — lemma, reading, and meaning for a Vocabulary Card; form, meaning,
+and formation for a Grammar Card — taken from the presentation metadata the
+validator holds equal to the Card, so it is there whatever the model wrote.
+The sentence gloss follows it.
+
+Patch 2.29's "never restate the Japanese sentence in English" was written
+about the context and read as covering the answer, which is how the Japanese
+came back verbatim. The instructions (prompt version `study-v5`) now say what
+each English field is for: the answer is what the whole sentence means.
+
+**Gate:** the journey sees the target's lemma, reading, and meaning on a
+teach card, and sees the line appear on a review only with the explanation;
+provider tests assert the instruction; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

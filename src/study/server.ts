@@ -872,8 +872,9 @@ const materialProvider = fakeAi
       // English context from giving the target away: "You are putting items
       // into a box" over 詰める left nothing to recall. v4 says which fields
       // are English: a scene and explanation written in Japanese reached the
-      // learner.
-      promptVersion: "study-v4",
+      // learner. v5 says what answer is for, after v3's no-translation rule
+      // was read as covering it and the Japanese sentence came back verbatim.
+      promptVersion: "study-v5",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
