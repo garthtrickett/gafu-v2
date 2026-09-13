@@ -968,10 +968,19 @@ kbd {
   padding: 0.2rem 0.4rem;
   border: 1px solid #596155;
   border-radius: 0.35rem;
+  /* The badge is dark whatever sits behind it, so its letter is always light:
+     inheriting the green button's dark text made the E vanish. */
+  color: #e4e8df;
   background: #101310;
   font: inherit;
   font-weight: 750;
   white-space: nowrap;
+}
+
+/* Buttons lay out as flex, which swallows the space before a key badge. */
+button kbd {
+  margin-left: 0.55rem;
+  font-size: 0.85em;
 }
 
 .capture-panel {
