@@ -19,6 +19,7 @@ import type {
   PreparationFinding,
   PreparationSnapshot,
 } from "./contracts.ts";
+import { measureCoverage } from "./coverage.ts";
 import type {
   CommitImport,
   ImportReport,
@@ -504,6 +505,25 @@ export const openPreparation = (
   };
 
   return ok({
+    measureCoverage: async (pendingImportToken, vocabulary) => {
+      const now = safeNow(dependencies.clock);
+      if (!now.ok) return now;
+      const pending = pendingImports.get(pendingImportToken);
+      if (pending === undefined || pending.expiresAt < now.value.getTime()) {
+        pendingImports.delete(pendingImportToken);
+        return err({ kind: "staleImport" });
+      }
+      return ok(
+        await measureCoverage({
+          analyzer: dependencies.analyzer,
+          vocabulary,
+          sources: pending.episodes.map((episode) => ({
+            name: episode.inferredTitle,
+            cues: episode.cues.map((cue) => cue.normalizedText),
+          })),
+        }),
+      );
+    },
     inspectImport: async (input) => {
       const now = safeNow(dependencies.clock);
       if (!now.ok) return now;

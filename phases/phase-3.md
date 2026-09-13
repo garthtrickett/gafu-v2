@@ -528,6 +528,32 @@ workarounds:
 33. Ordinary logs, JSON failures, and browser diagnostics are searched for
     subtitle bodies, API keys, and raw provider response text.
 
+### Patch 3.x — Coverage before you watch
+
+A learner picking an episode wants one number: what fraction of the words
+spoken in it do they already know. The scan reported distinct words, which is
+a different and far more discouraging figure — the frequent words carry most
+of what is said, so knowing half an episode's vocabulary still leaves four
+fifths of it understood.
+
+- `POST /api/preparation/coverage` takes the token from an inspected import
+  and reports coverage of the running words, the words to learn to reach a
+  target (0.95), the same figure per file, milestone counts for 90/92/95/98%,
+  and the unknown words ranked by how often they are said.
+- Grammar and bound forms (`非自立`, `接尾`), interjections, numbers,
+  punctuation kuromoji tags as a noun, and proper nouns cost no Card and are
+  counted as covered; only content words are candidates.
+- A word is known by its written form or by its reading, because subtitles
+  write ordinary words in kana where the Known Word Bank holds the kanji.
+  Matching on the written form alone reported hundreds of known words as new.
+- The preparation view offers coverage after an import is inspected, asked
+  for rather than computed automatically: tokenising a series takes a while
+  and the import itself stays quick.
+
+**Gate:** unit tests for the buckets, reading-aware matching, the coverage
+arithmetic, the ranking across files, the per-file figures, and an empty
+import; the full required validation passes.
+
 ## Exit gate
 
 Phase 3 is implemented when all of the following are true:

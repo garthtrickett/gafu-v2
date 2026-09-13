@@ -26,10 +26,13 @@ type DraftEpisode = Readonly<{
   cueCount: number;
 }>;
 
+import type { CoverageReport } from "./coverage.ts";
+
 type Model = {
   sets: readonly SubtitleSetSnapshot[];
   plans: readonly PlanSummary[];
   report: ImportReport | null;
+  coverage: CoverageReport | null;
   draftEpisodes: DraftEpisode[];
   currentSet: SubtitleSetSnapshot | null;
   preflight: AnalysisPreflight | null;
@@ -122,6 +125,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     sets: [],
     plans: [],
     report: null,
+    coverage: null,
     draftEpisodes: [],
     currentSet: null,
     preflight: null,
@@ -176,6 +180,21 @@ export const mountPreparationApp = (root: HTMLElement): void => {
     }
   };
 
+  // Coverage is asked for, not computed on import: tokenising a whole series
+  // takes a while, and the import itself is meant to stay quick.
+  const measureCoverage = (): void => {
+    const token = model.report?.pendingImportToken;
+    if (token === undefined) return;
+    void run(async () => {
+      model.coverage = await requestJson<CoverageReport>("/api/preparation/coverage", {
+        method: "POST",
+        body: JSON.stringify({ pendingImportToken: token }),
+      });
+      const percent = (model.coverage.coverage * 100).toFixed(1);
+      return `You know ${percent}% of the words spoken across these files.`;
+    });
+  };
+
   const inspect = (event: SubmitEvent): void => {
     event.preventDefault();
     if (model.busy) return;
@@ -190,6 +209,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         body,
       });
       model.draftEpisodes = acceptedEpisodes(model.report);
+      model.coverage = null;
       model.currentSet = null;
       model.preflight = null;
       model.result = null;
@@ -248,6 +268,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
         }),
       );
       model.report = null;
+      model.coverage = null;
       model.draftEpisodes = [];
       await refreshLists();
       return "Subtitle Set saved locally. No provider request has been made.";
@@ -275,6 +296,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       if (!isCurrent()) return "";
       model.currentSet = set;
       model.report = null;
+      model.coverage = null;
       model.preflight = null;
       model.evidence = null;
       model.draft = null;
@@ -574,6 +596,76 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       await refreshLists();
       return "Plan deleted. Its Cards and learning progress were kept.";
     });
+  };
+
+  const percent = (value: number): string => `${(value * 100).toFixed(1)}%`;
+
+  /**
+   * Coverage of the running words, not the distinct ones. The frequent words
+   * carry most of what is said, so knowing half an episode's vocabulary still
+   * leaves four fifths of it understood; the distinct-word count reads like a
+   * disaster and would put a learner off a watchable episode.
+   */
+  const coverageView = (): TemplateResult | "" => {
+    const coverage = model.coverage;
+    const report = model.report;
+    if (report === null) return "";
+    if (coverage === null) {
+      return html`<section class="panel" data-testid="coverage-invite">
+        <p class="eyebrow">Before you watch</p><h2>How much will you understand?</h2>
+        <p>Counts every word spoken in the files above against the words you know.</p>
+        <button type="button" @click=${measureCoverage} ?disabled=${model.busy}>Measure coverage</button>
+      </section>`;
+    }
+    return html`<section class="panel" data-testid="coverage">
+      <p class="eyebrow">Before you watch</p><h2>${percent(coverage.coverage)} of spoken words known</h2>
+      <div class="metrics compact">
+        <article><strong>${coverage.runningWords}</strong><span>words spoken</span></article>
+        <article><strong>${coverage.wordsForTarget}</strong><span>to learn for ${percent(coverage.target)}</span></article>
+        <article><strong>${coverage.distinctUnknown}</strong><span>unknown in all</span></article>
+      </div>
+      <p class="privacy-note">
+        Grammar and bound forms ${coverage.grammarWords}, names ${coverage.nameWords},
+        words you know ${coverage.knownWords}, words you do not ${coverage.unknownWords}.
+      </p>
+      <table class="coverage-milestones">
+        <thead><tr><th>To reach</th><th>Words to learn</th></tr></thead>
+        <tbody>
+          ${coverage.milestones.map(
+            (milestone) => html`<tr>
+              <td>${percent(milestone.coverage)}</td>
+              <td>${milestone.words}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+      <details>
+        <summary>Per file</summary>
+        <table class="coverage-sources">
+          <thead><tr><th>File</th><th>Known</th><th>To learn for ${percent(coverage.target)}</th></tr></thead>
+          <tbody>
+            ${coverage.sources.map(
+              (source) => html`<tr>
+                <td>${source.name}</td>
+                <td>${percent(source.coverage)}</td>
+                <td>${source.wordsForTarget}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </details>
+      <details>
+        <summary>Words to learn, most frequent first</summary>
+        <ol class="coverage-words">
+          ${coverage.words.map(
+            (word) => html`<li>
+              <span lang="ja">${word.lemma}${word.reading === null ? "" : `（${word.reading}）`}</span>
+              <span class="coverage-count">${word.count}x in ${word.sources.length}</span>
+            </li>`,
+          )}
+        </ol>
+      </details>
+    </section>`;
   };
 
   const reportView = (): TemplateResult | string => {
@@ -889,6 +981,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
               </form>
             </section>
             ${reportView()}
+            ${coverageView()}
             ${
               model.currentSet === null
                 ? ""

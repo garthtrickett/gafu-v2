@@ -243,6 +243,22 @@ export const handlePreparationApi = async (
         : ({ mode: "direct", files } as const);
     return resultResponse(await preparation.inspectImport(input));
   }
+  if (request.method === "POST" && url.pathname === "/api/preparation/coverage") {
+    const body = await json(request);
+    if (body instanceof Response) return body;
+    const token =
+      typeof body === "object" && body !== null && "pendingImportToken" in body
+        ? (body as { pendingImportToken: unknown }).pendingImportToken
+        : null;
+    if (typeof token !== "string" || token === "") {
+      return invalid("Coverage needs the token from the inspected import.");
+    }
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return invalid("Known words could not be read.");
+    return resultResponse(
+      await preparation.measureCoverage(token, knowledge.value.vocabulary),
+    );
+  }
   if (request.method === "POST" && url.pathname === "/api/preparation/commit") {
     const body = await json(request);
     if (body instanceof Response) return body;
