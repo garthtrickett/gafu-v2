@@ -515,6 +515,17 @@ label {
   margin: 0.35rem 0;
 }
 
+.lookup-known {
+  margin: 1rem 0 0.5rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid #333a31;
+  color: #aeb5aa;
+}
+
+.lookup-known p {
+  margin: 0 0 0.6rem;
+}
+
 .lookup-pos {
   color: #7f877b;
   font-size: 0.8rem;

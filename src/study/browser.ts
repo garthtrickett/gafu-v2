@@ -557,6 +557,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const openLookup = (term: string): void => {
     model.lookup = { term, status: "loading", result: null, message: "" };
     draw();
+    // The dialog says whether the word counts as known; that needs the
+    // baseline, loaded once and kept.
+    if (model.knowledge === null) void loadKnowledge().then(draw, draw);
     void (async () => {
       let next: NonNullable<BrowserModel["lookup"]>;
       try {
@@ -582,8 +585,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
     })();
   };
 
-  // A drag frequently ends outside the sentence box, so the listener lives on
-  // the document and the range decides whether the highlight is in scope.
+  // Highlight, then press Alt (Option on a Mac; both arrive as "Alt"). A
+  // drag frequently ends outside the sentence box, so the range decides
+  // whether the highlight is in scope, not where the key was pressed.
   const handleSelectionLookup = (): void => {
     if (model.lookup !== null || model.presentation === null) return;
     const container = root.querySelector("[data-japanese-sentence]");
@@ -594,8 +598,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (term === null) return;
     openLookup(term);
   };
-  document.addEventListener("mouseup", handleSelectionLookup);
-  document.addEventListener("touchend", handleSelectionLookup);
 
   document.addEventListener("keydown", (event) => {
     if (model.lookup !== null) {
@@ -608,6 +610,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const target = event.target as Element | null;
     // Typing fields keep their letters; a focused button does not need them.
     if (target?.matches("input, select, textarea")) return;
+    if (event.key === "Alt" && !event.repeat) {
+      event.preventDefault();
+      handleSelectionLookup();
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "r") {
       event.preventDefault();
@@ -898,7 +905,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                               ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
                               : ""
                           }
-                          <p class="hint">Highlight a word for Jisho.</p>
+                          <p class="hint">Highlight a word, then press Alt (Option on Mac) for Jisho.</p>
                         </div>
                         ${
                           presentation.mode === "teach"
@@ -925,6 +932,49 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                 }}>Explanation <kbd aria-hidden="true">E</kbd></button>`
                         }
                       </article>`;
+
+  /**
+   * Whether the looked-up word counts as known, and the switch to change
+   * that. The validator lets generated sentences lean on every enabled
+   * baseline word, so a word the learner does not actually know is best
+   * switched off right here, where it was met.
+   */
+  const knownWordSection = (
+    lookup: NonNullable<BrowserModel["lookup"]>,
+  ): TemplateResult => {
+    const candidates = new Set<string>([lookup.term]);
+    for (const entry of lookup.result?.entries ?? []) {
+      candidates.add(entry.slug);
+      for (const form of entry.forms) {
+        if (form.word) candidates.add(form.word);
+        if (form.reading) candidates.add(form.reading);
+      }
+    }
+    const card = (model.snapshot?.cards ?? []).find((item) =>
+      candidates.has(cardTitle(item)),
+    );
+    if (card !== undefined) {
+      return html`<p class="lookup-known" data-testid="lookup-known">This is one of your Cards (${card.state}).</p>`;
+    }
+    if (model.knowledge === null) {
+      return html`<p class="lookup-known" data-testid="lookup-known">Checking your known words…</p>`;
+    }
+    const baseline = model.knowledge.baseline.entries.find(
+      (entry) => candidates.has(entry.lemma) || candidates.has(entry.reading),
+    );
+    if (baseline === undefined) {
+      return html`<p class="lookup-known" data-testid="lookup-known">Not in your known words, so sentences will not lean on it.</p>`;
+    }
+    return html`<div class="lookup-known" data-testid="lookup-known">
+      <p>
+        ${baseline.lemma} · ${baseline.reading} is in your Known Word baseline and
+        ${baseline.enabled ? "counts as known." : "is switched off: it does not count as known."}
+      </p>
+      <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => setBaselineWord(baseline.key, !baseline.enabled)}>
+        ${baseline.enabled ? "I don't know this word" : "Restore as known"}
+      </button>
+    </div>`;
+  };
 
   const lookupDialog = (): TemplateResult | "" => {
     const lookup = model.lookup;
@@ -984,6 +1034,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           <button type="button" class="secondary" @click=${closeLookup} aria-label="Close dictionary lookup" aria-keyshortcuts="Escape">Close</button>
         </header>
         <div id="jisho-lookup-body">${body}</div>
+        ${knownWordSection(lookup)}
         <p class="answer-copy">
           <a href=${jishoWebUrl(lookup.term)} target="_blank" rel="noopener noreferrer">Open ${lookup.term} on jisho.org ↗</a>
         </p>
