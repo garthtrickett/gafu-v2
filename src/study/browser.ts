@@ -67,6 +67,8 @@ type BrowserModel = {
     pending: number;
     done: boolean;
     round: number;
+    /** Cards already fetched into the session, so a poll never serves one twice. */
+    handedIds: string[];
   } | null;
   message: string;
   messageKind: "neutral" | "success" | "error";
@@ -695,19 +697,49 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // A ready batch is the review session: the first banked Card is served
   // without another press, and grading chains the rest. Nothing to serve
   // (every Card failed, or was answered elsewhere) closes the batch plainly.
-  const workThroughBatch = (): void => {
-    if (model.presentation !== null) return;
+  // Reviews start the moment any Card is ready, not when the whole batch is.
+  // Cards that already held a reserve are ready on the first poll; the rest
+  // land round by round, and each landing is handed over: into the running
+  // session if there is one, or as a new session if the learner is waiting.
+  const handOver = (cardIds: readonly string[]): void => {
     const batch = model.batch;
-    if (batch === null) return;
+    if (batch === null || cardIds.length === 0) return;
+    batch.handedIds.push(...cardIds);
+    const fetchItems = () =>
+      requestJson<{ items: readonly PreparedMaterial[] }>(
+        "/api/study/session/review-all",
+        {
+          method: "POST",
+          body: JSON.stringify({ cardIds }),
+        },
+      );
+    if (model.session !== null && model.session.kind === "review") {
+      void fetchItems()
+        .then(({ items }) => {
+          if (model.session === null || model.session.kind !== "review") {
+            if (items.length > 0) beginSession("review", items);
+          } else {
+            model.session = {
+              ...model.session,
+              items: [...model.session.items, ...items],
+            };
+            void store.set(SESSION_KEY, model.session);
+          }
+          draw();
+        })
+        .catch(() => undefined);
+      return;
+    }
+    if (model.presentation !== null) return;
     void run(
       async () => {
-        const { items } = await requestJson<{ items: readonly PreparedMaterial[] }>(
-          "/api/study/session/review-all",
-          { method: "POST", body: JSON.stringify({ cardIds: batch.completedIds }) },
-        );
+        const { items } = await fetchItems();
         if (items.length === 0) {
-          model.batch = null;
-          return "Batch complete: nothing left to review.";
+          if (model.batch?.done === true) {
+            model.batch = null;
+            return "Batch complete: nothing left to review.";
+          }
+          return "Nothing to review yet.";
         }
         beginSession("review", items);
         return "Read the sentence, then check the explanation and mark yourself.";
@@ -733,6 +765,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       )
         .then((progress) => {
           if (model.batch?.id !== batchId) return;
+          const handedIds = model.batch.handedIds;
           model.batch = {
             id: batchId,
             total:
@@ -743,6 +776,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             pending: progress.pending,
             done: progress.done,
             round: progress.round,
+            handedIds,
           };
           if (progress.done) {
             window.clearInterval(poller);
@@ -751,8 +785,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
                 ? `Batch ready: ${progress.completed.length} to review.`
                 : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
             model.messageKind = "success";
-            workThroughBatch();
           }
+          handOver(progress.completed.filter((cardId) => !handedIds.includes(cardId)));
           draw();
         })
         .catch(() => {});
@@ -776,6 +810,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           pending: dispatched.total,
           done: false,
           round: 1,
+          handedIds: [],
         };
         draw();
         pollReviewBatch(dispatched.batchId);
@@ -829,12 +864,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
       },
     );
     const more = advanceSession();
-    if (!more) model.batch = null;
+    const waiting = !more && model.batch !== null && !model.batch.done;
+    if (!more && !waiting) model.batch = null;
     model.message = more
       ? correct
         ? "Review recorded. Next Card."
         : "Marked for sooner. Next Card."
-      : "Batch complete.";
+      : waiting
+        ? "Reviewed everything that has landed so far. The rest are still being prepared and will open as they arrive."
+        : "Batch complete.";
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);
@@ -1055,7 +1093,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
                             : model.batch.round > 1
                               ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Round ${model.batch.round} of 3: the ${model.batch.pending} Cards whose sentences were refused are requested again with the reasons attached.`
-                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go and land together, usually within a minute or two; then each is checked and spoken. Refused sentences get up to two more rounds.`
+                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked and spoken, and reviewing starts as soon as any are ready. Refused sentences get up to two more rounds.`
                         }
                       </p>`
                     : ""
