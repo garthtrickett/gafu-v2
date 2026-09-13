@@ -1068,6 +1068,14 @@ migration and "Mark not known" until they are retired with it.
 
 **Gate:** the journey unchanged; the full required validation passes.
 
+### Patch 2.39 — Backups grow with the database
+
+The backup export refused a database over 128 MiB, and production crossed
+that line once spoken clips were stored beside the material. The cap is a
+memory bound shared by export and restore, not a policy; it is 512 MiB.
+
+**Gate:** the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
