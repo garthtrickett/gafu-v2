@@ -76,7 +76,8 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
       }),
     ).toMatchObject({ ok: true, value: { card: { reviewCount: 1 } } });
 
-    clock.set("2026-09-09T05:00:00.000Z");
+    // Four days on: the Card is due again and support readiness is earned.
+    clock.set("2026-09-12T12:00:00.000Z");
     expect(
       study.answer({
         cardId: target.id,
