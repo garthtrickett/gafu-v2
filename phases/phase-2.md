@@ -956,6 +956,16 @@ reading the sentence.
 journey sees the kind pill on a taught card; the full required validation
 passes.
 
+### Patch 2.30 — Grade by key
+
+`c` and `i` grade a review as Correct or Incorrect, only while its
+explanation is open, alongside `r` to hear the sentence again. The buttons
+show their keys; the accessible names stay "Correct" and "Incorrect".
+Letters typed into a field are never taken as shortcuts.
+
+**Gate:** the journey grades one review by button and one by key; the full
+required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

@@ -635,10 +635,24 @@ export const mountStudyApp = (root: HTMLElement): void => {
       return;
     }
     const target = event.target as Element | null;
-    if (target?.matches("input, button, select, textarea")) return;
-    if (event.key === "r" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    // Typing fields keep their letters; a focused button does not need them.
+    if (target?.matches("input, select, textarea")) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "r") {
       event.preventDefault();
       replayAudio();
+      return;
+    }
+    // Grading by key, only when a review's explanation is open: c and i
+    // mirror the two buttons and nothing else.
+    const grading =
+      model.presentation !== null &&
+      model.presentation.mode === "review" &&
+      model.revealed &&
+      !model.busy;
+    if (grading && (event.key === "c" || event.key === "i")) {
+      event.preventDefault();
+      answer(event.key === "c");
     }
   });
 
@@ -883,8 +897,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                 </div>
                                 <div class="grades" aria-label="Self grade">
                                   <p>Were you right?</p>
-                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)}>Correct</button>
-                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)}>Incorrect</button>
+                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)} aria-keyshortcuts="c" title="Correct (C)">Correct <kbd aria-hidden="true">C</kbd></button>
+                                  <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(false)} aria-keyshortcuts="i" title="Incorrect (I)">Incorrect <kbd aria-hidden="true">I</kbd></button>
                                 </div>`
                               : html`<button type="button" @click=${() => {
                                   model.revealed = true;

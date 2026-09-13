@@ -291,7 +291,12 @@ test("configures a key and teaches before the first generated review", async ({
     await review.getByRole("button", { name: "Explanation" }).click();
     const shown = (await review.getByTestId("material-answer").textContent()) ?? "";
     worked.push(shown.includes("cat") ? "cat" : "bird");
-    await review.getByRole("button", { name: grade, exact: true }).click();
+    // One grade by button, the other by its key.
+    if (grade === "Correct") {
+      await review.getByRole("button", { name: "Correct", exact: true }).click();
+    } else {
+      await page.keyboard.press("i");
+    }
   };
   const progress = page.getByTestId("session-progress");
   await expect(progress).toContainText("Opening the reviews");
