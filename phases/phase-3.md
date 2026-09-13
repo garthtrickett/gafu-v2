@@ -550,6 +550,13 @@ fifths of it understood.
   for rather than computed automatically: tokenising a series takes a while
   and the import itself stays quick.
 
+A Subtitle Set already saved is measured the same way, episode by episode in
+watch order, through `POST /api/preparation/sets/:id/coverage`. It is
+recomputed against the Known Word Bank each time, so an episode's readiness
+rises as its words are learned and the panel says which episodes are ready.
+Sources are reported in the order they were given rather than sorted, so
+watch order survives.
+
 **Gate:** unit tests for the buckets, reading-aware matching, the coverage
 arithmetic, the ranking across files, the per-file figures, and an empty
 import; the full required validation passes.

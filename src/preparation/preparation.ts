@@ -524,6 +524,40 @@ export const openPreparation = (
         }),
       );
     },
+    measureSetCoverage: async (id, vocabulary) => {
+      const set = readSet(database, id);
+      if (!set.ok) return set;
+      try {
+        const rows = database
+          .query(
+            `SELECT e.title AS title, e.episode_order AS episode_order, c.normalized_text AS text
+             FROM subtitle_episode e
+             JOIN subtitle_cue c
+               ON c.subtitle_set_id = e.subtitle_set_id AND c.episode_key = e.episode_key
+             WHERE e.subtitle_set_id = ?
+             ORDER BY e.episode_order, c.cue_order`,
+          )
+          .all(id) as { title: string; episode_order: number; text: string }[];
+        const byEpisode = new Map<string, string[]>();
+        for (const row of rows) {
+          const cues = byEpisode.get(row.title);
+          if (cues === undefined) byEpisode.set(row.title, [row.text]);
+          else cues.push(row.text);
+        }
+        return ok(
+          await measureCoverage({
+            analyzer: dependencies.analyzer,
+            vocabulary,
+            sources: [...byEpisode.entries()].map(([name, cues]) => ({ name, cues })),
+          }),
+        );
+      } catch (cause) {
+        return err({
+          kind: "analysisUnavailable",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    },
     inspectImport: async (input) => {
       const now = safeNow(dependencies.clock);
       if (!now.ok) return now;

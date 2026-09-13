@@ -10,6 +10,7 @@ import type { KnownVocabulary } from "../study/contracts.ts";
  * episode still understands four fifths of what is said. Reporting distinct
  * words instead makes a watchable episode look hopeless.
  */
+/** Sources are reported in the order given, so episodes stay in watch order. */
 export type CoverageSource = Readonly<{ name: string; cues: readonly string[] }>;
 
 export type CoverageWord = Readonly<{
@@ -203,19 +204,17 @@ export const measureCoverage = async (input: {
       coverage,
       words: wordsToReach(ranked, base, runningWords, coverage),
     })),
-    sources: [...perSource.entries()]
-      .map(([name, stats]): CoverageSourceReport => {
-        const own = [...stats.counts.values()]
-          .sort((a, b) => b - a)
-          .map((count) => ({ count }));
-        return {
-          name,
-          runningWords: stats.runningWords,
-          coverage: stats.runningWords === 0 ? 1 : stats.base / stats.runningWords,
-          wordsForTarget: wordsToReach(own, stats.base, stats.runningWords, target),
-        };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    sources: [...perSource.entries()].map(([name, stats]): CoverageSourceReport => {
+      const own = [...stats.counts.values()]
+        .sort((a, b) => b - a)
+        .map((count) => ({ count }));
+      return {
+        name,
+        runningWords: stats.runningWords,
+        coverage: stats.runningWords === 0 ? 1 : stats.base / stats.runningWords,
+        wordsForTarget: wordsToReach(own, stats.base, stats.runningWords, target),
+      };
+    }),
     words: ranked.slice(0, MAXIMUM_WORDS),
   };
 };

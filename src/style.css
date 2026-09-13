@@ -415,6 +415,10 @@ label {
   border-bottom: 1px solid #262c23;
 }
 
+.episode-ready td {
+  color: #cdeaa0;
+}
+
 .coverage-words {
   max-height: 22rem;
   overflow-y: auto;
