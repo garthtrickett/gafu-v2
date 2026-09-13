@@ -1010,6 +1010,22 @@ once everything has landed and been worked through.
 **Gate:** the journey unchanged (under the fake AI the batch lands whole);
 the full required validation passes.
 
+### Patch 2.34 — A lapse is seen again tomorrow
+
+FSRS ran with short-term steps: 1 and 10 minutes for new Cards, 10 minutes
+after a lapse, so an Incorrect brought the Card back within the day. The
+spacing literature puts the useful gap at a fraction of the retention
+interval, days not minutes; the feedback shown with the answer is the repair,
+and same-day re-tests add little that survives to the next day. Short-term
+steps are off (`gafu-parameters-v2`): a first success and a lapse are both
+scheduled by stability, tomorrow at the earliest. Teaching remains the
+separate first exposure before any review. Existing schedules and review
+history are untouched; the new rule applies from the next answer.
+
+**Gate:** scheduler tests for a first success landing in review tomorrow or
+later and a lapse returning after at least a day; the full required
+validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

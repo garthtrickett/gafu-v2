@@ -570,7 +570,9 @@ describe("Study admission and review", () => {
       error: { kind: "presentationAlreadyUsed" },
     });
 
-    clock.set("2026-09-09T07:00:00.000Z");
+    // Four days on: past the first review interval, and long past the
+    // twenty hours the delayed-support rule asks for.
+    clock.set("2026-09-12T12:00:00.000Z");
     const second = study.answer({
       cardId: card.id,
       grade: "good",
