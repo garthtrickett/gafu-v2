@@ -806,3 +806,27 @@ describe("Study persistence and recovery", () => {
     inspection.close();
   });
 });
+
+describe("compacting the database", () => {
+  test("returns the space deleted rows took", () => {
+    const databasePath = join(
+      mkdtempSync(join(tmpdir(), "gafu-compact-")),
+      "gafu.sqlite",
+    );
+    const { study } = openTestStudy({ databasePath });
+    // Fill and empty a scratch table so the file holds free pages.
+    const raw = new Database(databasePath);
+    raw.exec("CREATE TABLE scratch(id INTEGER PRIMARY KEY, blob BLOB)");
+    const insert = raw.query("INSERT INTO scratch(blob) VALUES (?)");
+    for (let index = 0; index < 400; index += 1) insert.run(new Uint8Array(4_096));
+    raw.exec("DELETE FROM scratch");
+    raw.close();
+    const compacted = study.compact();
+    if (!compacted.ok) throw new Error(JSON.stringify(compacted.error));
+    expect(compacted.value.beforeBytes).toBeGreaterThan(1_500_000);
+    expect(compacted.value.afterBytes).toBeLessThan(compacted.value.beforeBytes / 4);
+    // The study still works on the rebuilt file.
+    expect(study.status()).toMatchObject({ ok: true, value: { activeCount: 0 } });
+    study.close();
+  });
+});

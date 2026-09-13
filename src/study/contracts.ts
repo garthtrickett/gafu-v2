@@ -298,6 +298,15 @@ export type Study = Readonly<{
     enabled: boolean,
   ) => Result<KnowledgeSnapshot, StudyFailure>;
   exportBackup: () => Result<StudyBackup, StudyFailure>;
+  /**
+   * Rebuilds the database file so space freed by deleted rows is returned.
+   * Reports the file size before and after. Meant for a quiet moment: it
+   * holds the database while it runs.
+   */
+  compact: () => Result<
+    Readonly<{ beforeBytes: number; afterBytes: number }>,
+    StudyFailure
+  >;
   startPlan: (command: StartPlan) => Result<PlanSnapshot, StudyFailure>;
   listPlans: () => Result<readonly PlanSummary[], StudyFailure>;
   plan: (id: PlanId) => Result<PlanSnapshot, StudyFailure>;

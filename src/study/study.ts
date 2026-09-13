@@ -1255,6 +1255,29 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
+  const fileBytes = (): number => {
+    const pages = (database.query("PRAGMA page_count").get() as { page_count: number })
+      .page_count;
+    const size = (database.query("PRAGMA page_size").get() as { page_size: number })
+      .page_size;
+    return pages * size;
+  };
+
+  const compact = (): Result<
+    Readonly<{ beforeBytes: number; afterBytes: number }>,
+    StudyFailure
+  > => {
+    try {
+      database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      const beforeBytes = fileBytes();
+      database.exec("VACUUM");
+      database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      return ok({ beforeBytes, afterBytes: fileBytes() });
+    } catch (cause) {
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
   const exportBackup = (): Result<StudyBackup, StudyFailure> => {
     const now = safeNow(dependencies.clock);
     if (!now.ok) return now;
@@ -1298,6 +1321,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     setPreferences,
     setBaselineWordEnabled,
     exportBackup,
+    compact,
     startPlan: planOperations.startPlan,
     listPlans: planOperations.listPlans,
     plan: planOperations.plan,

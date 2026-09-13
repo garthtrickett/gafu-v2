@@ -244,6 +244,12 @@ export type LearningMaterial = Readonly<{
    * advances one card (banking reserves, never taking), so progress is
    * client-pumped and resumable with no daemon.
    */
+  /**
+   * Removes batches with nothing pending whose last change is older than the
+   * given age. Beginning a batch does this with an hour's grace; maintenance
+   * may do it at once.
+   */
+  purgeFinishedBatches: (olderThanMs: number) => Result<number, MaterialFailure>;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
   ) => Result<string, MaterialFailure>;

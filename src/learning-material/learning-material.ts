@@ -824,6 +824,44 @@ export const openLearningMaterial = (
   };
   type BatchInput = { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
 
+  /** Deletes every batch with nothing pending and no change since the cutoff. */
+  const deleteFinishedBatches = (now: Date, olderThanMs: number): number => {
+    const cutoff = new Date(now.getTime() - olderThanMs).toISOString();
+    const finished = (
+      database
+        .query(
+          `SELECT batch_id FROM review_batch_item
+           GROUP BY batch_id
+           HAVING sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) = 0
+              AND max(updated_at) < ?`,
+        )
+        .all(cutoff) as { batch_id: string }[]
+    ).map((row) => row.batch_id);
+    for (const old of finished) {
+      database.query("DELETE FROM review_batch_item WHERE batch_id = ?").run(old);
+      database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(old);
+      database.query("DELETE FROM review_batch WHERE batch_id = ?").run(old);
+    }
+    return finished.length;
+  };
+
+  const purgeFinishedBatches: LearningMaterial["purgeFinishedBatches"] = (
+    olderThanMs,
+  ) => {
+    const now = safeNow(options.clock);
+    if (!now.ok) return now;
+    try {
+      let removed = 0;
+      const apply = database.transaction(() => {
+        removed = deleteFinishedBatches(now.value, olderThanMs);
+      });
+      apply.immediate();
+      return ok(removed);
+    } catch (cause) {
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
   /**
    * The knowledge a batch was begun with: from the batch row, or, for items
    * written before it existed, from the copy inside the item itself.
@@ -1090,24 +1128,7 @@ export const openLearningMaterial = (
         const insert = database.transaction(() => {
           // Housekeeping: a batch finished more than an hour ago has been
           // worked through or abandoned; its rows only take space.
-          const cutoff = new Date(
-            observedAt.value.getTime() - 60 * 60 * 1_000,
-          ).toISOString();
-          const finished = (
-            database
-              .query(
-                `SELECT batch_id FROM review_batch_item
-                 GROUP BY batch_id
-                 HAVING sum(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) = 0
-                    AND max(updated_at) < ?`,
-              )
-              .all(cutoff) as { batch_id: string }[]
-          ).map((row) => row.batch_id);
-          for (const old of finished) {
-            database.query("DELETE FROM review_batch_item WHERE batch_id = ?").run(old);
-            database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(old);
-            database.query("DELETE FROM review_batch WHERE batch_id = ?").run(old);
-          }
+          deleteFinishedBatches(observedAt.value, 60 * 60 * 1_000);
           if (first !== undefined) {
             database
               .query(
@@ -1298,6 +1319,7 @@ export const openLearningMaterial = (
     presentationAudio,
     canTeach,
     teachingFlags,
+    purgeFinishedBatches,
     permitVerifier,
     close: () => database.close(),
   });
