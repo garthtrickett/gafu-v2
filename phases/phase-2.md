@@ -1058,6 +1058,16 @@ leaned on, the identity check it missed, or the provider failure kind.
 **Gate:** batch tests see the reasons on a dropped Card; the full required
 validation passes.
 
+### Patch 2.37 — The known tile goes
+
+The `known` state is a retirement nothing enters any more, and its tile shared
+a word with support readiness, the flag that actually decides which language
+generated sentences may lean on. The tile is gone; the row is staged, not due
+yet, to learn, to review. The state itself remains in the data model for the
+migration and "Mark not known" until they are retired with it.
+
+**Gate:** the journey unchanged; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

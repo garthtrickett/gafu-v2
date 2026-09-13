@@ -264,7 +264,7 @@ label {
 }
 
 .metrics--study {
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .metrics article {
