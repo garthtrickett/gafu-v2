@@ -2,7 +2,7 @@ import type { JapaneseAnalyzer } from "../analysis/contracts.ts";
 import type { GrammarDetector } from "../learning-material/contracts.ts";
 import type { PlanDraft } from "../preparation-plan-contracts.ts";
 import type { Result } from "../result.ts";
-import type { StudyPreparationSnapshot } from "../study/contracts.ts";
+import type { KnownVocabulary, StudyPreparationSnapshot } from "../study/contracts.ts";
 import type {
   AnalysisManifest,
   BatchFailure,
@@ -11,6 +11,7 @@ import type {
   ProviderIdentity,
   ProviderUsage,
 } from "./batching-contracts.ts";
+import type { CoverageReport } from "./coverage.ts";
 import type {
   CommitImport,
   ImportFailure,
@@ -157,6 +158,15 @@ export type PreparationFailure =
   | { readonly kind: "batchFailure"; readonly failure: BatchFailure };
 
 export type Preparation = Readonly<{
+  /**
+   * What fraction of the words in a pending import the learner already knows,
+   * and which unknown words buy the most coverage. Reads the import that was
+   * just inspected; commits nothing.
+   */
+  measureCoverage: (
+    pendingImportToken: string,
+    vocabulary: readonly KnownVocabulary[],
+  ) => Promise<Result<CoverageReport, PreparationFailure>>;
   inspectImport: (
     input: ImportInput,
   ) => Promise<Result<ImportReport, PreparationFailure>>;
