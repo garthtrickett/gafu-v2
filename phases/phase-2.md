@@ -1201,6 +1201,32 @@ came from, and every sentence is built from words the learner already knows.
 **Gate:** the journey unchanged, since the fake AI banks both modes; the
 full required validation passes.
 
+### Patch 2.47 — The batch serves what it prepared
+
+Patch 2.46 taught the batch to prepare first exposures, but nothing
+downstream expected them. Preparing a batch with more untaught Cards than a
+batch holds took the untaught ones first and crowded the reviews out
+entirely, and the serve then asked only for review reserves, so the first
+exposures it had just banked were never handed over. The learner pressed
+Prepare batch with thirteen Cards to review and twenty to learn and was told
+nothing was left to review.
+
+Reviews now lead, both in what a batch takes and in the order it is served:
+a review is scheduled and decays while it waits, where a Card not yet met
+waits at no cost. The serve asks each Card which mode it wants, by the same
+rule the batch used, and hands over whichever reserve was banked.
+
+Two things the mixed session exposed follow from it. A landing that arrives
+while an earlier one is still in flight now resolves against the session as
+it is when the fetch returns, so a landing bringing nothing can no longer
+close a batch the learner is still working through. And a session that runs
+out on a first exposure ends the same way as one that runs out on a review:
+the ending is read from the session, which is restored from the device, and
+not from the batch, which a reload forgets.
+
+**Gate:** the journey works through a session mixing both modes and sees it
+reported complete; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
