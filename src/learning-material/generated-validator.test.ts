@@ -198,3 +198,100 @@ describe("English fields read as English", () => {
     expect(readsAsEnglish("")).toBe(false);
   });
 });
+
+describe("an inflected target is still the target", () => {
+  // The Card that found this: every generated review was refused because the
+  // sentence conjugated the verb, which is what a sentence does with a verb.
+  const verb: CardSummary = {
+    ...card,
+    id: asCardId("kikidasu"),
+    content: {
+      lemma: "聞き出す",
+      reading: "ききだす",
+      partOfSpeech: "verb",
+      meaning: "to draw information out of someone",
+      usageNotes: "",
+    },
+    schedulePhase: "review",
+    reviewCount: 1,
+  };
+  const known = (
+    lemma: string,
+    reading: string,
+  ): KnowledgeSnapshot["vocabulary"][number] => ({
+    key: `baseline:${lemma}`,
+    baselineKey: lemma,
+    lemma,
+    reading,
+    partOfSpeech: "noun",
+    meaning: lemma,
+    source: "baseline",
+    senseIds: [],
+  });
+  const verbKnowledge: KnowledgeSnapshot = {
+    ...knowledge,
+    vocabulary: [known("先生", "せんせい"), known("理由", "りゆう")],
+    grammar: [
+      { cardId: asCardId("background-wa"), canonicalForm: "は" },
+      { cardId: asCardId("background-wo"), canonicalForm: "を" },
+      { cardId: asCardId("background-ta-ru"), canonicalForm: "〜た (る)" },
+      { cardId: asCardId("background-ta-u"), canonicalForm: "〜た (う)" },
+      { cardId: asCardId("background-masu"), canonicalForm: "〜ます" },
+    ],
+  };
+  const material = (japanese: string, surface: string): GeneratedMaterial => ({
+    ...valid,
+    mode: "review",
+    targetKind: "vocabulary",
+    target: {
+      lemma: "聞き出す",
+      reading: "ききだす",
+      partOfSpeech: "verb",
+      meaning: "to draw information out of someone",
+    },
+    japanese,
+    targetSurface: surface,
+    targetSpan: {
+      ...valid.targetSpan,
+      start: japanese.indexOf(surface),
+      end: japanese.indexOf(surface) + surface.length,
+    },
+    readingSegments: [{ written: japanese, reading: "" }],
+    answer: "The teacher drew the reason out of them.",
+    explanation: "The marked verb means to draw information out of someone.",
+    usageNote: "Used when someone gets information out of another person.",
+  });
+
+  test.each([
+    ["the dictionary form", "先生は理由を聞き出す。", "聞き出す"],
+    // The span may cover the word as it is written, inflection and all: the
+    // tail is grammar, and it is checked as grammar.
+    ["a whole inflected form", "先生は理由を聞き出した。", "聞き出した"],
+    ["a whole polite form", "先生は理由を聞き出します。", "聞き出します"],
+    // Or it may cover only the stem the analyzer calls the verb.
+    ["an inflected stem", "先生は理由を聞き出した。", "聞き出し"],
+  ] as const)("accepts %s", async (_name, japanese, surface) => {
+    expect(
+      await validate({
+        value: material(japanese, surface),
+        mode: "review",
+        card: verb,
+        knowledge: verbKnowledge,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test("the target is never counted as a word the learner does not know", async () => {
+    const refused = await validate({
+      value: material("先生は理由を聞き出した。", "聞き出した"),
+      mode: "review",
+      card: verb,
+      knowledge: { ...verbKnowledge, vocabulary: [] },
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    const reasons =
+      refused.error.kind === "validationRejected" ? refused.error.reasons : [];
+    expect(reasons.join(" ")).not.toContain("聞き出");
+  });
+});

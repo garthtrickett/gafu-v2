@@ -1243,6 +1243,37 @@ and the advice is now to prepare a batch, which is what writes them.
 **Gate:** the journey sees the named-Card message; the full required
 validation passes.
 
+### Patch 2.49 — An inflected target is still the target
+
+A Vocabulary Card whose target was a verb could not be reviewed. Every
+generated sentence was refused as the wrong target identity, and the target
+word itself was then counted among the words the learner does not know, so
+the batch failed the Card round after round and left it due.
+
+Two causes, both in how a token was matched against the Card. Kuromoji reads
+the surface, so an inflected word reads as it is written — 聞き出し is
+ききだし, never ききだす — and comparing that against the Card's reading
+rejected every form but the dictionary one. And a conjugated word is one word
+to a learner and several tokens to the analyzer, so a span over 聞き出した
+tiled as 聞き出し|た and the joined lemma could never equal the Card's.
+
+The reading is now taken from the token's dictionary form, derived by
+swapping the surface's kana tail for the lemma's. Deriving it rather than
+reading the lemma afresh keeps homographs apart: 開いた reads ひらい or あい
+and yields ひらく or あく, where a second lookup would collapse both. The
+irregular verbs, whose stem shares no writing with their dictionary form,
+derive nothing and keep the old comparison rather than a wrong guess.
+
+A span may now cover the target as it is written, inflection and all, or the
+stem alone. The tail may only be the parts of speech that carry no
+vocabulary of their own — the same set the policy already calls transparent
+— so no second content word can hide inside a target span, and the
+inflection itself is still checked as grammar.
+
+**Gate:** a verb Card validates in its dictionary form, its plain and polite
+inflected forms, and with the span on the stem alone; the target is never
+reported as unknown vocabulary; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
