@@ -433,6 +433,12 @@ const handleApi = async (
     if (!knowledge.ok) return failureResponse(knowledge.error);
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
+    // Nothing untaught is due at all, which is a different thing from untaught
+    // Cards whose first exposure has not been written yet. Saying which it is
+    // lets the browser give the advice that applies.
+    if (split.value.untaught.length === 0) {
+      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
+    }
     const prepared = await Promise.all(
       split.value.untaught.map((item) =>
         material.prepare({ card: item.card, knowledge: knowledge.value }),

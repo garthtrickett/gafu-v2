@@ -661,8 +661,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * duplicate text. A segment whose reading is its own writing is kana already
    * and takes no ruby: putting が over が is noise that pushes the line apart.
    */
-  // Names the due Cards Learn walked past, so the fix is a specific sentence
-  // to author rather than a hunt through the bank.
+  // Names the due Cards Learn walked past, so the fix is a named batch to
+  // prepare rather than a hunt through the bank.
   const untaughtMessage = (): string => {
     const now = model.snapshot?.status.observedAt ?? "";
     const names = (model.snapshot?.cards ?? [])
@@ -676,8 +676,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
       )
       .map(cardTitle);
     return names.length === 0
-      ? "Nothing left to learn has teaching yet. Import sentences with the cards CLI."
-      : `No teaching yet for ${names.join(", ")}. Import sentences for them with the cards CLI.`;
+      ? "Nothing left to learn has a first exposure yet. Prepare batch writes them."
+      : `No first exposure yet for ${names.join(", ")}. Prepare batch writes them.`;
   };
 
   const startLearn = (): void => {
@@ -690,8 +690,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
             { method: "POST" },
           ));
         } catch (cause) {
-          // New Cards show only what the import stored. Anything else is an
-          // onboarding gap, not something retrying will fix.
+          // Learn shows what has already been prepared, so both refusals are
+          // about preparation rather than anything retrying will fix: either
+          // no new Card is due, or the due ones have no first exposure yet.
+          if (cause instanceof Error && cause.message === "nothingDue") {
+            throw new Error(
+              "Nothing is due to learn right now. Staged Cards are admitted under your daily limit.",
+            );
+          }
           if (cause instanceof Error && cause.message === "teachingNotPrepared") {
             // The names come from the bank listing, which admission may have
             // just changed; read it fresh before saying which Cards.
