@@ -1178,6 +1178,29 @@ is unchanged.
 way, a copula lemma, and non-matches across parts of speech and to a
 different word; the full required validation passes.
 
+### Patch 2.46 — The batch prepares first exposures too
+
+A Card with no stored teaching could never be learned: Learn skipped it and
+said so, and the only way to give it one was the cards CLI with a sentence
+written by hand. Preparing a series that way meant writing hundreds of
+sentences before the first episode.
+
+Teaching is now prepared the way a review is. The batch asks each due Card
+which mode it wants — a first exposure while it is new and unseen, a review
+once taught — and generates, validates, banks and speaks whichever it is.
+One rule decides the mode, shared by the batch and the serve, so what is
+banked is what the serve takes. Untaught Cards are batched first, because a
+Card cannot be reviewed before it has been taught.
+
+Patch 2.11's review-only batch and the authored-teaching requirement are
+superseded for ordinary use. The cards CLI may still carry an `example` and
+that sentence is still validated the same way; it is no longer the only
+path. What has not changed: a sentence is never taken from the media a Card
+came from, and every sentence is built from words the learner already knows.
+
+**Gate:** the journey unchanged, since the fake AI banks both modes; the
+full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

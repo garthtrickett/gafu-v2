@@ -263,12 +263,11 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(page.getByTestId("tile-learn")).toBeVisible();
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toBeVisible();
 
-  // The review session dispatches one batch through the UI and pumps it to
-  // done; work-through then serves from banked reserves on its own. A ready
-  // batch is the review session: the first Card is served without another
-  // press, and the second is already in hand after the grade. The serve is
-  // held, with the hold armed before dispatch, so the waiting state can be
-  // seen and named.
+  // One batch prepares everything due, each Card in the mode it wants: a
+  // first exposure for the background grammar nothing has taught yet, a
+  // review for the pair already taught. Work-through then serves the banked
+  // reviews on its own; the serve is held, with the hold armed before
+  // dispatch, so the waiting state can be seen and named.
   let releaseFirst = (): void => {};
   const firstGate = new Promise<void>((resolve) => {
     releaseFirst = resolve;
@@ -277,8 +276,8 @@ test("configures a key and teaches before the first generated review", async ({
     await firstGate;
     await route.continue();
   });
-  await review.getByRole("button", { name: "Review batch" }).click();
-  await expect(review.getByTestId("batch-progress")).toContainText("Batch ready: 2", {
+  await review.getByRole("button", { name: "Prepare batch" }).click();
+  await expect(review.getByTestId("batch-progress")).toContainText("Batch ready:", {
     timeout: 30_000,
   });
 
@@ -291,6 +290,8 @@ test("configures a key and teaches before the first generated review", async ({
   // and the grade is sent when the network returns.
   const worked: string[] = [];
   const reviewOne = async (grade: "Correct" | "Incorrect"): Promise<void> => {
+    // Keep grading until one of the pair comes up: the batch also prepared
+    // first exposures for background Cards, and those are not reviews.
     await expect(review.getByText("review", { exact: true })).toBeVisible({
       timeout: 20_000,
     });

@@ -507,9 +507,14 @@ const handleApi = async (
     if (!queue.ok) return failureResponse(queue.error);
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) return failureResponse(knowledge.error);
+    // Every due Card, whichever it wants: a first exposure while it is new
+    // and unseen, a review once taught. Nothing is taken from the media the
+    // Card came from; every sentence is generated from what the learner
+    // already knows. Untaught Cards go first, because a Card cannot be
+    // reviewed before it has been taught.
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    const batch = split.value.review.slice(0, size);
+    const batch = [...split.value.untaught, ...split.value.review].slice(0, size);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Dispatch records the batch and returns. Generation happens one card
