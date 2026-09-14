@@ -1227,6 +1227,22 @@ not from the batch, which a reload forgets.
 **Gate:** the journey works through a session mixing both modes and sees it
 reported complete; the full required validation passes.
 
+### Patch 2.48 — Learn says which gap it hit
+
+Learn answered two different situations with one message, and that message
+gave advice Patch 2.46 had already superseded: it told the learner to import
+sentences with the cards CLI. With nothing at all due to learn it said the
+same thing, so a learner whose daily limit was already spent was told their
+Cards had no teaching.
+
+The two are now distinguished. No untaught Card due is reported as nothing
+due, and Learn says so and names the daily limit as what admits more. Due
+Cards whose first exposure has not been written are still named one by one,
+and the advice is now to prepare a batch, which is what writes them.
+
+**Gate:** the journey sees the named-Card message; the full required
+validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
