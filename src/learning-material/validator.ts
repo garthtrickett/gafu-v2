@@ -1,6 +1,6 @@
-import type { AnalyzedToken } from "../analysis/contracts.ts";
+import type { AnalyzedToken, BroadPartOfSpeech } from "../analysis/contracts.ts";
 import { classifyKnownVocabulary } from "../analysis/known-vocabulary.ts";
-import { normalizeJapanese } from "../analysis/normalization.ts";
+import { dictionaryFormReading, normalizeJapanese } from "../analysis/normalization.ts";
 import { err, ok } from "../result.ts";
 import type {
   DecodedPresentation,
@@ -48,6 +48,33 @@ const grammarContainsTarget = (
  */
 export const adjectiveLemma = (lemma: string): string =>
   lemma.length > 1 && lemma.endsWith("だ") ? lemma.slice(0, -1) : lemma;
+
+/**
+ * Whether one token is the target word, in any form it may take.
+ *
+ * The lemma settles the writing, but the reading must settle the word: 開く
+ * is ひらく or あく and only the reading tells them apart. Kuromoji reads the
+ * surface, so an inflected target reads as it is written — 聞き出し is
+ * ききだし — and comparing that against the Card's ききだす rejected every
+ * conjugated form. The dictionary-form reading is compared instead, with the
+ * surface reading still accepted so that anything matching before matches
+ * now, and irregular verbs, whose dictionary form cannot be derived, keep
+ * the old behaviour rather than a wrong derivation.
+ */
+export const isTargetToken = (
+  token: AnalyzedToken,
+  target: Readonly<{ lemma: string; reading: string; partOfSpeech: BroadPartOfSpeech }>,
+): boolean => {
+  const lemma =
+    token.broadPartOfSpeech === "adjective" ? adjectiveLemma(token.lemma) : token.lemma;
+  if (lemma !== target.lemma) return false;
+  if (token.broadPartOfSpeech !== target.partOfSpeech) return false;
+  const surfaceReading = token.reading ?? token.surface;
+  const wanted = normalizeReading(target.reading);
+  if (normalizeReading(surfaceReading) === wanted) return true;
+  const dictionary = dictionaryFormReading(token.surface, surfaceReading, lemma);
+  return dictionary !== null && normalizeReading(dictionary) === wanted;
+};
 
 /**
  * Token sequences tiling the target span exactly: first starts where the
@@ -134,6 +161,27 @@ export const createLearningMaterialValidator = (
         reasons.push({ kind: "targetAbsent" });
       } else {
         const matching = covering.find((tiling) => {
+          const head = tiling[0];
+          // A conjugated target is one word to a learner and several tokens
+          // to the analyzer: 聞き出した tiles as 聞き出し|た. The head carries
+          // the word and the rest is its inflection, which is grammar and is
+          // checked as grammar, so a span over the whole inflected form is
+          // the target. Nothing is smuggled in: the tail may only be the
+          // parts of speech that carry no vocabulary of their own.
+          if (head !== undefined && isTargetToken(head, target)) {
+            return tiling
+              .slice(1)
+              .every((token) =>
+                dependencies.policy.transparentPartOfSpeech.has(
+                  token.broadPartOfSpeech,
+                ),
+              );
+          }
+          // A compound target is the other shape: no single token is the
+          // word, and the parts join to make it. It has no one part of
+          // speech (間が悪い tiles noun, particle, adjective), so the joined
+          // lemma and reading are the whole identity claim.
+          if (tiling.length === 1) return false;
           const lemma = tiling
             .map((token) =>
               // A trailing だ on an adjective part is the copula the
@@ -144,25 +192,13 @@ export const createLearningMaterialValidator = (
                 : token.lemma,
             )
             .join("");
+          if (lemma !== target.lemma) return false;
+          // Readings are phonological, so a compound matches across kana
+          // variants (モテる tiled as モテ|る).
           const reading = tiling
             .map((token) => token.reading ?? token.surface)
             .join("");
-          if (lemma !== target.lemma) return false;
-          // Readings are phonological: a compound tiling matches across kana
-          // variants (モテる tiled as モテ|る), while one token keeps the old
-          // exact comparison.
-          const readingMatches =
-            tiling.length === 1
-              ? reading === target.reading
-              : normalizeReading(reading) === normalizeReading(target.reading);
-          if (!readingMatches) return false;
-          // One token keeps the old part-of-speech check. A compound has no
-          // single part of speech across its parts (間が悪い tiles noun,
-          // particle, adjective), so its concatenated lemma and reading are
-          // the whole identity claim.
-          if (tiling.length !== 1) return true;
-          const only = tiling[0];
-          return only !== undefined && only.broadPartOfSpeech === target.partOfSpeech;
+          return normalizeReading(reading) === normalizeReading(target.reading);
         });
         if (matching === undefined) {
           reasons.push({ kind: "wrongTargetIdentity" });

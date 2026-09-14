@@ -12,8 +12,8 @@ import type {
 } from "./generated-contracts.ts";
 import { decodeGeneratedMaterial, parseBroadPartOfSpeech } from "./generated-decode.ts";
 import {
-  adjectiveLemma,
   createLearningMaterialValidator,
+  isTargetToken,
   normalizeReading,
 } from "./validator.ts";
 
@@ -171,13 +171,12 @@ export const createGeneratedMaterialValidator = (
     const scopedValidator = createLearningMaterialValidator({
       ...dependencies,
       senses: {
+        // The Card's own sense is what the target token means here, in every
+        // form the target takes. Reading the surface alone missed the
+        // inflected ones, and a target the resolver did not recognise was
+        // then counted as a word the learner does not know.
         resolve: (token) =>
-          target.kind === "vocabulary" &&
-          (target.partOfSpeech === "adjective"
-            ? adjectiveLemma(token.lemma)
-            : token.lemma) === target.lemma &&
-          normalizeReading(token.reading ?? "") === target.reading &&
-          token.broadPartOfSpeech === target.partOfSpeech
+          target.kind === "vocabulary" && isTargetToken(token, target)
             ? [targetSense]
             : dependencies.senses.resolve(token, decoded.value.japanese),
       },
