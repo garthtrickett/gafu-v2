@@ -830,9 +830,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
         };
         draw();
         pollReviewBatch(dispatched.batchId);
-        return `Review batch started for ${dispatched.total} Cards.`;
+        return `Batch started for ${dispatched.total} Cards.`;
       },
-      { label: "Starting a review batch…" },
+      { label: "Starting a batch…" },
       "status",
     );
   };
@@ -1117,7 +1117,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     <h2>Study</h2>
                     ${
                       model.presentation === null
-                        ? html`<p class="review-help">Learn shows the next untaught Card from its stored teaching. Review batch prepares fresh sentences for your due reviews, then works through them. Staged Cards are admitted under your daily limit.</p>`
+                        ? html`<p class="review-help">Prepare batch writes a fresh sentence for everything due: a first exposure for a new Card, a review for one already taught. Nothing comes from the media a Card came from; every sentence is built from words you already know. Learn shows the next prepared first exposure. Staged Cards are admitted under your daily limit.</p>`
                         : ""
                     }
                   </div>
@@ -1128,7 +1128,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             Learn new
                           </button>
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
-                            Review batch
+                            Prepare batch
                           </button>
                         </div>`
                       : ""
@@ -1169,7 +1169,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
                             : model.batch.round > 1
                               ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Round ${model.batch.round} of 3: the ${model.batch.pending} Cards whose sentences were refused are requested again with the reasons attached.`
-                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Fresh sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked and spoken, and reviewing starts as soon as any are ready. Refused sentences get up to two more rounds.`
+                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked and spoken, and studying starts as soon as any are ready. Refused sentences get up to two more rounds.`
                         }
                       </p>`
                     : ""

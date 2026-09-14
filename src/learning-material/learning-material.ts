@@ -792,11 +792,21 @@ export const openLearningMaterial = (
       : err({ kind: "noValidCandidate" });
   };
 
-  const prepare: LearningMaterial["prepare"] = async (input) => {
-    const taught = hasTeaching(input.card.id);
+  /**
+   * Which mode a Card wants: a first exposure while it is new and unseen,
+   * a review once its teaching has been acknowledged. The batch asks the
+   * same question, so what it banks is what the serve will take.
+   */
+  const modeFor = (card: CardSummary): Result<"teach" | "review", MaterialFailure> => {
+    const taught = hasTeaching(card.id);
     if (!taught.ok) return taught;
-    const mode =
-      input.card.schedulePhase === "new" && !taught.value ? "teach" : "review";
+    return ok(card.schedulePhase === "new" && !taught.value ? "teach" : "review");
+  };
+
+  const prepare: LearningMaterial["prepare"] = async (input) => {
+    const wanted = modeFor(input.card);
+    if (!wanted.ok) return wanted;
+    const mode = wanted.value;
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
@@ -975,12 +985,19 @@ export const openLearningMaterial = (
     };
 
     if (job === null) {
-      // Cards that already hold a review reserve need no generation.
-      const targets: { item: PendingItem; input: BatchInput }[] = [];
+      // A Card that already holds a reserve in the mode it wants needs no
+      // generation; the rest are asked for together.
+      const targets: {
+        item: PendingItem;
+        input: BatchInput;
+        mode: "teach" | "review";
+      }[] = [];
       for (const item of pending) {
         const input = inputs.get(item.seq);
         if (input === undefined) continue;
-        const reserve = hasReserve(item.card_id, "review");
+        const wanted = modeFor(input.card);
+        if (!wanted.ok) return wanted;
+        const reserve = hasReserve(item.card_id, wanted.value);
         if (!reserve.ok) return reserve;
         if (reserve.value) {
           try {
@@ -990,7 +1007,7 @@ export const openLearningMaterial = (
           }
           continue;
         }
-        targets.push({ item, input });
+        targets.push({ item, input, mode: wanted.value });
       }
       const first = targets[0];
       if (first === undefined) return ok(undefined);
@@ -1010,7 +1027,7 @@ export const openLearningMaterial = (
           previousRejections = [];
         }
         batchTargets.push({
-          mode: "review" as const,
+          mode: target.mode,
           card: target.input.card,
           recentJapanese: recent.value,
           previousRejections,
@@ -1043,9 +1060,12 @@ export const openLearningMaterial = (
       let status: "ready" | "failed" = "failed";
       let failureKind: string | null = "noValidCandidate";
       const hints: string[] = [];
+      const wanted = input === undefined ? null : modeFor(input.card);
+      if (wanted !== null && !wanted.ok) return wanted;
+      const itemMode = wanted === null ? "review" : wanted.value;
       if (input !== undefined && candidates !== undefined) {
         for (const value of candidates) {
-          const validated = await options.validate({ ...input, value, mode: "review" });
+          const validated = await options.validate({ ...input, value, mode: itemMode });
           if (!validated.ok) {
             failureKind = validated.error.kind;
             if (validated.error.kind === "validationRejected")
@@ -1054,7 +1074,7 @@ export const openLearningMaterial = (
           }
           const saved = storeCandidate(
             item.card_id,
-            "review",
+            itemMode,
             validated.value,
             observedAt.value,
           );
