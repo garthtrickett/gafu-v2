@@ -450,9 +450,10 @@ const handleApi = async (
     return Response.json({ items });
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/review-all") {
-    // The whole review session at once, for the Cards a finished batch
-    // banked. Only banked reserves are served: nothing is generated here, so
-    // a Card that lost its reserve is simply left out and stays due.
+    // The whole session at once, for the Cards a batch banked, each in the
+    // mode it wants: a first exposure for a new Card, a review for one
+    // already taught. Only banked reserves are served; nothing is generated
+    // here, so a Card that lost its reserve is left out and stays due.
     const body = await readJson(request);
     if (body instanceof Response) return body;
     if (
@@ -471,12 +472,20 @@ const handleApi = async (
     const cards = queue.value.due
       .filter((item) => wanted.has(item.card.id))
       .map((item) => item.card);
+    // Reviews lead, for the reason the batch picks them first: a review is
+    // scheduled and decays while it waits, where a first exposure does not.
     const banked: CardSummary[] = [];
+    const first: CardSummary[] = [];
     for (const card of cards) {
-      const reserve = material.hasReserve(card.id, "review");
+      const taught = material.hasTeaching(card.id);
+      if (!taught.ok) return materialResponse(taught);
+      const teaching = wantsTeaching(card, taught.value);
+      const reserve = material.hasReserve(card.id, teaching ? "teach" : "review");
       if (!reserve.ok) return materialResponse(reserve);
-      if (reserve.value) banked.push(card);
+      if (!reserve.value) continue;
+      (teaching ? first : banked).push(card);
     }
+    banked.push(...first);
     const prepared = await Promise.all(
       banked.map((card) => material.prepare({ card, knowledge: knowledge.value })),
     );
@@ -510,11 +519,13 @@ const handleApi = async (
     // Every due Card, whichever it wants: a first exposure while it is new
     // and unseen, a review once taught. Nothing is taken from the media the
     // Card came from; every sentence is generated from what the learner
-    // already knows. Untaught Cards go first, because a Card cannot be
-    // reviewed before it has been taught.
+    // already knows. Reviews come first because they are scheduled and a
+    // missed one decays, where a new Card waits without cost; with more
+    // untaught Cards than a batch holds, taking those first starved the
+    // reviews completely.
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    const batch = [...split.value.untaught, ...split.value.review].slice(0, size);
+    const batch = [...split.value.review, ...split.value.untaught].slice(0, size);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Dispatch records the batch and returns. Generation happens one card

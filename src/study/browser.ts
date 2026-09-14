@@ -715,10 +715,41 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // Cards that already held a reserve are ready on the first poll; the rest
   // land round by round, and each landing is handed over: into the running
   // session if there is one, or as a new session if the learner is waiting.
+  // What a landing does with what it fetched, decided when the fetch comes
+  // back rather than when it was sent: rounds land while an earlier one is
+  // still in flight, so the session may have started in between. A landing
+  // that brings nothing ends the batch only when there is no session left
+  // to finish it; otherwise the learner is still working and the batch is
+  // theirs to complete. Returns null when there is nothing to announce.
+  const absorb = (items: readonly PreparedMaterial[]): string | null => {
+    if (model.session !== null && model.session.kind === "review") {
+      if (items.length === 0) return null;
+      model.session = {
+        ...model.session,
+        items: [...model.session.items, ...items],
+      };
+      void store.set(SESSION_KEY, model.session);
+      return null;
+    }
+    if (items.length === 0) {
+      if (model.batch?.done === true) {
+        model.batch = null;
+        return "Batch complete: nothing prepared is still due.";
+      }
+      return "Nothing prepared yet.";
+    }
+    beginSession("review", items);
+    return "Read the sentence, then check the explanation and mark yourself.";
+  };
+
   const handOver = (cardIds: readonly string[]): void => {
     const batch = model.batch;
     if (batch === null || cardIds.length === 0) return;
     batch.handedIds.push(...cardIds);
+    const live = model.session !== null && model.session.kind === "review";
+    // Mid-teaching, or mid-anything that is not a review session: leave the
+    // learner alone. The reserves stay banked and open on the next press.
+    if (!live && model.presentation !== null) return;
     const fetchItems = () =>
       requestJson<{ items: readonly PreparedMaterial[] }>(
         "/api/study/session/review-all",
@@ -727,38 +758,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
           body: JSON.stringify({ cardIds }),
         },
       );
-    if (model.session !== null && model.session.kind === "review") {
+    if (live) {
       void fetchItems()
         .then(({ items }) => {
-          if (model.session === null || model.session.kind !== "review") {
-            if (items.length > 0) beginSession("review", items);
-          } else {
-            model.session = {
-              ...model.session,
-              items: [...model.session.items, ...items],
-            };
-            void store.set(SESSION_KEY, model.session);
-          }
+          absorb(items);
           draw();
         })
         .catch(() => undefined);
       return;
     }
-    if (model.presentation !== null) return;
     void run(
-      async () => {
-        const { items } = await fetchItems();
-        if (items.length === 0) {
-          if (model.batch?.done === true) {
-            model.batch = null;
-            return "Batch complete: nothing left to review.";
-          }
-          return "Nothing to review yet.";
-        }
-        beginSession("review", items);
-        return "Read the sentence, then check the explanation and mark yourself.";
-      },
-      { label: "Opening the reviews…" },
+      async () =>
+        absorb((await fetchItems()).items) ??
+        "Read the sentence, then check the explanation and mark yourself.",
+      { label: "Opening the prepared Cards…" },
       "status",
     );
   };
@@ -837,6 +850,19 @@ export const mountStudyApp = (root: HTMLElement): void => {
     );
   };
 
+  // Running out of Cards ends the session, however its last Card was
+  // answered. What to say comes from the session rather than the batch,
+  // because a batch is held in memory and a reload loses it while the
+  // session itself is restored from the device; only a batch still known to
+  // be producing changes the ending, and then only to say so.
+  const endOfSession = (kind: "learn" | "review" | null, alone: string): string => {
+    if (model.batch !== null && !model.batch.done) {
+      return "Reviewed everything that has landed so far. The rest are still being prepared and will open as they arrive.";
+    }
+    model.batch = null;
+    return kind === "review" ? "Batch complete." : alone;
+  };
+
   // Seen it queues the acknowledgement and shows the next Card at once. The
   // taught Card itself is never chained into its review (Patch 2.9); only the
   // next first exposure follows. Running out is the natural end of the
@@ -853,10 +879,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
         presentationId: current.id,
       },
     );
+    const kind = model.session?.kind ?? null;
     const more = advanceSession();
     model.message = more
       ? "Teaching seen. Here is the next Card to learn."
-      : "Teaching seen. Nothing more to learn right now.";
+      : endOfSession(kind, "Teaching seen. Nothing more to learn right now.");
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);
@@ -879,16 +906,13 @@ export const mountStudyApp = (root: HTMLElement): void => {
         permit,
       },
     );
+    const kind = model.session?.kind ?? null;
     const more = advanceSession();
-    const waiting = !more && model.batch !== null && !model.batch.done;
-    if (!more && !waiting) model.batch = null;
     model.message = more
       ? correct
         ? "Review recorded. Next Card."
         : "Marked for sooner. Next Card."
-      : waiting
-        ? "Reviewed everything that has landed so far. The rest are still being prepared and will open as they arrive."
-        : "Batch complete.";
+      : endOfSession(kind, "Batch complete.");
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);

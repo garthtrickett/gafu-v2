@@ -290,8 +290,6 @@ test("configures a key and teaches before the first generated review", async ({
   // and the grade is sent when the network returns.
   const worked: string[] = [];
   const reviewOne = async (grade: "Correct" | "Incorrect"): Promise<void> => {
-    // Keep grading until one of the pair comes up: the batch also prepared
-    // first exposures for background Cards, and those are not reviews.
     await expect(review.getByText("review", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
@@ -319,10 +317,16 @@ test("configures a key and teaches before the first generated review", async ({
     }
   };
   const progress = page.getByTestId("session-progress");
-  await expect(progress).toContainText("Opening the reviews");
+  await expect(progress).toContainText("Opening the prepared");
   await expect(progress.locator(".pending-elapsed")).toHaveText(/^\d+s$/u);
   releaseFirst();
   await expect(progress).toHaveCount(0);
+  // The batch also wrote first exposures for the background Cards nothing
+  // had taught, but the reviews lead, so one is showing already.
+  await expect(review.getByText("review", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+
   // The next clip is fetched ahead while online, so it plays after the reload.
   await page.context().setOffline(true);
   await expect(page.getByTestId("offline")).toBeVisible();
@@ -348,8 +352,18 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(page.getByTestId("offline")).toHaveCount(0);
   await expect(page.getByTestId("syncing")).toHaveCount(0);
   await reviewOne("Incorrect");
-  await expect(page.getByRole("status")).toContainText("Batch complete.");
   expect(worked.sort()).toEqual(["bird", "cat"]);
+  // Both reviews are graded, so what is left is the first exposures the
+  // batch prepared for the background Cards. Read through them to the end.
+  for (let guard = 0; guard < 30; guard += 1) {
+    if (
+      (await review.getByRole("button", { name: "Seen it — next Card" }).count()) === 0
+    )
+      break;
+    await review.getByRole("button", { name: "Seen it — next Card" }).click();
+    await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
+  }
+  await expect(page.getByRole("status")).toContainText("Batch complete.");
   // Once the outbox drains the bank is refetched and shows both reviews.
   await expect(page.locator(".bank-card", { hasText: "鳥" })).toContainText("1 review");
   await expect(page.locator(".bank-card", { hasText: "猫" })).toContainText("1 review");
