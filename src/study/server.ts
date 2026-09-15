@@ -256,6 +256,12 @@ const statusSnapshot = (
   study: Study,
   material: LearningMaterial,
 ): Result<{ status: StudyStatus; session: SessionCounts }, Response> => {
+  // Admission is what turns a staged Card into a due one, and it happens
+  // when the queue is read. Reading it here means the tiles answer for the
+  // daily limit as it stands: raising the limit used to change nothing on
+  // screen until something else happened to read the queue.
+  const admitted = study.studyQueue();
+  if (!admitted.ok) return err(failureResponse(admitted.error));
   const cards = study.listCards();
   if (!cards.ok) return err(failureResponse(cards.error));
   const status = study.status();
@@ -280,14 +286,16 @@ const statusSnapshot = (
  * its own route and loads when that panel opens.
  */
 const snapshot = (study: Study, material: LearningMaterial): Response => {
+  // Counts first: reading them admits, and the bank listed below should be
+  // the one the counts describe.
+  const counts = statusSnapshot(study, material);
+  if (!counts.ok) return counts.error;
   const cards = study.listCards();
   if (!cards.ok) return failureResponse(cards.error);
   const preferences = study.preferences();
   if (!preferences.ok) return failureResponse(preferences.error);
   const knowledge = study.knowledgeSnapshot();
   if (!knowledge.ok) return failureResponse(knowledge.error);
-  const counts = statusSnapshot(study, material);
-  if (!counts.ok) return counts.error;
   const flags = material.teachingFlags();
   if (!flags.ok) return materialResponse(flags);
   // Whether each Card has been taught (acknowledged) or can be taught from a
