@@ -9,7 +9,7 @@ export type PresentationBase = Readonly<{
 export type InvalidFault =
   | "malformedStructure"
   | "readingMismatch"
-  | "invalidSpan"
+  | "unreconcilableSpan"
   | "surfaceMismatch"
   | "targetAbsent"
   | "targetOnlyMetadata"
@@ -190,7 +190,7 @@ export const grammarBases: readonly PresentationBase[] =
 export const invalidFaults: readonly InvalidFault[] = [
   "malformedStructure",
   "readingMismatch",
-  "invalidSpan",
+  "unreconcilableSpan",
   "surfaceMismatch",
   "targetAbsent",
   "targetOnlyMetadata",

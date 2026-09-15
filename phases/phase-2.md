@@ -1488,6 +1488,41 @@ where it stood for whenever the Card is restored.
 once and reads as suspended in the bank; the full required validation
 passes.
 
+### Patch 2.58 — A miscounted span is arithmetic, not a different claim
+
+Eight Cards in a row were refused for `targetSurfaceMismatch` and
+`targetAbsent`, and several of those also had the target word counted
+against its own sentence as vocabulary the learner had never met. One cause:
+the model named the right word and pointed at the wrong place. Counting
+UTF-16 offsets is the one part of the job a model does badly, and the part
+it writes well — the target text — was being thrown away with it.
+
+The span is repaired from the sentence when the surface appears exactly
+once, which is the sentence saying plainly where the word is. The repaired
+span is what travels back, so what is banked and coloured is where the
+target stands. A surface the sentence says twice is refused rather than
+guessed at: that is the case a careless model produces and the case a
+misleading one would exploit, and there is no honest way to choose between
+two occurrences.
+
+This also ends the target reporting itself unknown. A token escapes the
+unknown-vocabulary check by sitting inside the target span, and Patch 2.51
+added identity as a second route — but identity is per token, so a compound
+target never qualified: 紹介する is 紹介 and する, and no single token is the
+word. A correct span covers it.
+
+`invalidTargetSpan` is retired; no span is invalid on its own any more.
+Patch 2.29's adversarial corpus is amended rather than quietly broken: the
+`invalidSpan` fault becomes `unreconcilableSpan`, a doubled surface with a
+span landing on neither, and the frozen manifest hash is updated with it.
+The exit gate now reads "a span that cannot be reconciled with the sentence"
+where it read "bad span", which is the guarantee that is actually kept — and
+a stronger one, since a span can no longer point anywhere but at the word.
+
+**Gate:** a span one character out is repaired and the repaired span is
+banked; a surface appearing twice is refused; the amended corpus rejects
+every invalid presentation; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
@@ -1495,7 +1530,8 @@ Phase 2 is implemented when all of the following are true:
 - the same Grammar Card and Vocabulary Card can each be taught and graded more
   than once through fresh, materially different validated material;
 - a first graded answer cannot occur before explicit teaching;
-- malformed structure, missing target, bad span, reconstruction mismatch,
+- malformed structure, missing target, a span that cannot be reconciled with
+  the sentence, reconstruction mismatch,
   wrong identity, unknown vocabulary, unknown grammar, exact copy, and near copy
   never reach the learner or receive a permit;
 - timeout, provider refusal/rejection, authentication, permission, and rate

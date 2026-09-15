@@ -60,7 +60,6 @@ export type ValidationError =
   | { readonly kind: "malformedStructure"; readonly field: string }
   | { readonly kind: "readingReconstructionMismatch" }
   | { readonly kind: "readingUnplaceable"; readonly written: readonly string[] }
-  | { readonly kind: "invalidTargetSpan" }
   | { readonly kind: "targetSurfaceMismatch" }
   | { readonly kind: "targetAbsent" }
   | { readonly kind: "wrongTargetIdentity" }
