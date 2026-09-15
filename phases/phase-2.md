@@ -1023,7 +1023,8 @@ spacing literature puts the useful gap at a fraction of the retention
 interval, days not minutes; the feedback shown with the answer is the repair,
 and same-day re-tests add little that survives to the next day. Short-term
 steps are off (`gafu-parameters-v2`): a first success and a lapse are both
-scheduled by stability, tomorrow at the earliest. Teaching remains the
+scheduled by stability, tomorrow at the earliest. (Patch 2.52 restores the
+steps for new Cards; the lapse rule here stands.) Teaching remains the
 separate first exposure before any review. Existing schedules and review
 history are untouched; the new rule applies from the next answer.
 
@@ -1324,6 +1325,42 @@ not taken here.
 
 **Gate:** a miscounted span is refused without reporting the target as
 unknown vocabulary; the full required validation passes.
+
+### Patch 2.52 — Learning steps for new Cards, none for relearning
+
+Patch 2.34 turned off short-term steps for lapses, and took the steps for
+new Cards with them. The two are different problems. A learner reported
+being unable to remember new words, and the schedule explained it: a new
+Card was met once, in one sentence, and its first retrieval came three days
+later.
+
+The spacing effect governs the gap between *successful retrievals*, and
+there had not been one. One exposure and then silence is a single massed
+trial, not spaced practice; the meta-analytic optimum of a day or more
+assumes the item is encoded, and the same work finds that stretching the gap
+past the point of successful recall gives nothing back. Retrieval practice
+is what builds retention, and an item dropped after a single correct recall
+is poorly retained a week on.
+
+New Cards are retrieved at five and ten minutes and an hour before they
+graduate to the multi-day ladder (`gafu-parameters-v3`). Relearning is
+unchanged and deliberately so: a Card that was learned and then failed is
+still scheduled by its stability and still lands days away, which is what
+Patch 2.34 was asked for.
+
+What the learner is retrieved from is a freshly generated sentence every
+time, never the one just seen — the generator is already given the Card's
+last shown sentences to avoid. Repeating one sentence would train the
+sentence rather than the word, and the goal is a word recognised in lines
+never met before. Support readiness is untouched: it still needs two
+successes on different local days at least twenty hours apart, so the
+same-day retrievals cannot promote a word into the supporting vocabulary
+early. Existing schedules and review history are untouched; the new rule
+applies from the next answer.
+
+**Gate:** scheduler tests for a new Card retrieved again within the hour and
+graduating to a multi-day interval, and for a lapse on a learned Card still
+landing at least a day away; the full required validation passes.
 
 ## Exit gate
 
