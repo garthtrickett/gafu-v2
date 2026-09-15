@@ -538,6 +538,63 @@ describe("Study admission and review", () => {
     second.value.close();
   });
 
+  test("teaching moves the first review a step out, so it is a retrieval", () => {
+    // Teaching shows the answer and asks nothing. Left due, the Card's first
+    // review is served by the very next batch — minutes later, before there
+    // is anything to retrieve.
+    const { study, clock } = openTestStudy();
+    const card = create(study, vocabulary).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+    const queue = study.studyQueue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue.error));
+    const admitted = queue.value.due.find((item) => item.card.id === card.id);
+    expect(admitted?.card.dueAt).not.toBeNull();
+    expect(new Date(admitted?.card.dueAt ?? "").getTime()).toBeLessThanOrEqual(
+      clock.now().getTime(),
+    );
+
+    const taught = study.recordTeaching(card.id);
+    if (!taught.ok) throw new Error(JSON.stringify(taught.error));
+    const gapMs = new Date(taught.value.dueAt ?? "").getTime() - clock.now().getTime();
+    expect(gapMs).toBeGreaterThan(0);
+    // Far enough to be a later session, near enough to be the same day.
+    expect(gapMs).toBeLessThanOrEqual(60 * 60 * 1_000);
+    // Nothing was graded, so nothing is known about the Card yet.
+    expect(taught.value.reviewCount).toBe(0);
+    expect(taught.value.schedulePhase).toBe("new");
+    study.close();
+  });
+
+  test("counts failures in a row and forgets them on a success", () => {
+    // FSRS records a lapse only from the review state, so a new Card failed
+    // over and over registers none — which is the Card worth noticing.
+    const { study, clock } = openTestStudy();
+    const card = create(study, vocabulary).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+    if (!study.studyQueue().ok) throw new Error("queue failed");
+
+    let seen = 0;
+    const answer = (grade: "again" | "good"): number => {
+      seen += 1;
+      const outcome = study.answer({
+        cardId: card.id,
+        grade,
+        permit: permit(`permit-${seen}`, card.id, clock.now()),
+      });
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.error));
+      clock.set(outcome.value.nextDueAt);
+      return outcome.value.card.consecutiveFailures;
+    };
+
+    expect(answer("again")).toBe(1);
+    expect(answer("again")).toBe(2);
+    expect(answer("again")).toBe(3);
+    // The scheduler saw none of those as lapses; the Card never left learning.
+    expect(answer("good")).toBe(0);
+    expect(answer("again")).toBe(1);
+    study.close();
+  });
+
   test("records FSRS reviews, answers a replayed grade once, refuses a changed one, and earns delayed support", () => {
     const { study, clock } = openTestStudy();
     const card = create(study, vocabulary).card;
@@ -650,7 +707,11 @@ describe("Study persistence and recovery", () => {
     if (!reopened.ok) throw new Error(JSON.stringify(reopened.error));
     expect(reopened.value.preferences()).toEqual({
       ok: true,
-      value: { newCardsPerDay: 1, timeZone: "Asia/Tokyo" },
+      value: {
+        newCardsPerDay: 1,
+        timeZone: "Asia/Tokyo",
+        firstReviewAfterMinutes: 30,
+      },
     });
     expect(reopened.value.listCards()).toMatchObject({
       ok: true,
@@ -721,7 +782,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 7 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 8 },
     });
   });
 

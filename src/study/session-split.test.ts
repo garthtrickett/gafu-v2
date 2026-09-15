@@ -26,6 +26,7 @@ const card = (
   dueAt: "2026-09-12T01:00:00.000Z",
   schedulePhase: "new",
   reviewCount: 0,
+  consecutiveFailures: 0,
   ...overrides,
 });
 

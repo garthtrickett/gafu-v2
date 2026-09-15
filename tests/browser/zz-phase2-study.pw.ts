@@ -16,6 +16,14 @@ test("configures a key and teaches before the first generated review", async ({
 }) => {
   await page.goto("/");
 
+  // A first exposure normally defers its review to the next sitting, which
+  // this journey cannot wait for. Zero asks for it straight away, which is
+  // what the preference is for: the right gap is the learner's own rhythm.
+  await page.request.put("/api/study/preferences", {
+    headers: { "X-Gafu-Request": "gafu-v2" },
+    data: { firstReviewAfterMinutes: 0 },
+  });
+
   const earlierStagedGrammar = page.locator(".bank-card", { hasText: "〜てしまう" });
   if ((await earlierStagedGrammar.count()) > 0) {
     await earlierStagedGrammar.getByRole("button", { name: "Support-ready" }).click();

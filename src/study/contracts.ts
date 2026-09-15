@@ -55,6 +55,8 @@ export type CardSummary = Readonly<{
   dueAt: string | null;
   schedulePhase: SchedulePhase | null;
   reviewCount: number;
+  /** Answers of Again in a row, reset by any other answer. */
+  consecutiveFailures: number;
 }>;
 
 export type CreateCardOutcome = Readonly<{
@@ -94,11 +96,19 @@ export type CardStateCommand = Readonly<{
 export type StudyPreferences = Readonly<{
   newCardsPerDay: number;
   timeZone: string;
+  /**
+   * How long after a first exposure its first review is asked for. Set it
+   * shorter than the gap between sittings so the review lands at the next
+   * one: a word recalled minutes after being shown has not been recalled.
+   * Zero asks for it immediately, which is the old behaviour.
+   */
+  firstReviewAfterMinutes: number;
 }>;
 
 export type PreferenceChange = Readonly<{
   newCardsPerDay?: number;
   timeZone?: string;
+  firstReviewAfterMinutes?: number;
 }>;
 
 export type QueueCard = Readonly<{
@@ -289,6 +299,7 @@ export type Study = Readonly<{
   studyQueue: () => Result<StudyQueue, StudyFailure>;
   status: () => Result<StudyStatus, StudyFailure>;
   answer: (command: AnswerCard) => Result<AnswerOutcome, StudyFailure>;
+  recordTeaching: (cardId: CardId) => Result<CardSummary, StudyFailure>;
   knowledgeSnapshot: () => Result<KnowledgeSnapshot, StudyFailure>;
   preparationSnapshot: () => Result<StudyPreparationSnapshot, StudyFailure>;
   preferences: () => Result<StudyPreferences, StudyFailure>;

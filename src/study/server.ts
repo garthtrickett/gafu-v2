@@ -594,9 +594,11 @@ const handleApi = async (
       body["presentationId"],
     );
     if (!acknowledged.ok) return materialResponse(acknowledged);
-    // Teaching ends here. The Card goes back in the queue and its first
-    // review is prepared on a later start, when it is due — never chained to
-    // first exposure.
+    // Teaching ends here. The Card goes back in the queue with its first
+    // review a step away, so that review lands in a later session and is a
+    // retrieval rather than a re-reading of what was just shown.
+    const deferred = study.recordTeaching(asCardId(body["cardId"]));
+    if (!deferred.ok) return failureResponse(deferred.error);
     return Response.json({ ok: true });
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/answer") {
@@ -759,6 +761,14 @@ const handleApi = async (
         return invalidRequest("newCardsPerDay must be a number.");
       }
       Object.assign(change, { newCardsPerDay: body["newCardsPerDay"] });
+    }
+    if (body["firstReviewAfterMinutes"] !== undefined) {
+      if (typeof body["firstReviewAfterMinutes"] !== "number") {
+        return invalidRequest("firstReviewAfterMinutes must be a number.");
+      }
+      Object.assign(change, {
+        firstReviewAfterMinutes: body["firstReviewAfterMinutes"],
+      });
     }
     if (body["timeZone"] !== undefined) {
       if (typeof body["timeZone"] !== "string") {

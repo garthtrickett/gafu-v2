@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 7;
+export const STUDY_SCHEMA_VERSION = 8;
 
 const migrations: readonly Migration[] = [
   {
@@ -299,6 +299,27 @@ const migrations: readonly Migration[] = [
       FROM card_progress WHERE state = 'known';
       DROP TABLE card_progress;
       ALTER TABLE card_progress_v7 RENAME TO card_progress;
+    `,
+  },
+  {
+    // Consecutive failures, counted here rather than read from the scheduler:
+    // FSRS counts a lapse only from the review state, so a new Card failed
+    // twenty times running registers none of them — which is exactly the Card
+    // worth noticing. Reset by any answer that is not Again.
+    version: 8,
+    sql: `
+      ALTER TABLE card_progress ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE study_preferences_v8 (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        new_cards_per_day INTEGER NOT NULL CHECK (new_cards_per_day BETWEEN 0 AND 100),
+        time_zone TEXT NOT NULL,
+        first_review_after_minutes INTEGER NOT NULL DEFAULT 30
+          CHECK (first_review_after_minutes BETWEEN 0 AND 720)
+      );
+      INSERT INTO study_preferences_v8(singleton, new_cards_per_day, time_zone)
+      SELECT singleton, new_cards_per_day, time_zone FROM study_preferences;
+      DROP TABLE study_preferences;
+      ALTER TABLE study_preferences_v8 RENAME TO study_preferences;
     `,
   },
 ];

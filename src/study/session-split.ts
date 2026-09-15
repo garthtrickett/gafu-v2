@@ -50,3 +50,17 @@ export const countSessionModes = <Failure>(
   }
   return ok({ learnCount, reviewCount, laterCount });
 };
+
+/**
+ * Answers of Again in a row after which a Card is worth a look.
+ *
+ * A Card that keeps failing is either too hard for where the learner is or
+ * broken in a way the validator cannot see — a wrong sense, a meaning that
+ * does not match the word. Either way the queue is not the place to find
+ * out, and six sessions of failing is enough to say so. Nothing is
+ * suspended automatically: which of the two it is, only a person can tell.
+ */
+export const STUCK_AFTER_FAILURES = 6;
+
+export const isStuck = (card: { consecutiveFailures: number }): boolean =>
+  card.consecutiveFailures >= STUCK_AFTER_FAILURES;

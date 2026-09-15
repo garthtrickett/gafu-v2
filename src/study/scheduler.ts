@@ -49,14 +49,39 @@ export type StoredSchedule = Readonly<{
   lastReviewAt: string | null;
 }>;
 
+/** The first learning step, and the default gap after a first exposure. */
+export const FIRST_STEP_MINUTES = 30;
+
 const scheduler = fsrs({
   request_retention: 0.9,
   maximum_interval: 36_500,
   enable_fuzz: false,
   enable_short_term: true,
-  learning_steps: ["30m", "1h", "2h"],
+  learning_steps: [`${FIRST_STEP_MINUTES}m`, "1h", "2h"],
   relearning_steps: [],
 });
+
+/**
+ * Moves a first exposure's review out by one step.
+ *
+ * Teaching shows the answer; it asks nothing. Left alone the Card stays due,
+ * so its first review is served by whatever batch is prepared next — which
+ * can be minutes later, and a word recalled minutes after being shown has
+ * not been recalled. One step out puts the first real retrieval at the next
+ * session. Only the due time moves: no answer was given, so nothing about
+ * the Card's stability has been learned.
+ */
+export const deferFirstRetrieval = (
+  current: StoredSchedule,
+  now: Date,
+  minutes: number,
+): StoredSchedule =>
+  minutes <= 0
+    ? current
+    : {
+        ...current,
+        dueAt: new Date(now.getTime() + minutes * 60 * 1_000).toISOString(),
+      };
 
 const phases: Record<State, SchedulePhase> = {
   [State.New]: "new",
