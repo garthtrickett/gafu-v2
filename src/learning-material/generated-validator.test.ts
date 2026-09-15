@@ -36,6 +36,7 @@ const card: CardSummary = {
   dueAt: "2026-09-08T00:00:00.000Z",
   schedulePhase: "new",
   reviewCount: 0,
+  consecutiveFailures: 0,
 };
 
 const knowledge: KnowledgeSnapshot = {
@@ -214,6 +215,7 @@ describe("an inflected target is still the target", () => {
     },
     schedulePhase: "review",
     reviewCount: 1,
+    consecutiveFailures: 0,
   };
   const known = (
     lemma: string,

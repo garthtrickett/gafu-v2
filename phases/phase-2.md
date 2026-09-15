@@ -1372,6 +1372,41 @@ sooner than an hour, for it graduating to a multi-day interval, and for a
 lapse on a learned Card still landing at least a day away; the full required
 validation passes.
 
+### Patch 2.53 — A first review is a retrieval, and a stuck Card says so
+
+Two things the same learner found by asking how many times a day a Card
+comes back.
+
+**Teaching left nothing between exposure and review.** A taught Card stayed
+due, so its first review was served by whatever batch was prepared next —
+minutes after the answer had been on screen. That is not a retrieval, it is
+a re-reading, and the learning steps added in Patch 2.52 had no say in it
+because the gap was decided by when a button was pressed. A first exposure
+now moves its review out by `firstReviewAfterMinutes`, thirty by default,
+and only the due time moves: nothing was graded, so nothing has been learned
+about the Card's stability. The gap is a preference because the right value
+is the learner's own rhythm — shorter than the gap between sittings, so the
+review lands at the next one. Zero restores the old behaviour.
+
+**A Card that keeps failing said nothing.** Every Again returns a new Card
+to the first learning step, which is shorter than the gap between sittings,
+so a Card being failed comes back every session for as long as that lasts —
+correctly, but silently. FSRS is no help in noticing: it records a lapse
+only from the review state, so a new Card failed twenty times running
+registers none of them, and `lapses` stays at nought for exactly the Cards
+worth looking at. Answers of Again in a row are counted here instead, reset
+by any other answer, and a Card at six is flagged in the bank as stuck.
+
+Nothing is suspended automatically. A Card fails either because it is too
+hard for where the learner is or because it is wrong in a way the validator
+cannot see — a sense that does not match the word, a meaning that belongs to
+another entry. Which of the two it is, only a person can tell, and the Cards
+this project has had to repair were mostly the second kind.
+
+**Gate:** a first exposure schedules its review a gap away without recording
+a review; failures in a row are counted and forgotten on a success; the full
+required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

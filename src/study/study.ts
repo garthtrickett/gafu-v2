@@ -36,6 +36,7 @@ import {
 import { migrateStudyDatabase, STUDY_SCHEMA_VERSION } from "./migrations.ts";
 import { createPlanOperations } from "./plans.ts";
 import {
+  deferFirstRetrieval,
   newSchedule,
   SCHEDULER_VERSION,
   type StoredSchedule,
@@ -54,11 +55,13 @@ type CardRow = {
   due_at: string | null;
   phase: CardSummary["schedulePhase"];
   review_count: number;
+  consecutive_failures: number;
 };
 
 type PreferenceRow = {
   new_cards_per_day: number;
   time_zone: string;
+  first_review_after_minutes: number;
 };
 
 const detail = (cause: unknown): string =>
@@ -79,7 +82,7 @@ const safeNow = (clock: () => Date): Result<Date, StudyFailure> => {
 const readCardRow = (database: Database, cardId: string): CardRow | null =>
   database
     .query(
-      `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at,
+      `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
               c.staged_at, a.admitted_at, s.due_at, s.phase,
               count(r.id) AS review_count
        FROM card c
@@ -103,6 +106,7 @@ const toSummary = (row: CardRow): CardSummary => ({
   dueAt: row.due_at,
   schedulePhase: row.phase,
   reviewCount: row.review_count,
+  consecutiveFailures: row.consecutive_failures,
 });
 
 const readCard = (
@@ -120,12 +124,14 @@ const readCard = (
 const readPreferences = (database: Database): StudyPreferences => {
   const row = database
     .query(
-      "SELECT new_cards_per_day, time_zone FROM study_preferences WHERE singleton = 1",
+      `SELECT new_cards_per_day, time_zone, first_review_after_minutes
+       FROM study_preferences WHERE singleton = 1`,
     )
     .get() as PreferenceRow;
   return {
     newCardsPerDay: row.new_cards_per_day,
     timeZone: row.time_zone,
+    firstReviewAfterMinutes: row.first_review_after_minutes,
   };
 };
 
@@ -318,7 +324,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     try {
       const rows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at,
+          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count
            FROM card c
@@ -473,6 +479,15 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         detail: "must be a whole number from 0 through 100",
       });
     }
+    const nextGap =
+      change.firstReviewAfterMinutes ?? current.value.firstReviewAfterMinutes;
+    if (!Number.isSafeInteger(nextGap) || nextGap < 0 || nextGap > 720) {
+      return err({
+        kind: "invalidPreference",
+        field: "firstReviewAfterMinutes",
+        detail: "must be a whole number of minutes from 0 through 720",
+      });
+    }
     const zone = validateTimeZone(change.timeZone ?? current.value.timeZone);
     if (!zone.ok) return zone;
     const now = safeNow(dependencies.clock);
@@ -482,9 +497,10 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         database
           .query(
             `UPDATE study_preferences
-             SET new_cards_per_day = ?, time_zone = ? WHERE singleton = 1`,
+             SET new_cards_per_day = ?, time_zone = ?, first_review_after_minutes = ?
+             WHERE singleton = 1`,
           )
-          .run(nextLimit, zone.value);
+          .run(nextLimit, zone.value, nextGap);
         if (zone.value !== current.value.timeZone) {
           database
             .query(
@@ -496,7 +512,11 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         }
       });
       update.immediate();
-      return ok({ newCardsPerDay: nextLimit, timeZone: zone.value });
+      return ok({
+        newCardsPerDay: nextLimit,
+        timeZone: zone.value,
+        firstReviewAfterMinutes: nextGap,
+      });
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
@@ -821,7 +841,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       admit.immediate();
       const dueRows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at,
+          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count
            FROM card c
@@ -895,6 +915,36 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       });
     } catch (cause) {
       return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
+  /**
+   * Notes that a Card's first exposure was seen, and moves its first review
+   * out by one step so that review is a retrieval rather than a re-reading.
+   * Nothing is graded here, so the Card's stability is left alone.
+   */
+  const recordTeaching = (cardId: CardId): Result<CardSummary, StudyFailure> => {
+    const now = safeNow(dependencies.clock);
+    if (!now.ok) return now;
+    try {
+      const scheduleRow = database
+        .query("SELECT schedule_json FROM schedule WHERE card_id = ?")
+        .get(cardId) as { schedule_json: string } | null;
+      if (scheduleRow === null) return readCard(database, cardId);
+      const preference = preferences();
+      if (!preference.ok) return preference;
+      const before = JSON.parse(scheduleRow.schedule_json) as StoredSchedule;
+      const after = deferFirstRetrieval(
+        before,
+        now.value,
+        preference.value.firstReviewAfterMinutes,
+      );
+      database
+        .query("UPDATE schedule SET due_at = ?, schedule_json = ? WHERE card_id = ?")
+        .run(after.dueAt, JSON.stringify(after), cardId);
+      return readCard(database, cardId);
+    } catch (cause) {
+      return err({ kind: "writeFailed", detail: detail(cause) });
     }
   };
 
@@ -999,6 +1049,17 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             SCHEDULER_VERSION,
             command.cardId,
           );
+        // Counted here because the scheduler will not: FSRS records a lapse
+        // only from the review state, so a new Card failed over and over
+        // registers none of them.
+        database
+          .query(
+            `UPDATE card_progress
+             SET consecutive_failures =
+               CASE WHEN ?1 = 1 THEN consecutive_failures + 1 ELSE 0 END
+             WHERE card_id = ?2`,
+          )
+          .run(command.grade === "again" ? 1 : 0, command.cardId);
         if (command.grade !== "again") {
           const progress = database
             .query(
@@ -1315,6 +1376,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     studyQueue,
     status,
     answer,
+    recordTeaching,
     knowledgeSnapshot,
     preparationSnapshot,
     preferences,

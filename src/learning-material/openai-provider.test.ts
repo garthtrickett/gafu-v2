@@ -27,6 +27,7 @@ const request: MaterialProviderRequest = {
     dueAt: "2026-09-08T00:00:00.000Z",
     schedulePhase: "new",
     reviewCount: 0,
+    consecutiveFailures: 0,
   },
   knowledge: {
     vocabulary: [],

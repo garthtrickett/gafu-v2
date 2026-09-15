@@ -24,7 +24,7 @@ import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import { clearSelection, readSelectedBaseText } from "./selection.ts";
-import type { SessionCounts } from "./session-split.ts";
+import { isStuck, type SessionCounts } from "./session-split.ts";
 
 /**
  * A Card as the bank shows it: Study's summary plus whether its teaching has
@@ -414,6 +414,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         method: "PUT",
         body: JSON.stringify({
           newCardsPerDay: Number(value(fields, "newCardsPerDay")),
+          firstReviewAfterMinutes: Number(value(fields, "firstReviewAfterMinutes")),
           timeZone: value(fields, "timeZone"),
         }),
       });
@@ -1251,6 +1252,22 @@ export const mountStudyApp = (root: HTMLElement): void => {
                       />
                     </label>
                     <label>
+                      First review after (minutes)
+                      <input
+                        name="firstReviewAfterMinutes"
+                        type="number"
+                        min="0"
+                        max="720"
+                        required
+                        .value=${String(snapshot.preferences.firstReviewAfterMinutes)}
+                      />
+                      <small
+                        >Set it shorter than the gap between your sittings, so a new
+                        Card's first review lands at the next one. A word recalled
+                        minutes after it was shown has not been recalled.</small
+                      >
+                    </label>
+                    <label>
                       Time zone
                       <input name="timeZone" required .value=${snapshot.preferences.timeZone} />
                     </label>
@@ -1370,6 +1387,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
                               ${
                                 needsTeaching(card)
                                   ? html`<span class="pill pill--untaught">no teaching yet</span>`
+                                  : ""
+                              }
+                              ${
+                                isStuck(card)
+                                  ? html`<span
+                                      class="pill pill--stuck"
+                                      title="Wrong ${card.consecutiveFailures} times in a row. Worth checking the Card itself."
+                                      >stuck</span
+                                    >`
                                   : ""
                               }
                             </div>

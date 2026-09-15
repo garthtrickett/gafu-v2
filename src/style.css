@@ -779,6 +779,11 @@ form {
   background: #3a2622;
 }
 
+.pill--stuck {
+  color: #ffd7a1;
+  background: #3a2f1c;
+}
+
 .pill--ready {
   color: #8ce7cb;
   background: #153128;
