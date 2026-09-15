@@ -107,7 +107,7 @@ describe("backup recovery", () => {
       expect(inspected).toMatchObject({
         ok: true,
         value: {
-          studySchemaVersion: 8,
+          studySchemaVersion: 9,
           preparationSchemaVersion: PREPARATION_SCHEMA_VERSION,
           cardCount: 1,
           integrity: "ok",

@@ -22,20 +22,31 @@ export const validateTimeZone = (timeZone: string): Result<string, StudyFailure>
   }
 };
 
+/**
+ * Which study day an instant falls in.
+ *
+ * A day here ends when the learner stops, not at midnight: study at one in
+ * the morning belongs to the day just spent, not the one starting. So the
+ * instant is wound back by the hour the day begins before its date is read,
+ * which puts the boundary at that hour in the learner's own zone. Zero is
+ * midnight and the plain calendar date.
+ */
 export const localDayKey = (
   instant: Date,
   timeZone: string,
+  dayStartsAtHour = 0,
 ): Result<string, StudyFailure> => {
   if (!Number.isFinite(instant.getTime())) {
     return err({ kind: "clockFailed", detail: "clock returned an invalid date" });
   }
+  const wound = new Date(instant.getTime() - dayStartsAtHour * 60 * 60 * 1_000);
   try {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    }).formatToParts(instant);
+    }).formatToParts(wound);
     const read = (type: Intl.DateTimeFormatPartTypes): string | undefined =>
       parts.find((part) => part.type === type)?.value;
     const year = read("year");

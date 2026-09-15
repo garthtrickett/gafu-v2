@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 8;
+export const STUDY_SCHEMA_VERSION = 9;
 
 const migrations: readonly Migration[] = [
   {
@@ -320,6 +320,44 @@ const migrations: readonly Migration[] = [
       SELECT singleton, new_cards_per_day, time_zone FROM study_preferences;
       DROP TABLE study_preferences;
       ALTER TABLE study_preferences_v8 RENAME TO study_preferences;
+    `,
+  },
+  {
+    // The study day need not begin at midnight. The open window keeps the
+    // hour it was opened under, alongside the zone it already pinned, so
+    // changing the setting cannot end today early and hand out a second
+    // day's worth of new Cards; the new hour takes effect at the next
+    // genuine rollover.
+    version: 9,
+    sql: `
+      CREATE TABLE study_preferences_v9 (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        new_cards_per_day INTEGER NOT NULL CHECK (new_cards_per_day BETWEEN 0 AND 100),
+        time_zone TEXT NOT NULL,
+        first_review_after_minutes INTEGER NOT NULL DEFAULT 30
+          CHECK (first_review_after_minutes BETWEEN 0 AND 720),
+        day_starts_at_hour INTEGER NOT NULL DEFAULT 4
+          CHECK (day_starts_at_hour BETWEEN 0 AND 23)
+      );
+      INSERT INTO study_preferences_v9(
+        singleton, new_cards_per_day, time_zone, first_review_after_minutes
+      )
+      SELECT singleton, new_cards_per_day, time_zone, first_review_after_minutes
+      FROM study_preferences;
+      DROP TABLE study_preferences;
+      ALTER TABLE study_preferences_v9 RENAME TO study_preferences;
+
+      CREATE TABLE admission_window_v9 (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        local_day TEXT NOT NULL,
+        time_zone TEXT NOT NULL,
+        day_starts_at_hour INTEGER NOT NULL DEFAULT 0
+          CHECK (day_starts_at_hour BETWEEN 0 AND 23)
+      );
+      INSERT INTO admission_window_v9(singleton, local_day, time_zone, day_starts_at_hour)
+      SELECT singleton, local_day, time_zone, 0 FROM admission_window;
+      DROP TABLE admission_window;
+      ALTER TABLE admission_window_v9 RENAME TO admission_window;
     `,
   },
 ];

@@ -1407,6 +1407,30 @@ this project has had to repair were mostly the second kind.
 a review; failures in a row are counted and forgotten on a success; the full
 required validation passes.
 
+### Patch 2.54 — The study day is the learner's, and starts when they say
+
+The deployment ran on UTC while the learner did not, so the day rolled over
+at ten in the morning where they were standing. New Cards unlocked
+mid-morning, and anything studied before that counted against the day
+before — which is how a learner came to have done twenty new Cards at 10:36
+and be told there was nothing to learn.
+
+A day also need not begin at midnight. Work done at one in the morning
+belongs to the day just spent, not the one starting, so the day key winds
+the instant back by `dayStartsAtHour` before reading its date. Zero is
+midnight and the behaviour as it was; four is the small hours kept with the
+evening they belong to.
+
+The open admission window already pinned the zone it was opened under, so
+that changing the zone mid-day could not end the day early and hand out a
+second day's worth of new Cards. It now pins the hour for the same reason
+and by the same rule: the day in progress is measured the way it was opened,
+and a new zone or hour takes effect at the next genuine rollover.
+
+**Gate:** the small hours fall in the previous day under a four o'clock
+start and the next one under midnight; changing either setting mid-day
+admits nothing further; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

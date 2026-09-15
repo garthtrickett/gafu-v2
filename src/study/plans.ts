@@ -222,15 +222,26 @@ export const createPlanOperations = (
       }
 
       const window = database
-        .query("SELECT local_day, time_zone FROM admission_window WHERE singleton = 1")
-        .get() as { local_day: string; time_zone: string } | null;
-      const pinnedDay = window === null ? null : localDayKey(now, window.time_zone);
+        .query(
+          `SELECT local_day, time_zone, day_starts_at_hour
+           FROM admission_window WHERE singleton = 1`,
+        )
+        .get() as {
+        local_day: string;
+        time_zone: string;
+        day_starts_at_hour: number;
+      } | null;
+      // The open day is read the way it was opened, as admission reads it.
+      const pinnedDay =
+        window === null
+          ? null
+          : localDayKey(now, window.time_zone, window.day_starts_at_hour);
       if (pinnedDay !== null && !pinnedDay.ok) return pinnedDay;
       const useWindow =
         window !== null && pinnedDay !== null && pinnedDay.value === window.local_day;
       const day = useWindow
         ? (window as { local_day: string }).local_day
-        : localDayKey(now, preference.value.timeZone);
+        : localDayKey(now, preference.value.timeZone, preference.value.dayStartsAtHour);
       if (typeof day !== "string" && !day.ok) return day;
       const localDay = typeof day === "string" ? day : day.value;
       const zone = useWindow

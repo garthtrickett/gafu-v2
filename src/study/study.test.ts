@@ -538,6 +538,37 @@ describe("Study admission and review", () => {
     second.value.close();
   });
 
+  test("changing the day's shape mid-day does not hand out a second day of Cards", () => {
+    // The open day is measured the way it was opened. Ending it early would
+    // count no admissions against the new key and admit a fresh allowance.
+    const { study } = openTestStudy();
+    create(study, vocabulary);
+    create(study, grammar);
+    study.setPreferences({ newCardsPerDay: 1, timeZone: "UTC", dayStartsAtHour: 0 });
+    expect(study.studyQueue()).toMatchObject({
+      ok: true,
+      value: { newlyAdmitted: 1, admittedToday: 1 },
+    });
+    // 10:00 UTC with a day starting at 16:00 would be yesterday, so a naive
+    // reading of the new setting would roll the day over here.
+    const moved = study.setPreferences({ dayStartsAtHour: 16 });
+    expect(moved).toMatchObject({ ok: true, value: { dayStartsAtHour: 16 } });
+    expect(study.studyQueue()).toMatchObject({
+      ok: true,
+      value: { newlyAdmitted: 0, admittedToday: 1 },
+    });
+    study.close();
+  });
+
+  test("an hour outside the clock is refused", () => {
+    const { study } = openTestStudy();
+    expect(study.setPreferences({ dayStartsAtHour: 24 })).toMatchObject({
+      ok: false,
+      error: { kind: "invalidPreference", field: "dayStartsAtHour" },
+    });
+    study.close();
+  });
+
   test("teaching moves the first review a step out, so it is a retrieval", () => {
     // Teaching shows the answer and asks nothing. Left due, the Card's first
     // review is served by the very next batch — minutes later, before there
@@ -711,6 +742,7 @@ describe("Study persistence and recovery", () => {
         newCardsPerDay: 1,
         timeZone: "Asia/Tokyo",
         firstReviewAfterMinutes: 30,
+        dayStartsAtHour: 4,
       },
     });
     expect(reopened.value.listCards()).toMatchObject({
@@ -782,7 +814,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 8 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 9 },
     });
   });
 

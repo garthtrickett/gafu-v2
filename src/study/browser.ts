@@ -415,6 +415,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         body: JSON.stringify({
           newCardsPerDay: Number(value(fields, "newCardsPerDay")),
           firstReviewAfterMinutes: Number(value(fields, "firstReviewAfterMinutes")),
+          dayStartsAtHour: Number(value(fields, "dayStartsAtHour")),
           timeZone: value(fields, "timeZone"),
         }),
       });
@@ -1265,6 +1266,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         >Set it shorter than the gap between your sittings, so a new
                         Card's first review lands at the next one. A word recalled
                         minutes after it was shown has not been recalled.</small
+                      >
+                    </label>
+                    <label>
+                      Day starts at (hour)
+                      <input
+                        name="dayStartsAtHour"
+                        type="number"
+                        min="0"
+                        max="23"
+                        required
+                        .value=${String(snapshot.preferences.dayStartsAtHour)}
+                      />
+                      <small
+                        >When the new-Card allowance resets. Four means a late night
+                        counts towards the day just spent, not the one starting.</small
                       >
                     </label>
                     <label>

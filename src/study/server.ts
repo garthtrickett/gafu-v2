@@ -770,6 +770,12 @@ const handleApi = async (
         firstReviewAfterMinutes: body["firstReviewAfterMinutes"],
       });
     }
+    if (body["dayStartsAtHour"] !== undefined) {
+      if (typeof body["dayStartsAtHour"] !== "number") {
+        return invalidRequest("dayStartsAtHour must be a number.");
+      }
+      Object.assign(change, { dayStartsAtHour: body["dayStartsAtHour"] });
+    }
     if (body["timeZone"] !== undefined) {
       if (typeof body["timeZone"] !== "string") {
         return invalidRequest("timeZone must be a string.");
