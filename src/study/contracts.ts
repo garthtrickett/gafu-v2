@@ -103,12 +103,18 @@ export type StudyPreferences = Readonly<{
    * Zero asks for it immediately, which is the old behaviour.
    */
   firstReviewAfterMinutes: number;
+  /**
+   * The hour the study day begins, in the learner's zone. Four means work
+   * done at two in the morning counts towards the day just spent.
+   */
+  dayStartsAtHour: number;
 }>;
 
 export type PreferenceChange = Readonly<{
   newCardsPerDay?: number;
   timeZone?: string;
   firstReviewAfterMinutes?: number;
+  dayStartsAtHour?: number;
 }>;
 
 export type QueueCard = Readonly<{

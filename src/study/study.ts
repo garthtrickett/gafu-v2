@@ -62,6 +62,7 @@ type PreferenceRow = {
   new_cards_per_day: number;
   time_zone: string;
   first_review_after_minutes: number;
+  day_starts_at_hour: number;
 };
 
 const detail = (cause: unknown): string =>
@@ -124,7 +125,8 @@ const readCard = (
 const readPreferences = (database: Database): StudyPreferences => {
   const row = database
     .query(
-      `SELECT new_cards_per_day, time_zone, first_review_after_minutes
+      `SELECT new_cards_per_day, time_zone, first_review_after_minutes,
+              day_starts_at_hour
        FROM study_preferences WHERE singleton = 1`,
     )
     .get() as PreferenceRow;
@@ -132,6 +134,7 @@ const readPreferences = (database: Database): StudyPreferences => {
     newCardsPerDay: row.new_cards_per_day,
     timeZone: row.time_zone,
     firstReviewAfterMinutes: row.first_review_after_minutes,
+    dayStartsAtHour: row.day_starts_at_hour,
   };
 };
 
@@ -488,6 +491,14 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         detail: "must be a whole number of minutes from 0 through 720",
       });
     }
+    const nextStart = change.dayStartsAtHour ?? current.value.dayStartsAtHour;
+    if (!Number.isSafeInteger(nextStart) || nextStart < 0 || nextStart > 23) {
+      return err({
+        kind: "invalidPreference",
+        field: "dayStartsAtHour",
+        detail: "must be a whole hour from 0 through 23",
+      });
+    }
     const zone = validateTimeZone(change.timeZone ?? current.value.timeZone);
     if (!zone.ok) return zone;
     const now = safeNow(dependencies.clock);
@@ -497,10 +508,11 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         database
           .query(
             `UPDATE study_preferences
-             SET new_cards_per_day = ?, time_zone = ?, first_review_after_minutes = ?
+             SET new_cards_per_day = ?, time_zone = ?, first_review_after_minutes = ?,
+                 day_starts_at_hour = ?
              WHERE singleton = 1`,
           )
-          .run(nextLimit, zone.value, nextGap);
+          .run(nextLimit, zone.value, nextGap, nextStart);
         if (zone.value !== current.value.timeZone) {
           database
             .query(
@@ -516,6 +528,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         newCardsPerDay: nextLimit,
         timeZone: zone.value,
         firstReviewAfterMinutes: nextGap,
+        dayStartsAtHour: nextStart,
       });
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
@@ -755,35 +768,58 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       const admit = database.transaction(() => {
         const existingWindow = database
           .query(
-            "SELECT local_day, time_zone FROM admission_window WHERE singleton = 1",
+            `SELECT local_day, time_zone, day_starts_at_hour
+             FROM admission_window WHERE singleton = 1`,
           )
-          .get() as { local_day: string; time_zone: string } | null;
+          .get() as {
+          local_day: string;
+          time_zone: string;
+          day_starts_at_hour: number;
+        } | null;
         if (existingWindow === null) {
-          const initialDay = localDayKey(now.value, preference.value.timeZone);
+          const initialDay = localDayKey(
+            now.value,
+            preference.value.timeZone,
+            preference.value.dayStartsAtHour,
+          );
           if (!initialDay.ok) throw new ClockFailure(initialDay.error);
           admissionDay = initialDay.value;
           admissionTimeZone = preference.value.timeZone;
           database
             .query(
-              "INSERT INTO admission_window(singleton, local_day, time_zone) VALUES (1, ?, ?)",
+              `INSERT INTO admission_window(singleton, local_day, time_zone, day_starts_at_hour)
+               VALUES (1, ?, ?, ?)`,
             )
-            .run(admissionDay, admissionTimeZone);
+            .run(admissionDay, admissionTimeZone, preference.value.dayStartsAtHour);
         } else {
-          const dayInPinnedZone = localDayKey(now.value, existingWindow.time_zone);
+          // The open day is measured the way it was opened. Changing the zone
+          // or the hour mid-day must not end it early: that would count no
+          // admissions against the new key and hand out a second day's worth.
+          const dayInPinnedZone = localDayKey(
+            now.value,
+            existingWindow.time_zone,
+            existingWindow.day_starts_at_hour,
+          );
           if (!dayInPinnedZone.ok) throw new ClockFailure(dayInPinnedZone.error);
           if (dayInPinnedZone.value === existingWindow.local_day) {
             admissionDay = existingWindow.local_day;
             admissionTimeZone = existingWindow.time_zone;
           } else {
-            const nextDay = localDayKey(now.value, preference.value.timeZone);
+            const nextDay = localDayKey(
+              now.value,
+              preference.value.timeZone,
+              preference.value.dayStartsAtHour,
+            );
             if (!nextDay.ok) throw new ClockFailure(nextDay.error);
             admissionDay = nextDay.value;
             admissionTimeZone = preference.value.timeZone;
             database
               .query(
-                "UPDATE admission_window SET local_day = ?, time_zone = ? WHERE singleton = 1",
+                `UPDATE admission_window
+                 SET local_day = ?, time_zone = ?, day_starts_at_hour = ?
+                 WHERE singleton = 1`,
               )
-              .run(admissionDay, admissionTimeZone);
+              .run(admissionDay, admissionTimeZone, preference.value.dayStartsAtHour);
           }
         }
         const admitted = database
@@ -964,7 +1000,11 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
     const preference = preferences();
     if (!preference.ok) return preference;
-    const day = localDayKey(now.value, preference.value.timeZone);
+    const day = localDayKey(
+      now.value,
+      preference.value.timeZone,
+      preference.value.dayStartsAtHour,
+    );
     if (!day.ok) return day;
     try {
       const used = database
