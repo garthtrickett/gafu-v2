@@ -143,6 +143,25 @@ Preparation over-reports its gap until this is fixed.
 
 **Tags are sometimes wrong.** ムリ came back as `固有名詞/地域`, キミ as `人名`.
 
+**Subtitles write native words in katakana, and a Card must not.** Japanese
+media writes ordinary words in katakana for emphasis — オススメ, キミ, ホント,
+ヤツ — and the scan takes the surface it finds. Store the form the word is
+normally written in: おすすめ, 君, 本当, 奴. This is not cosmetic. Kuromoji
+lemmatises オススメ and おすすめ to different words, so a Card holding the
+katakana form never matches the sentence a generator writes, and the learner
+is taught a spelling that belongs to the subtitle rather than the language.
+
+The exceptions are the words for which katakana *is* the normal writing, and
+they are the majority of any katakana list: loanwords (ケーキ, コーヒー,
+バイト), species and plant names (アザラシ, ペンギン, クルミ, ワカサギ), and
+the handful of native words that have settled into katakana in modern use —
+コツ is the clearest. Leave those as they are.
+
+The test to apply, when unsure: write the proposed form out and tokenise it.
+If it comes back as one token with the part of speech the Card claims, the
+form is recognised and the change is safe. こつ splits into 来つ and だじゃれ
+into だ・じゃ・れ; both are signs to keep the katakana.
+
 **Unrecognised symbol runs are filed as nouns.** `!?` and `...♪` arrive as
 `名詞/サ変接続`. Preparation excludes them; they are not Japanese to learn.
 
