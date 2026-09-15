@@ -10,7 +10,7 @@ import {
 import { err, ok, type Result } from "../result.ts";
 import type { AnswerGrade, SchedulePhase, StudyFailure } from "./contracts.ts";
 
-// v3: learning steps for new Cards, none for relearning. The two are
+// v4: learning steps for new Cards, none for relearning. The two are
 // different problems and v2 answered both the same way.
 //
 // Relearning is unchanged: a Card you have learned and then failed is
@@ -21,12 +21,20 @@ import type { AnswerGrade, SchedulePhase, StudyFailure } from "./contracts.ts";
 // A new Card is the opposite case. It has no stability to schedule by, and
 // one exposure followed by the first retrieval three days later is a single
 // massed trial and a long silence — the spacing effect governs the gap
-// between successful retrievals, and there had not been one yet. So a new
-// Card is retrieved at five and ten minutes and an hour before it graduates
-// to the multi-day ladder. What it is retrieved from is a freshly generated
-// sentence each time, never the one just seen, so what is practised is the
-// word and not the line it appeared in.
-export const SCHEDULER_VERSION = `${FSRSVersion};gafu-parameters-v3`;
+// between successful retrievals, and there had not been one yet.
+//
+// The steps are an hour and two, not the ten minutes a once-a-day app has to
+// settle for. Sessions here run several times across a day, so the gap that
+// a step buys is a real one: a retrieval is worth most when what it recalls
+// has had time to fade, and five minutes on is still the same breath. The
+// steps are shorter than the gap between sessions so that each lands at the
+// next one rather than after it; a step that is missed only makes the Card
+// overdue, which costs nothing.
+//
+// What the Card is retrieved from is a freshly generated sentence each time,
+// never the one just seen, so what is practised is the word and not the line
+// it appeared in.
+export const SCHEDULER_VERSION = `${FSRSVersion};gafu-parameters-v4`;
 
 export type StoredSchedule = Readonly<{
   dueAt: string;
@@ -46,7 +54,7 @@ const scheduler = fsrs({
   maximum_interval: 36_500,
   enable_fuzz: false,
   enable_short_term: true,
-  learning_steps: ["5m", "10m", "1h"],
+  learning_steps: ["30m", "1h", "2h"],
   relearning_steps: [],
 });
 

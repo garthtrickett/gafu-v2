@@ -1342,8 +1342,8 @@ past the point of successful recall gives nothing back. Retrieval practice
 is what builds retention, and an item dropped after a single correct recall
 is poorly retained a week on.
 
-New Cards are retrieved at five and ten minutes and an hour before they
-graduate to the multi-day ladder (`gafu-parameters-v3`). Relearning is
+New Cards are retrieved at an hour and two hours before they graduate to the
+multi-day ladder (`gafu-parameters-v4`). Relearning is
 unchanged and deliberately so: a Card that was learned and then failed is
 still scheduled by its stability and still lands days away, which is what
 Patch 2.34 was asked for.
@@ -1358,9 +1358,19 @@ same-day retrievals cannot promote a word into the supporting vocabulary
 early. Existing schedules and review history are untouched; the new rule
 applies from the next answer.
 
-**Gate:** scheduler tests for a new Card retrieved again within the hour and
-graduating to a multi-day interval, and for a lapse on a learned Card still
-landing at least a day away; the full required validation passes.
+The steps are set to the rhythm of a day's sessions rather than to the ten
+minutes a once-a-day app has to settle for. A retrieval is worth most when
+what it recalls has had time to fade, and the within-session repetition that
+short steps buy has sharply diminishing returns past the first success —
+what carries retention is coming back to the word in a later sitting. Each
+step is shorter than the gap between sessions so it lands at the next one
+rather than after it, and a step that is missed only makes the Card overdue,
+which costs nothing.
+
+**Gate:** scheduler tests for a new Card retrieved again the same day but no
+sooner than an hour, for it graduating to a multi-day interval, and for a
+lapse on a learned Card still landing at least a day away; the full required
+validation passes.
 
 ## Exit gate
 
