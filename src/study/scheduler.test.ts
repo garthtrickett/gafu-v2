@@ -32,7 +32,7 @@ describe("FSRS adapter", () => {
     const first = scheduleAnswer(initial, "good", now);
 
     expect(SCHEDULER_VERSION).toContain("FSRS-6.0");
-    expect(SCHEDULER_VERSION).toContain("gafu-parameters-v3");
+    expect(SCHEDULER_VERSION).toContain("gafu-parameters-v4");
     expect(initial).toMatchObject({ dueAt: now.toISOString(), phase: "new", reps: 0 });
     expect(first.ok).toBe(true);
     if (first.ok) {
@@ -40,16 +40,18 @@ describe("FSRS adapter", () => {
     }
   });
 
-  test("a new Card is retrieved again within the hour, not in three days", () => {
+  test("a new Card comes back the same day, at the next session not the same breath", () => {
     // One exposure and then nothing for days is a single massed trial: there
-    // has been no successful retrieval yet for a gap to be spaced from.
+    // has been no successful retrieval yet for a gap to be spaced from. The
+    // gap is long enough to be a retrieval and short enough that the next
+    // session of the day picks it up.
     const now = new Date("2026-09-08T10:00:00.000Z");
     const first = scheduleAnswer(newSchedule(now), "good", now);
     if (!first.ok) throw new Error(first.error.kind);
     expect(first.value.phase).toBe("learning");
     const gapMs = new Date(first.value.dueAt).getTime() - now.getTime();
-    expect(gapMs).toBeGreaterThan(0);
-    expect(gapMs).toBeLessThanOrEqual(1 * hours);
+    expect(gapMs).toBeGreaterThanOrEqual(1 * hours);
+    expect(gapMs).toBeLessThan(6 * hours);
   });
 
   test("a new Card graduates to the multi-day ladder once retrieved", () => {
