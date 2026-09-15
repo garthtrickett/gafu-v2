@@ -2,7 +2,7 @@ import type { KeyValueStore } from "./local-store.ts";
 
 /**
  * A background queue for the writes a study session produces: teaching
- * acknowledgements and grades. The browser advances the moment the learner
+ * acknowledgements, grades, and suspensions. The browser advances the moment the learner
  * clicks; each write is sent in order behind the scenes and retried on
  * transport failure. A write the server refuses is recorded rather than
  * retried, because sending it again would be refused again. Jobs are plain
@@ -10,7 +10,7 @@ import type { KeyValueStore } from "./local-store.ts";
  */
 export type OutboxJob = Readonly<{
   id: string;
-  kind: "teach" | "answer";
+  kind: "teach" | "answer" | "suspend";
   label: string;
   url: string;
   body: unknown;

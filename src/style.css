@@ -779,6 +779,13 @@ form {
   background: #3a2622;
 }
 
+/* Set apart from the buttons that answer the Card: this one puts it away. */
+.presentation-aside {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #232723;
+}
+
 .pill--stuck {
   color: #ffd7a1;
   background: #3a2f1c;

@@ -450,6 +450,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
           card.id === outcome.card.id ? { ...card, ...outcome.card } : card,
         ),
       };
+    } else if (job.kind === "suspend") {
+      const cardId = (job.body as { cardId?: string }).cardId;
+      model.snapshot = {
+        ...model.snapshot,
+        cards: model.snapshot.cards.map((card) =>
+          card.id === cardId ? { ...card, state: "suspended" as const } : card,
+        ),
+      };
     } else if (job.kind === "teach") {
       const cardId = (job.body as { cardId?: string }).cardId;
       model.snapshot = {
@@ -624,6 +632,13 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (event.key === "r") {
       event.preventDefault();
       replayAudio();
+      return;
+    }
+    // s shelves the Card on screen, in either mode: the moment a Card shows
+    // itself to be wrong is while it is being read.
+    if (event.key === "s" && model.presentation !== null && !model.busy) {
+      event.preventDefault();
+      suspendCurrent();
       return;
     }
     // Grading by key, only when a review's explanation is open: c and i
@@ -840,6 +855,33 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (!more) void refreshStatus().then(draw, draw);
   };
 
+  /**
+   * Puts the Card on the shelf from inside the session and moves on.
+   *
+   * A Card shows itself to be wrong — the wrong sense, a meaning that belongs
+   * to another word, something the learner is nowhere near — while it is on
+   * screen, and that is the moment to act. Going to the bank to find it means
+   * losing the sentence that made the case. No grade is recorded: a
+   * suspension is not an answer, and the schedule is left where it was for
+   * whenever the Card comes back.
+   */
+  const suspendCurrent = (): void => {
+    const current = model.presentation;
+    if (current === null) return;
+    const name = current.material.targetSurface;
+    enqueue(
+      "suspend",
+      `Suspend: ${name}`,
+      `/api/study/cards/${encodeURIComponent(current.cardId)}/state`,
+      { action: "suspend", cardId: current.cardId },
+    );
+    const more = advanceSession();
+    model.message = more ? `Suspended ${name}. Next Card.` : endOfSession();
+    model.messageKind = "success";
+    draw();
+    if (!more) void refreshStatus().then(draw, draw);
+  };
+
   // Check yourself against the explanation, then mark it honestly:
   // correct maps to good, incorrect maps to again, and the scheduler never
   // sees a third option. The grade is queued and the next Card shows at once.
@@ -916,6 +958,19 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                   draw();
                                 }}>Explanation <kbd aria-hidden="true">E</kbd></button>`
                         }
+                        <div class="presentation-aside">
+                          <button
+                            type="button"
+                            class="secondary"
+                            data-testid="suspend-current"
+                            ?disabled=${model.busy}
+                            aria-keyshortcuts="s"
+                            title="Suspend this Card (S)"
+                            @click=${suspendCurrent}
+                          >
+                            Suspend this Card <kbd aria-hidden="true">S</kbd>
+                          </button>
+                        </div>
                       </article>`;
 
   /**
