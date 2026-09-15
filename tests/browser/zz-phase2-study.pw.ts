@@ -259,6 +259,20 @@ test("configures a key and teaches before the first generated review", async ({
   }
   expect(learned.sort()).toEqual(["bird", "cat"]);
 
+  // A Card can be shelved from where it is read, without going to the bank
+  // to find it. The next Card shows at once and the suspension goes to the
+  // outbox like any other write; no grade is recorded for it.
+  await expect(review.getByText("teach", { exact: true })).toBeVisible();
+  const shelved = (await review.getByTestId("answer-target").textContent()) ?? "";
+  const shelvedTitle = (shelved.match(/^\s*([^（\s]+)/u) ?? [])[1] ?? "";
+  expect(shelvedTitle.length).toBeGreaterThan(0);
+  await review.getByTestId("suspend-current").click();
+  await expect(page.getByRole("status")).toContainText("Suspended");
+  await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
+  await expect(
+    page.locator(".bank-card", { hasText: shelvedTitle }).first(),
+  ).toContainText("suspended");
+
   // The batch also wrote first exposures for the background Cards. Read
   // through the rest so the session ends and the buttons come back.
   for (let guard = 0; guard < 40; guard += 1) {

@@ -1470,6 +1470,24 @@ than preceding them, so the Cards listed are the ones the counts describe.
 **Gate:** a Card created under a limit of none is admitted by raising the
 limit and nothing else; the full required validation passes.
 
+### Patch 2.57 — Shelve a Card from where it is read
+
+A Card shows itself to be wrong while it is on screen: the wrong sense, a
+meaning belonging to another word, something the learner is nowhere near.
+Suspending it meant leaving the session, finding it in the bank, and losing
+the sentence that made the case — so in practice it was answered instead,
+and came back.
+
+Both modes carry a Suspend button now, and the S key. The Card is shelved
+and the next one shows at once; the suspension goes to the outbox like a
+grade or an acknowledgement, so it is instant and survives being offline. No
+grade is recorded: a suspension is not an answer, and the schedule is left
+where it stood for whenever the Card is restored.
+
+**Gate:** a Card suspended from inside the session leaves the session at
+once and reads as suspended in the bank; the full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
