@@ -195,7 +195,9 @@ export const createGeneratedMaterialValidator = (
             ? `unknownVocabulary: ${reason.surfaces.join(", ")}`
             : reason.kind === "unknownGrammar"
               ? `unknownGrammar: ${reason.canonicalForms.join(", ")}`
-              : reason.kind,
+              : reason.kind === "readingUnplaceable"
+                ? `readingUnplaceable: ${reason.written.join(", ")}`
+                : reason.kind,
         ),
       });
     }

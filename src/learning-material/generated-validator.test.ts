@@ -295,3 +295,46 @@ describe("an inflected target is still the target", () => {
     expect(reasons.join(" ")).not.toContain("聞き出");
   });
 });
+
+describe("a reading has to explain its writing", () => {
+  // The Card that found this: the model dropped the ず from 相変わらず and the
+  // sentence still passed, so the learner was shown one ruby stretched over
+  // the whole line, kana included, and the whole line coloured as the target.
+  // What is caught is a reading contradicting the kana its writing shows; a
+  // reading merely wrong over the kanji reads as well as a right one and
+  // needs a dictionary, not this.
+  test("a reading dropping a kana the writing shows is refused", async () => {
+    const japanese = "鳥かな。";
+    expect(
+      await validate({
+        value: {
+          ...valid,
+          readingSegments: [{ written: japanese, reading: "とり。" }],
+        },
+        mode: "teach",
+        card,
+        knowledge,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "validationRejected",
+        reasons: [`readingUnplaceable: ${japanese}`],
+      },
+    });
+  });
+
+  test("a reading that places over the kanji is accepted", async () => {
+    expect(
+      await validate({
+        value: {
+          ...valid,
+          readingSegments: [{ written: "鳥かな。", reading: "とりかな。" }],
+        },
+        mode: "teach",
+        card,
+        knowledge,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+});

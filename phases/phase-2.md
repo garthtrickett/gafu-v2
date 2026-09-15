@@ -1274,6 +1274,31 @@ inflection itself is still checked as grammar.
 inflected forms, and with the span on the stem alone; the target is never
 reported as unknown vocabulary; the full required validation passes.
 
+### Patch 2.50 — A reading has to explain its writing
+
+相変わらず忙しい。 came back with the reading あいかわらいそがしい。, a ず
+short of the word. Nothing refused it, so the renderer did what it could:
+unable to place the reading run by run, it fell back to one ruby over the
+whole sentence, kana included, and that single piece was small enough beside
+the target span to be coloured — so the line carried a second line of kana
+above it and the whole thing was yellow.
+
+Both symptoms were the one reading. It is refused now: every kana the
+writing shows must be said, so a reading that contradicts its own writing is
+material the learner should never see. What this cannot catch is a reading
+merely wrong over the kanji, which reads as well as a right one and would
+need a dictionary rather than the writing to detect.
+
+Two supporting changes. A reading is placed over kanji or not placed at all:
+the edge-trimming fallback is kept only when what it lands on is kanji,
+because ruby over kana teaches a kana its own sound. And は, へ and を may be
+read as わ, え and お, since a model may spell either the word or the sound
+and both say the same thing.
+
+**Gate:** a reading dropping a kana its writing shows is refused; a reading
+that cannot be placed is not shown, and the target under it stays coloured
+alone; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
