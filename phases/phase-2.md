@@ -1299,6 +1299,32 @@ and both say the same thing.
 that cannot be placed is not shown, and the target under it stays coloured
 alone; the full required validation passes.
 
+### Patch 2.51 — The word being taught is never a word the learner is missing
+
+A Card failed its batch round after round, reporting the target surface
+mismatched, the target absent, and the target itself an unknown word. The
+third was a consequence of the first: a token is excused from the
+unknown-vocabulary check by sitting inside the target span, so a span the
+model miscounted left the target word standing outside its own span, to be
+reported as language the learner has not met.
+
+That reason then travelled into the retry as a hint, which told the model
+that the one word the sentence exists to teach was a word it must not use.
+Each round was worse advised than the last.
+
+The target word is now itself wherever it stands, by identity as well as by
+span. The miscounted span is still refused, and refused for what it is; what
+it no longer does is blame the target for it.
+
+Left open: a span that is arithmetically wrong but points at an unambiguous
+target could be repaired from the sentence rather than refused, since a model
+writes the target text well and counts UTF-16 offsets badly. That would
+change what the frozen adversarial manifest calls an invalid span, so it is
+not taken here.
+
+**Gate:** a miscounted span is refused without reporting the target as
+unknown vocabulary; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

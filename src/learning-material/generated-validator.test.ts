@@ -338,3 +338,31 @@ describe("a reading has to explain its writing", () => {
     ).toMatchObject({ ok: true });
   });
 });
+
+describe("the word being taught is never a word the learner is missing", () => {
+  // The Card that found this: 鳥 reported as unknown vocabulary because the
+  // model miscounted the span, so the retry was told to avoid 鳥 — the one
+  // word the sentence exists to teach.
+  test("a miscounted span does not turn the target into an unknown word", async () => {
+    const japanese = "鳥かな。";
+    const result = await validate({
+      value: {
+        ...valid,
+        japanese,
+        targetSpan: { ...valid.targetSpan, start: 1, end: 2 },
+        readingSegments: [{ written: japanese, reading: "" }],
+      },
+      mode: "teach",
+      card,
+      knowledge,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const reasons =
+      result.error.kind === "validationRejected" ? result.error.reasons : [];
+    // The span is still wrong and still refused; what it no longer does is
+    // blame the target for it.
+    expect(reasons).toContain("targetSurfaceMismatch");
+    expect(reasons.join(" ")).not.toContain("unknownVocabulary");
+  });
+});
