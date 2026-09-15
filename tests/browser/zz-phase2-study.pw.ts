@@ -143,12 +143,13 @@ test("configures a key and teaches before the first generated review", async ({
   await attachTeaching("鳥", "とり", "bird", "A general word for a bird.", "鳥かな。");
   await attachTeaching("猫", "ねこ", "cat", "A general word for a cat.", "猫かな。");
 
-  // Queue order is by Card id, so either Card can come first. One Learn press
-  // teaches both: Seen it records the first and serves the second without a
-  // trip back to the buttons. Seen it changes no state and no schedule, so
-  // the visible proof it landed is the Card moving from the "to learn" tile
-  // to the "to review" tile. The baseline is read after Learn opens, because
-  // admission happens on that first press.
+  // Nothing has taught the background Cards, and the bank says so before a
+  // batch runs. Learn is gone: Prepare batch writes the first exposures and
+  // opens the session itself, so one press covers every Card that is due.
+  await expect(
+    page.locator(".bank-card", { hasText: "no teaching yet" }).first(),
+  ).toBeVisible();
+
   const tile = async (name: string): Promise<number> =>
     Number(
       (await page.getByTestId(`tile-${name}`).locator("strong").textContent()) ?? "",
@@ -169,16 +170,25 @@ test("configures a key and teaches before the first generated review", async ({
     }
     await route.continue();
   });
-  await review.getByRole("button", { name: "Learn new" }).click();
-  for (let round = 0; round < 2; round += 1) {
+  await review.getByRole("button", { name: "Prepare batch" }).click();
+  await expect(review.getByTestId("batch-progress")).toContainText("Batch ready:", {
+    timeout: 60_000,
+  });
+
+  // The session holds a first exposure for every untaught Card: the two
+  // authored sentences served as they were written, the background Cards
+  // generated. Work through until both authored Cards have been seen.
+  let released = false;
+  let inspected = false;
+  for (let guard = 0; guard < 40 && learned.length < 2; guard += 1) {
     await expect(review.getByText("teach", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
+    const kind = ((await review.getByTestId("card-kind").textContent()) ?? "").trim();
     const toLearn = await tile("learn");
     const toReview = await tile("review");
-    // The card says what kind it is before the sentence is read.
-    await expect(review.getByTestId("card-kind")).toHaveText("vocabulary");
-    if (round === 0) {
+    if (kind === "vocabulary" && !inspected) {
+      inspected = true;
       // The authored sentence is spoken too: the clip is filled in on first
       // serve, the Listen button appears, and the clip itself is real audio.
       const listen = review.getByTestId("listen");
@@ -217,28 +227,29 @@ test("configures a key and teaches before the first generated review", async ({
       await page.keyboard.press("Escape");
       await expect(lookup).toHaveCount(0);
     }
-    // The target's own meaning is always there, whatever prose the model
-    // wrote: it comes from the Card through the validated metadata.
-    const gloss = review.getByTestId("answer-target");
-    await expect(gloss).toBeVisible();
-    await expect(gloss).toContainText(/[鳥猫]（(とり|ねこ)）/u);
-    await expect(gloss).toContainText(/bird|cat/u);
-    const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
-    learned.push(taught.includes("cat") ? "cat" : "bird");
+    if (kind === "vocabulary") {
+      // The target's own meaning is always there, whatever prose the model
+      // wrote: it comes from the Card through the validated metadata.
+      const gloss = review.getByTestId("answer-target");
+      await expect(gloss).toBeVisible();
+      await expect(gloss).toContainText(/[鳥猫]（(とり|ねこ)）/u);
+      await expect(gloss).toContainText(/bird|cat/u);
+      const taught = (await review.getByTestId("material-answer").textContent()) ?? "";
+      learned.push(taught.includes("cat") ? "cat" : "bird");
+    }
     await expect(review.getByRole("button", { name: "good" })).toHaveCount(0);
     await review.getByRole("button", { name: "Seen it — next Card" }).click();
     await expect(page.getByRole("status")).toContainText("Teaching seen");
-    if (round === 0) {
-      // The second Card is on screen while the first acknowledgement is
-      // still held; the tiles cannot have moved yet.
+    if (!released) {
+      released = true;
+      // The next Card is on screen while the first acknowledgement is still
+      // held; the tiles cannot have moved yet.
       await expect(review.getByText("teach", { exact: true })).toBeVisible();
-      const next = (await review.getByTestId("material-answer").textContent()) ?? "";
-      expect(next.includes("cat") ? "cat" : "bird").not.toBe(learned[0]);
       await expect(page.getByTestId("syncing")).toContainText("Syncing 1");
       expect(await tile("learn")).toBe(toLearn);
       releaseTeach();
-      await expect(page.getByTestId("syncing")).toHaveCount(0);
     }
+    await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
     await expect(page.getByTestId("tile-learn").locator("strong")).toHaveText(
       String(toLearn - 1),
     );
@@ -248,21 +259,26 @@ test("configures a key and teaches before the first generated review", async ({
   }
   expect(learned.sort()).toEqual(["bird", "cat"]);
 
-  // Both taught Cards are out of the learn queue now. What remains untaught
-  // has no stored teaching anywhere, so the chain ends on the buttons with a
-  // plain message, and a fresh Learn press walks past all of it and says so
-  // instead of idling on the first gap.
-  await expect(page.getByRole("status")).toContainText("Nothing more to learn");
-  await review.getByRole("button", { name: "Learn new" }).click();
-  await expect(page.getByRole("status")).toContainText("No first exposure yet for");
-  // The bank says the same per Card: the taught pair carry no flag, the
-  // untaught background grammar does.
+  // The batch also wrote first exposures for the background Cards. Read
+  // through the rest so the session ends and the buttons come back.
+  for (let guard = 0; guard < 40; guard += 1) {
+    if (
+      (await review.getByRole("button", { name: "Seen it — next Card" }).count()) === 0
+    )
+      break;
+    await review.getByRole("button", { name: "Seen it — next Card" }).click();
+    await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
+  }
+  await expect(page.getByRole("status")).toContainText("Batch complete.");
+
+  // A Card that has been taught carries no gap in the bank, and the batch
+  // filled the gaps it found: what was flagged before it ran is not now.
   await expect(page.locator(".bank-card", { hasText: "鳥" })).not.toContainText(
     "no teaching yet",
   );
-  await expect(
-    page.locator(".bank-card", { hasText: "no teaching yet" }).first(),
-  ).toBeVisible();
+  await expect(page.locator(".bank-card", { hasText: "猫" })).not.toContainText(
+    "no teaching yet",
+  );
 
   // The offline shell: once the worker controls the page, a reload passes
   // through it and the signed-in page and its assets are kept.
@@ -324,6 +340,25 @@ test("configures a key and teaches before the first generated review", async ({
       await page.keyboard.press("i");
     }
   };
+  // Every taught Card is due, background grammar included, so the batch
+  // prepared reviews for all of them. The assertions here are about the two
+  // Vocabulary Cards, whose meanings the journey knows; the rest are graded
+  // past. Only ever online: offline they would queue and the outbox count
+  // below would stop meaning anything.
+  const skipToVocabulary = async (): Promise<void> => {
+    for (let guard = 0; guard < 40; guard += 1) {
+      await expect(review.getByText("review", { exact: true })).toBeVisible({
+        timeout: 20_000,
+      });
+      const kind = ((await review.getByTestId("card-kind").textContent()) ?? "").trim();
+      if (kind === "vocabulary") return;
+      await review.getByRole("button", { name: "Explanation" }).click();
+      await review.getByRole("button", { name: "Correct", exact: true }).click();
+      await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
+    }
+    throw new Error("no Vocabulary Card came up");
+  };
+
   const progress = page.getByTestId("session-progress");
   await expect(progress).toContainText("Opening the prepared");
   await expect(progress.locator(".pending-elapsed")).toHaveText(/^\d+s$/u);
@@ -334,6 +369,8 @@ test("configures a key and teaches before the first generated review", async ({
   await expect(review.getByText("review", { exact: true })).toBeVisible({
     timeout: 20_000,
   });
+
+  await skipToVocabulary();
 
   // The next clip is fetched ahead while online, so it plays after the reload.
   await page.context().setOffline(true);
@@ -359,16 +396,23 @@ test("configures a key and teaches before the first generated review", async ({
   await page.context().setOffline(false);
   await expect(page.getByTestId("offline")).toHaveCount(0);
   await expect(page.getByTestId("syncing")).toHaveCount(0);
+  await skipToVocabulary();
   await reviewOne("Incorrect");
   expect(worked.sort()).toEqual(["bird", "cat"]);
-  // Both reviews are graded, so what is left is the first exposures the
-  // batch prepared for the background Cards. Read through them to the end.
-  for (let guard = 0; guard < 30; guard += 1) {
-    if (
-      (await review.getByRole("button", { name: "Seen it — next Card" }).count()) === 0
-    )
+  // Both Vocabulary Cards are graded; whatever the batch also prepared is
+  // read through to the end, so the session closes and says so.
+  for (let guard = 0; guard < 40; guard += 1) {
+    const seen = review.getByRole("button", { name: "Seen it — next Card" });
+    if ((await seen.count()) > 0) {
+      await seen.click();
+    } else if (
+      (await review.getByRole("button", { name: "Explanation" }).count()) > 0
+    ) {
+      await review.getByRole("button", { name: "Explanation" }).click();
+      await review.getByRole("button", { name: "Correct", exact: true }).click();
+    } else {
       break;
-    await review.getByRole("button", { name: "Seen it — next Card" }).click();
+    }
     await expect(page.getByTestId("syncing")).toHaveCount(0, { timeout: 20_000 });
   }
   await expect(page.getByRole("status")).toContainText("Batch complete.");

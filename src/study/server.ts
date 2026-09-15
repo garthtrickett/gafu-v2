@@ -341,42 +341,15 @@ const splitDue = (
 const serveFirst = async (
   study: Study,
   material: LearningMaterial,
-  wantUntaught: boolean | null,
 ): Promise<Response> => {
   const queue = study.studyQueue();
   if (!queue.ok) return failureResponse(queue.error);
   const knowledge = study.knowledgeSnapshot();
   if (!knowledge.ok) return failureResponse(knowledge.error);
-  let selected: (typeof queue.value.due)[number]["card"] | null = null;
-  if (wantUntaught === null) {
-    const first = queue.value.due[0];
-    if (first !== undefined) selected = first.card;
-  } else {
-    const split = splitDue(queue.value.due, material);
-    if (!split.ok) return materialResponse(split);
-    if (wantUntaught) {
-      // An untaught Card without stored teaching cannot be shown yet, so
-      // Learn passes over it looking for the first teachable one. Anything
-      // else (including infrastructure failures) returns immediately. An
-      // empty-handed pass ends where a single miss always did.
-      for (const item of split.value.untaught) {
-        const candidate = await material.prepare({
-          card: item.card,
-          knowledge: knowledge.value,
-        });
-        if (!candidate.ok && candidate.error.kind === "teachingNotPrepared") continue;
-        if (!candidate.ok) return materialResponse(candidate);
-        return servePrepared(study, candidate.value);
-      }
-      return Response.json({ error: { kind: "teachingNotPrepared" } }, { status: 422 });
-    } else {
-      const first = split.value.review[0];
-      if (first !== undefined) selected = first.card;
-    }
-  }
-  if (selected === null)
+  const first = queue.value.due[0];
+  if (first === undefined)
     return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-  return finishServe(study, material, knowledge.value, selected);
+  return finishServe(study, material, knowledge.value, first.card);
 };
 
 /**
@@ -420,40 +393,7 @@ const handleApi = async (
     return materialResponse(material.inspectLastRequest());
   }
   if (request.method === "POST" && url.pathname === "/api/study/session") {
-    return serveFirst(study, material, null);
-  }
-  if (request.method === "POST" && url.pathname === "/api/study/session/learn-all") {
-    // The whole Learn session at once: every untaught due Card with stored
-    // teaching, prepared together so the browser can walk them with no
-    // round trip per Card. Cards with nothing stored are passed over as the
-    // single-Card route does; an empty hand is the same explicit gap.
-    const queue = study.studyQueue();
-    if (!queue.ok) return failureResponse(queue.error);
-    const knowledge = study.knowledgeSnapshot();
-    if (!knowledge.ok) return failureResponse(knowledge.error);
-    const split = splitDue(queue.value.due, material);
-    if (!split.ok) return materialResponse(split);
-    // Nothing untaught is due at all, which is a different thing from untaught
-    // Cards whose first exposure has not been written yet. Saying which it is
-    // lets the browser give the advice that applies.
-    if (split.value.untaught.length === 0) {
-      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-    }
-    const prepared = await Promise.all(
-      split.value.untaught.map((item) =>
-        material.prepare({ card: item.card, knowledge: knowledge.value }),
-      ),
-    );
-    const items: PreparedMaterial[] = [];
-    for (const result of prepared) {
-      if (result.ok) items.push(result.value);
-      else if (result.error.kind !== "teachingNotPrepared")
-        return materialResponse(result);
-    }
-    if (items.length === 0) {
-      return Response.json({ error: { kind: "teachingNotPrepared" } }, { status: 422 });
-    }
-    return Response.json({ items });
+    return serveFirst(study, material);
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/review-all") {
     // The whole session at once, for the Cards a batch banked, each in the
@@ -501,9 +441,6 @@ const handleApi = async (
       items.push(result.value);
     }
     return Response.json({ items });
-  }
-  if (request.method === "POST" && url.pathname === "/api/study/learn") {
-    return serveFirst(study, material, true);
   }
   if (request.method === "POST" && url.pathname === "/api/study/review-batch") {
     const body = await readJson(request);
