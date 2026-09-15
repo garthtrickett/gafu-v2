@@ -23,6 +23,28 @@ export const normalizeReading = (value: string): string =>
     )
     .trim();
 
+/**
+ * Where the target surface sits, when the sentence says so beyond doubt.
+ *
+ * A model writes the target text well and counts UTF-16 offsets badly, so a
+ * span that does not land on the surface it names is read as arithmetic gone
+ * wrong rather than a different claim about the target, and the sentence is
+ * searched instead. Only an unambiguous answer is taken: a surface appearing
+ * twice leaves no way to tell which was meant, and a span pointed at the
+ * wrong one of them is exactly what a careless or misleading model produces.
+ * Null means the span cannot be reconciled and the material is refused.
+ */
+const locateSurface = (
+  japanese: string,
+  surface: string,
+): Readonly<{ start: number; end: number }> | null => {
+  if (surface === "") return null;
+  const at = japanese.indexOf(surface);
+  if (at < 0) return null;
+  if (japanese.indexOf(surface, at + 1) >= 0) return null;
+  return { start: at, end: at + surface.length };
+};
+
 const insideSpan = (
   inner: DecodedPresentation["targetSpan"],
   outer: DecodedPresentation["targetSpan"],
@@ -140,20 +162,26 @@ export const createLearningMaterialValidator = (
       reasons.push({ kind: "readingUnplaceable", written: unplaceable });
     }
 
-    const span = presentation.targetSpan;
-    const validSpan =
-      Number.isInteger(span.start) &&
-      Number.isInteger(span.end) &&
-      span.start >= 0 &&
-      span.end > span.start &&
-      span.end <= normalizedJapanese.length;
-    if (!validSpan) {
-      reasons.push({ kind: "invalidTargetSpan" });
-    } else if (
-      normalizedJapanese.slice(span.start, span.end) !== presentation.targetSurface
-    ) {
+    const claimed = presentation.targetSpan;
+    const lands =
+      Number.isInteger(claimed.start) &&
+      Number.isInteger(claimed.end) &&
+      claimed.start >= 0 &&
+      claimed.end > claimed.start &&
+      claimed.end <= normalizedJapanese.length &&
+      normalizedJapanese.slice(claimed.start, claimed.end) ===
+        presentation.targetSurface;
+    const located = lands
+      ? claimed
+      : locateSurface(normalizedJapanese, presentation.targetSurface);
+    if (located === null) {
       reasons.push({ kind: "targetSurfaceMismatch" });
     }
+    // Everything below reads the repaired span, and it is the repaired span
+    // that travels back: the learner's colouring lands on the word, not on
+    // where the model counted it to be.
+    const span = located === null ? claimed : { ...claimed, ...located };
+    const spanned = { ...presentation, targetSpan: span };
 
     const analyzed = await dependencies.analyzer.analyze(
       "learning-material",
@@ -294,7 +322,11 @@ export const createLearningMaterialValidator = (
     }
 
     return reasons.length === 0
-      ? ok({ presentation, normalizedJapanese, analyzer: dependencies.analyzer.name })
+      ? ok({
+          presentation: spanned,
+          normalizedJapanese,
+          analyzer: dependencies.analyzer.name,
+        })
       : err({ kind: "rejected", reasons });
   },
 });

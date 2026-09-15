@@ -201,6 +201,8 @@ export const createGeneratedMaterialValidator = (
         ),
       });
     }
-    return ok(decoded.value);
+    // The span may have been repaired from the sentence; what is banked is
+    // where the target is, so the colouring lands on the word.
+    return ok({ ...decoded.value, targetSpan: checked.value.presentation.targetSpan });
   };
 };

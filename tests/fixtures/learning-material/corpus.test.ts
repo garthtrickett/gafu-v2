@@ -18,5 +18,5 @@ test("the learning-material adversarial manifest is frozen and balanced", () => 
     new Bun.CryptoHasher("sha256")
       .update(JSON.stringify(adversarialManifest))
       .digest("hex"),
-  ).toBe("9f29b0c88ab01f9882807496c062267de6e56358df1f15b29ff209d0c24c9e40");
+  ).toBe("443c8787d5130348f4633e58ea3fccf5cce5062472056b06b169b8f687eb16f0");
 });

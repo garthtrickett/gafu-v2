@@ -160,12 +160,18 @@ const invalidCase = (
         readingSegments: [{ written: "不一致", reading: "" }],
       };
       break;
-    case "invalidSpan":
+    case "unreconcilableSpan": {
+      // A miscounted span is repaired from the sentence when the surface
+      // appears once and so says plainly where it is. Doubling it leaves no
+      // way to tell which was meant, and a span landing on neither cannot be
+      // resolved: the material is refused rather than guessed at.
+      const doubled = base.japanese.replace("。", `${base.targetSurface}。`);
       value = {
-        ...presentation(base),
-        targetSpan: { ...presentation(base).targetSpan, start: -1 },
+        ...presentation(base, doubled),
+        targetSpan: { ...presentation(base, doubled).targetSpan, start: -1 },
       };
       break;
+    }
     case "surfaceMismatch":
       value = { ...presentation(base), targetSurface: "別" };
       break;
@@ -333,9 +339,9 @@ describe("i/i+1 learning-material validator", () => {
                 return "malformedStructure";
               case "readingMismatch":
                 return "readingReconstructionMismatch";
-              case "invalidSpan":
+              case "unreconcilableSpan":
               case "repeatedMisleading":
-                return "invalidTargetSpan";
+                return "targetSurfaceMismatch";
               case "targetAbsent":
               case "targetOnlyMetadata":
                 return "targetAbsent";

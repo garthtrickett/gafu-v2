@@ -161,7 +161,15 @@ describe("generated material validation boundary", () => {
         readingSegments: [{ written: "かな。", reading: "" }],
       },
     ],
-    ["bad span", { ...valid, targetSpan: { ...valid.targetSpan, start: -1 } }],
+    [
+      "a span that cannot be reconciled",
+      {
+        ...valid,
+        japanese: "鳥と鳥かな。",
+        readingSegments: [{ written: "鳥と鳥かな。", reading: "" }],
+        targetSpan: { ...valid.targetSpan, start: -1 },
+      },
+    ],
     [
       "reconstruction",
       { ...valid, readingSegments: [{ written: "不一致", reading: "" }] },
@@ -341,17 +349,36 @@ describe("a reading has to explain its writing", () => {
   });
 });
 
-describe("the word being taught is never a word the learner is missing", () => {
-  // The Card that found this: 鳥 reported as unknown vocabulary because the
-  // model miscounted the span, so the retry was told to avoid 鳥 — the one
-  // word the sentence exists to teach.
-  test("a miscounted span does not turn the target into an unknown word", async () => {
+describe("a miscounted span is repaired from the sentence", () => {
+  // The Cards that found this: eight in a row refused for a span that did
+  // not land on the word it named, and the word then counted against its own
+  // sentence as vocabulary the learner had never met.
+  test("the target is found and the repaired span is what is banked", async () => {
     const japanese = "鳥かな。";
     const result = await validate({
       value: {
         ...valid,
         japanese,
+        // One out: 鳥 is at 0, not 1.
         targetSpan: { ...valid.targetSpan, start: 1, end: 2 },
+        readingSegments: [{ written: japanese, reading: "" }],
+      },
+      mode: "teach",
+      card,
+      knowledge,
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value.targetSpan).toMatchObject({ start: 0, end: 1 });
+  });
+
+  test("a surface the sentence says twice is refused, not guessed at", async () => {
+    const japanese = "鳥と鳥かな。";
+    const result = await validate({
+      value: {
+        ...valid,
+        japanese,
+        targetSpan: { ...valid.targetSpan, start: 4, end: 5 },
         readingSegments: [{ written: japanese, reading: "" }],
       },
       mode: "teach",
@@ -362,9 +389,6 @@ describe("the word being taught is never a word the learner is missing", () => {
     if (result.ok) return;
     const reasons =
       result.error.kind === "validationRejected" ? result.error.reasons : [];
-    // The span is still wrong and still refused; what it no longer does is
-    // blame the target for it.
     expect(reasons).toContain("targetSurfaceMismatch");
-    expect(reasons.join(" ")).not.toContain("unknownVocabulary");
   });
 });
