@@ -2,6 +2,7 @@ import type { AnalyzedToken, BroadPartOfSpeech } from "../analysis/contracts.ts"
 import { classifyKnownVocabulary } from "../analysis/known-vocabulary.ts";
 import { dictionaryFormReading, normalizeJapanese } from "../analysis/normalization.ts";
 import { err, ok } from "../result.ts";
+import { readingFits } from "../study/furigana.ts";
 import type {
   DecodedPresentation,
   DetectedGrammar,
@@ -126,6 +127,17 @@ export const createLearningMaterialValidator = (
       .join("");
     if (reconstructed !== normalizedJapanese) {
       reasons.push({ kind: "readingReconstructionMismatch" });
+    }
+    // A reading has to explain its writing: every kana the writing shows must
+    // be said, so 相変わらず reads あいかわらず and never あいかわら. One that
+    // cannot be placed over the kanji it belongs to is simply wrong, and
+    // showing it would teach the wrong word — so it is refused here rather
+    // than left for the renderer to make the best of.
+    const unplaceable = presentation.readingSegments
+      .filter((segment) => !readingFits(segment.written, segment.reading))
+      .map((segment) => segment.written);
+    if (unplaceable.length > 0) {
+      reasons.push({ kind: "readingUnplaceable", written: unplaceable });
     }
 
     const span = presentation.targetSpan;

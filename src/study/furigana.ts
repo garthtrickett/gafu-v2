@@ -64,11 +64,22 @@ export const splitFurigana = (written: string, reading: string): FuriganaSplit =
 export type FuriganaPiece = Readonly<{ text: string; reading: string | null }>;
 
 const kanjiRun = /[一-鿿々〆]+/gu;
+const kanjiOnly = /^[一-鿿々〆]+$/u;
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 // Katakana and hiragana are the same syllables; a written カ must match a reading か.
 const toHiragana = (value: string): string =>
   value.replace(/[ァ-ヶ]/gu, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60));
+
+// Three kana are written one way and said another when they work as
+// particles: 私は is わたしは or わたしわ depending on whether the writer
+// spelled the sound or the word. Both are the same reading, so both match.
+const spokenAs: Readonly<Record<string, string>> = { は: "わ", へ: "え", を: "お" };
+const literalRun = (text: string): string =>
+  Array.from(toHiragana(text), (character) => {
+    const spoken = spokenAs[character];
+    return spoken === undefined ? escapeRegExp(character) : `[${character}${spoken}]`;
+  }).join("");
 
 const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[] => {
   const { before, body, over, after } = splitFurigana(written, reading);
@@ -91,16 +102,7 @@ const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[]
  * reading the pattern cannot explain falls back to trimming the shared edges,
  * so nothing renders worse than it did.
  */
-export const alignFurigana = (
-  written: string,
-  rawReading: string,
-): readonly FuriganaPiece[] => {
-  // A model sometimes spaces a reading between words; the writing has no such
-  // spaces, so they would defeat the match. Readings carry no whitespace.
-  const reading = rawReading.replace(/\s+/gu, "");
-  if (reading === "" || reading === written || !hasKanji(written)) {
-    return [{ text: written, reading: null }];
-  }
+const placed = (written: string, reading: string): readonly FuriganaPiece[] | null => {
   const runs: { text: string; kanji: boolean }[] = [];
   let cursor = 0;
   for (const match of written.matchAll(kanjiRun)) {
@@ -111,11 +113,11 @@ export const alignFurigana = (
   }
   if (cursor < written.length) runs.push({ text: written.slice(cursor), kanji: false });
   const pattern = new RegExp(
-    `^${runs.map((run) => (run.kanji ? "(.+?)" : escapeRegExp(toHiragana(run.text)))).join("")}$`,
+    `^${runs.map((run) => (run.kanji ? "(.+?)" : literalRun(run.text))).join("")}$`,
     "u",
   );
   const matched = pattern.exec(toHiragana(reading));
-  if (matched === null) return edgeTrimmed(written, reading);
+  if (matched === null) return null;
   // Kana normalisation keeps every length, so the captures' positions in the
   // normalised reading are their positions in the original.
   const pieces: FuriganaPiece[] = [];
@@ -136,6 +138,37 @@ export const alignFurigana = (
     }
   }
   return pieces;
+};
+
+/** Whitespace is how a model separates words in a reading; the writing has none. */
+const spoken = (rawReading: string): string => rawReading.replace(/\s+/gu, "");
+
+/** Whether a reading can be placed over its writing, run by run. */
+export const readingFits = (written: string, rawReading: string): boolean => {
+  const reading = spoken(rawReading);
+  if (reading === "" || reading === written || !hasKanji(written)) return true;
+  return placed(written, reading) !== null;
+};
+
+export const alignFurigana = (
+  written: string,
+  rawReading: string,
+): readonly FuriganaPiece[] => {
+  const reading = spoken(rawReading);
+  if (reading === "" || reading === written || !hasKanji(written)) {
+    return [{ text: written, reading: null }];
+  }
+  const runs = placed(written, reading);
+  if (runs !== null) return runs;
+  // The reading does not explain the writing, so it cannot be placed run by
+  // run. Trimming the shared edges sometimes still lands it on the kanji;
+  // when it does not, the writing is shown alone. Ruby over kana is not a
+  // reading of anything — it is a second copy of the line, in the wrong
+  // place, teaching a kana its own sound.
+  const trimmed = edgeTrimmed(written, reading);
+  return trimmed.every((piece) => piece.reading === null || kanjiOnly.test(piece.text))
+    ? trimmed
+    : [{ text: written, reading: null }];
 };
 
 /** A piece of a sentence as rendered: text, its ruby, and whether it is the target. */

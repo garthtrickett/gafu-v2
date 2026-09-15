@@ -89,10 +89,20 @@ describe("aligning a reading to a written phrase", () => {
     );
   });
 
-  test("a reading the writing cannot explain falls back to trimming the edges", () => {
-    // Reading has no る: no literal match, so the old behaviour applies.
-    expect(aligned("広がる", "ひろい")).toBe("[広がる:ひろい]");
+  test("a reading the writing cannot explain is not placed over kana", () => {
+    // ひろい has no る, so it cannot be placed run by run. Trimming the edges
+    // would leave it sitting over 広がる, kana and all, which reads as a
+    // second copy of the line rather than a reading of the kanji.
+    expect(aligned("広がる", "ひろい")).toBe("広がる");
     expect(aligned("広い", "い")).toBe("広い");
+    // Trimming that does land on the kanji alone is still worth having.
+    expect(aligned("広い", "ひろい")).toBe("[広:ひろ]い");
+  });
+
+  test("a particle spelled as it sounds still places", () => {
+    // 成功は is written は and may be read わ; both say the same thing.
+    expect(aligned("成功は", "せいこうわ")).toBe("[成功:せいこう]は");
+    expect(aligned("駅へ", "えきえ")).toBe("[駅:えき]へ");
   });
 
   test("the written form is always recoverable", () => {
@@ -174,16 +184,17 @@ describe("colouring the target within a sentence", () => {
     ).toBe("成功(せいこう)は*おごり*を生(う)む。");
   });
 
-  test("a whole-sentence ruby fallback is never coloured as the target", () => {
-    // The reading cannot be aligned (it lacks the は), so the fallback puts one
-    // ruby over the sentence; painting that yellow would mark the whole line.
+  test("a reading that cannot be placed leaves the target coloured alone", () => {
+    // The reading lacks the は, so it is not placed at all. What is left is
+    // plain writing, which cuts cleanly at the span: the line keeps its
+    // colour on the target instead of taking it everywhere.
     expect(
       marked(
         "成功はおごりを生む。",
         [{ written: "成功はおごりを生む。", reading: "せいこうおごりをうむ。" }],
         { start: 3, end: 6 },
       ),
-    ).toBe("成功はおごりを生む。(せいこうおごりをうむ。)");
+    ).toBe("成功は*おごり*を生む。");
   });
 
   test("segments that do not rejoin into the sentence colour nothing", () => {
