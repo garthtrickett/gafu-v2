@@ -677,9 +677,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
           card.dueAt <= now,
       )
       .map(cardTitle);
-    return names.length === 0
-      ? "Nothing left to learn has a first exposure yet. Prepare batch writes them."
-      : `No first exposure yet for ${names.join(", ")}. Prepare batch writes them.`;
+    if (names.length === 0) {
+      return "Nothing left to learn has a first exposure yet. Prepare batch writes them.";
+    }
+    // Naming a Card or two makes the gap concrete; naming seventy is a wall
+    // of text with nothing to do about it. The count is the useful part.
+    const shown = names.slice(0, 3).join(", ");
+    const rest = names.length - Math.min(3, names.length);
+    const which =
+      rest === 0 ? shown : `${shown} and ${rest} more Card${rest === 1 ? "" : "s"}`;
+    return `No first exposure yet for ${which}. Prepare batch writes them.`;
   };
 
   const startLearn = (): void => {
