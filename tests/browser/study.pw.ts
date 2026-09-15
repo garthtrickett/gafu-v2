@@ -10,6 +10,12 @@ test("manages durable typed Cards and settings through the local Study server", 
   ).toBeVisible();
   await expect(page.getByText("Kaishi 1.5k is not installed.")).toBeVisible();
 
+  // Admit nothing for now: the Cards below are created first and the limit
+  // raised afterwards, so what admits them is the raise.
+  await page.getByLabel("New Cards per Day").fill("0");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Study settings saved");
+
   const vocabulary = page.getByTestId("vocabulary-form");
   await vocabulary.getByLabel("Lemma").fill("開く");
   await vocabulary.getByLabel("Reading").fill("あく");
@@ -37,10 +43,17 @@ test("manages durable typed Cards and settings through the local Study server", 
   await vocabularyCard.getByRole("button", { name: "Support-ready" }).click();
   await expect(vocabularyCard).toContainText("support-ready");
 
+  // The tiles answer for the daily limit as it stands. Nothing was admitted
+  // under a limit of none; raising it admits on the spot, without a Card
+  // having to be served first to make it happen.
+  const staged = page.getByTestId("tile-staged").locator("strong");
+  await expect(staged).toHaveText("2");
+
   await page.getByLabel("New Cards per Day").fill("7");
   await page.getByLabel("Time zone").fill("Australia/Sydney");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Study settings saved");
+  await expect(staged).toHaveText("0");
 
   await page.reload();
   await expect(page.getByText("2 durable Cards")).toBeVisible();

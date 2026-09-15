@@ -1454,6 +1454,22 @@ ending one always ends the batch.
 including the first exposures the batch writes for the Cards nothing had
 taught; the full required validation passes.
 
+### Patch 2.56 — The tiles answer for the limit as it stands
+
+Raising the daily limit changed nothing on screen. Admission is what turns a
+staged Card into a due one, and it runs when the queue is read — but the
+routes behind the tiles read the Card listing and the counts, never the
+queue. So the new limit sat unused until something else happened to read it,
+which since Patch 2.55 means pressing Prepare batch. A learner who raised
+the limit and watched the tiles saw a setting that appeared not to work.
+
+The status is read through the queue now, so looking at the page is enough
+for the limit to take effect. The bank listing follows the counts rather
+than preceding them, so the Cards listed are the ones the counts describe.
+
+**Gate:** a Card created under a limit of none is admitted by raising the
+limit and nothing else; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
