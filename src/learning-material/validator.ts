@@ -252,12 +252,15 @@ export const createLearningMaterialValidator = (
         }
         // A token inside the target span is the target word's own morphology,
         // not supporting language — whether the target is one token or a
-        // compound tiling the span.
+        // compound tiling the span. The target word is also itself wherever
+        // it stands: a model that miscounts the span would otherwise have the
+        // word it is teaching reported back as a word the learner does not
+        // know, and the retry hint would tell it to avoid that very word.
         const isVocabularyTarget =
           target.kind === "vocabulary" &&
-          insideSpan(token.span, presentation.targetSpan);
+          (insideSpan(token.span, span) || isTargetToken(token, target));
         const isGrammarTargetComponent =
-          target.kind === "grammar" && insideSpan(token.span, presentation.targetSpan);
+          target.kind === "grammar" && insideSpan(token.span, span);
         return !isVocabularyTarget && !isGrammarTargetComponent && status !== "known";
       })
       .map(({ token }) => token.surface);
@@ -281,7 +284,7 @@ export const createLearningMaterialValidator = (
           // about what the learner must already know.
           !(
             item.spans.length > 0 &&
-            item.spans.every((span) => insideSpan(span, presentation.targetSpan))
+            item.spans.every((found) => insideSpan(found, span))
           ) &&
           !knowledge.grammar.has(item.canonicalForm),
       )
