@@ -95,7 +95,6 @@ type BrowserModel = {
    * outbox and the next Card shows immediately.
    */
   session: {
-    kind: "learn" | "review";
     items: readonly PreparedMaterial[];
     index: number;
   } | null;
@@ -528,13 +527,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
     }
   };
 
-  const beginSession = (
-    kind: "learn" | "review",
-    items: readonly PreparedMaterial[],
-  ): void => {
+  const beginSession = (items: readonly PreparedMaterial[]): void => {
     const first = items[0];
     if (first === undefined) return;
-    model.session = { kind, items, index: 0 };
+    model.session = { items, index: 0 };
     void store.set(SESSION_KEY, model.session);
     present(first);
   };
@@ -663,65 +659,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * duplicate text. A segment whose reading is its own writing is kana already
    * and takes no ruby: putting が over が is noise that pushes the line apart.
    */
-  // Names the due Cards Learn walked past, so the fix is a named batch to
-  // prepare rather than a hunt through the bank.
-  const untaughtMessage = (): string => {
-    const now = model.snapshot?.status.observedAt ?? "";
-    const names = (model.snapshot?.cards ?? [])
-      .filter(
-        (card) =>
-          needsTeaching(card) &&
-          card.state === "active" &&
-          card.schedulePhase === "new" &&
-          card.dueAt !== null &&
-          card.dueAt <= now,
-      )
-      .map(cardTitle);
-    if (names.length === 0) {
-      return "Nothing left to learn has a first exposure yet. Prepare batch writes them.";
-    }
-    // Naming a Card or two makes the gap concrete; naming seventy is a wall
-    // of text with nothing to do about it. The count is the useful part.
-    const shown = names.slice(0, 3).join(", ");
-    const rest = names.length - Math.min(3, names.length);
-    const which =
-      rest === 0 ? shown : `${shown} and ${rest} more Card${rest === 1 ? "" : "s"}`;
-    return `No first exposure yet for ${which}. Prepare batch writes them.`;
-  };
-
-  const startLearn = (): void => {
-    void run(
-      async () => {
-        let items: readonly PreparedMaterial[];
-        try {
-          ({ items } = await requestJson<{ items: readonly PreparedMaterial[] }>(
-            "/api/study/session/learn-all",
-            { method: "POST" },
-          ));
-        } catch (cause) {
-          // Learn shows what has already been prepared, so both refusals are
-          // about preparation rather than anything retrying will fix: either
-          // no new Card is due, or the due ones have no first exposure yet.
-          if (cause instanceof Error && cause.message === "nothingDue") {
-            throw new Error(
-              "Nothing is due to learn right now. Staged Cards are admitted under your daily limit.",
-            );
-          }
-          if (cause instanceof Error && cause.message === "teachingNotPrepared") {
-            // The names come from the bank listing, which admission may have
-            // just changed; read it fresh before saying which Cards.
-            await refresh();
-            throw new Error(untaughtMessage());
-          }
-          throw cause;
-        }
-        beginSession("learn", items);
-        return `Learn this target. ${items.length} Cards to learn are ready; Seen it moves straight on.`;
-      },
-      { label: "Opening the Cards to learn…" },
-      "status",
-    );
-  };
 
   // A ready batch is the review session: the first banked Card is served
   // without another press, and grading chains the rest. Nothing to serve
@@ -737,7 +674,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // to finish it; otherwise the learner is still working and the batch is
   // theirs to complete. Returns null when there is nothing to announce.
   const absorb = (items: readonly PreparedMaterial[]): string | null => {
-    if (model.session !== null && model.session.kind === "review") {
+    if (model.session !== null) {
       if (items.length === 0) return null;
       model.session = {
         ...model.session,
@@ -753,7 +690,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       }
       return "Nothing prepared yet.";
     }
-    beginSession("review", items);
+    beginSession(items);
     return "Read the sentence, then check the explanation and mark yourself.";
   };
 
@@ -761,7 +698,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const batch = model.batch;
     if (batch === null || cardIds.length === 0) return;
     batch.handedIds.push(...cardIds);
-    const live = model.session !== null && model.session.kind === "review";
+    const live = model.session !== null;
     // Mid-teaching, or mid-anything that is not a review session: leave the
     // learner alone. The reserves stay banked and open on the next press.
     if (!live && model.presentation !== null) return;
@@ -870,12 +807,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // because a batch is held in memory and a reload loses it while the
   // session itself is restored from the device; only a batch still known to
   // be producing changes the ending, and then only to say so.
-  const endOfSession = (kind: "learn" | "review" | null, alone: string): string => {
+  const endOfSession = (): string => {
     if (model.batch !== null && !model.batch.done) {
       return "Reviewed everything that has landed so far. The rest are still being prepared and will open as they arrive.";
     }
     model.batch = null;
-    return kind === "review" ? "Batch complete." : alone;
+    return "Batch complete.";
   };
 
   // Seen it queues the acknowledgement and shows the next Card at once. The
@@ -894,11 +831,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
         presentationId: current.id,
       },
     );
-    const kind = model.session?.kind ?? null;
     const more = advanceSession();
     model.message = more
       ? "Teaching seen. Here is the next Card to learn."
-      : endOfSession(kind, "Teaching seen. Nothing more to learn right now.");
+      : endOfSession();
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);
@@ -921,13 +857,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
         permit,
       },
     );
-    const kind = model.session?.kind ?? null;
     const more = advanceSession();
     model.message = more
       ? correct
         ? "Review recorded. Next Card."
         : "Marked for sooner. Next Card."
-      : endOfSession(kind, "Batch complete.");
+      : endOfSession();
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);
@@ -1156,16 +1091,13 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     <h2>Study</h2>
                     ${
                       model.presentation === null
-                        ? html`<p class="review-help">Prepare batch writes a fresh sentence for everything due: a first exposure for a new Card, a review for one already taught. Nothing comes from the media a Card came from; every sentence is built from words you already know. Learn shows the next prepared first exposure. Staged Cards are admitted under your daily limit.</p>`
+                        ? html`<p class="review-help">Prepare batch writes a fresh sentence for everything due: a first exposure for a new Card, a review for one already taught. Reviews come first, then new Cards, up to twenty a press. Nothing comes from the media a Card came from; every sentence is built from words you already know. The Cards open as they are written, so there is nothing else to press. Staged Cards are admitted under your daily limit.</p>`
                         : ""
                     }
                   </div>
                   ${
                     model.presentation === null
                       ? html`<div class="button-row">
-                          <button type="button" @click=${startLearn} ?disabled=${model.busy}>
-                            Learn new
-                          </button>
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
                             Prepare batch
                           </button>

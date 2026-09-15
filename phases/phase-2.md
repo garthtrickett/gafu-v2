@@ -1431,6 +1431,29 @@ and a new zone or hour takes effect at the next genuine rollover.
 start and the next one under midnight; changing either setting mid-day
 admits nothing further; the full required validation passes.
 
+### Patch 2.55 — One button, because the other one could not work
+
+Learn served a first exposure that was already stored, and nothing else. It
+was the right shape when a Card's teaching arrived with it, written by hand
+and carried in by the cards CLI. Of the Cards imported since, none carries
+one: the learner's rule is that no sentence comes from the media a Card came
+from, so there is nothing to attach at import and the sentence has to be
+written later. Learn could not open any of them, and said so by naming them,
+seventy at a time.
+
+Prepare batch already did the whole job — it writes a first exposure for a
+new Card and a review for one already taught, and it opens the session
+itself as the Cards land. Learn is removed, with the two routes only it
+used. What it protected is not lost: an authored sentence is still a banked
+teach reserve, and the batch serves it as it is rather than writing another.
+
+A session is now always a batch session, so it no longer carries a mode, and
+ending one always ends the batch.
+
+**Gate:** the journey teaches both authored Cards through the batch,
+including the first exposures the batch writes for the Cards nothing had
+taught; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
