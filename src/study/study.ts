@@ -339,14 +339,41 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
              AND (?2 IS NULL OR c.type = ?2)
              AND (?3 IS NULL OR p.state = ?3)
            GROUP BY c.id
-           ORDER BY c.staged_at, c.id`,
+           ORDER BY c.staged_at, c.id
+           LIMIT ?4 OFFSET ?5`,
         )
         .all(
           query.search?.normalize("NFKC").trim().toLocaleLowerCase() || null,
           query.type ?? null,
           query.state ?? null,
+          // SQLite honours an offset only behind a limit; -1 means all of them.
+          query.limit ?? -1,
+          query.offset ?? 0,
         ) as CardRow[];
       return ok(rows.map(toSummary));
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
+  /** The size of the listing a query matches, for paging through it. */
+  const countCards = (query: CardQuery = {}): Result<number, StudyFailure> => {
+    try {
+      const row = database
+        .query(
+          `SELECT count(*) AS total
+           FROM card c
+           JOIN card_progress p ON p.card_id = c.id
+           WHERE (?1 IS NULL OR c.searchable_text LIKE '%' || ?1 || '%')
+             AND (?2 IS NULL OR c.type = ?2)
+             AND (?3 IS NULL OR p.state = ?3)`,
+        )
+        .get(
+          query.search?.normalize("NFKC").trim().toLocaleLowerCase() || null,
+          query.type ?? null,
+          query.state ?? null,
+        ) as { total: number };
+      return ok(row.total);
     } catch (cause) {
       return err({ kind: "readFailed", detail: detail(cause) });
     }
@@ -1411,6 +1438,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
   return {
     createCard,
     listCards,
+    countCards,
     updateCard,
     setCardState,
     studyQueue,

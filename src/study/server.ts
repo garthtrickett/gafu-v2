@@ -58,6 +58,7 @@ import { createWatch } from "../watch/watch.ts";
 import type {
   AnswerGrade,
   CardContent,
+  CardQuery,
   CardStateCommand,
   CardSummary,
   CreateCard,
@@ -280,17 +281,32 @@ const statusSnapshot = (
   return ok({ status: status.value, session: session.value });
 };
 
+/** How many Cards one page of the bank carries. */
+export const BANK_PAGE_SIZE = 50;
+
 /**
  * The bank snapshot. Knowledge is not in it: the 1,437-word baseline is
  * four-fifths of a megabyte and only the baseline panel reads it, so it has
  * its own route and loads when that panel opens.
+ *
+ * The listing is a page, not the bank. Every Card was sent until a five
+ * thousand word import made that three megabytes on each load, for Cards the
+ * learner will not meet for months; searching and filtering moved to the
+ * query with it, so a page is drawn from the whole bank rather than from
+ * what happened to be sent.
  */
-const snapshot = (study: Study, material: LearningMaterial): Response => {
+const snapshot = (
+  study: Study,
+  material: LearningMaterial,
+  query: CardQuery,
+): Response => {
   // Counts first: reading them admits, and the bank listed below should be
   // the one the counts describe.
   const counts = statusSnapshot(study, material);
   if (!counts.ok) return counts.error;
-  const cards = study.listCards();
+  const total = study.countCards(query);
+  if (!total.ok) return failureResponse(total.error);
+  const cards = study.listCards(query);
   if (!cards.ok) return failureResponse(cards.error);
   const preferences = study.preferences();
   if (!preferences.ok) return failureResponse(preferences.error);
@@ -308,6 +324,8 @@ const snapshot = (study: Study, material: LearningMaterial): Response => {
   }));
   return Response.json({
     cards: bank,
+    cardTotal: total.value,
+    cardOffset: query.offset ?? 0,
     preferences: preferences.value,
     status: counts.value.status,
     session: counts.value.session,
@@ -566,7 +584,21 @@ const handleApi = async (
     );
   }
   if (request.method === "GET" && url.pathname === "/api/study") {
-    return snapshot(study, material);
+    const search = url.searchParams.get("search");
+    const type = url.searchParams.get("type");
+    const offset = Number(url.searchParams.get("offset") ?? "0");
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      return invalidRequest("Bank offset must be a whole number from zero.");
+    }
+    if (type !== null && type !== "grammar" && type !== "vocabulary") {
+      return invalidRequest("Bank type filter must be grammar or vocabulary.");
+    }
+    return snapshot(study, material, {
+      ...(search === null || search === "" ? {} : { search }),
+      ...(type === null ? {} : { type }),
+      limit: BANK_PAGE_SIZE,
+      offset,
+    });
   }
   if (request.method === "GET" && url.pathname === "/api/study/status") {
     const counts = statusSnapshot(study, material);

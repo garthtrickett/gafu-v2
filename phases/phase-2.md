@@ -1523,6 +1523,26 @@ a stronger one, since a span can no longer point anywhere but at the word.
 banked; a surface appearing twice is refused; the amended corpus rejects
 every invalid presentation; the full required validation passes.
 
+### Patch 2.59 — The bank is read a page at a time
+
+Every Card went to the browser on every load. At a thousand Cards that was
+half a megabyte and nobody noticed; a five thousand word import would have
+made it three, on each load and each refresh after an answer, for Cards the
+learner will not meet for months.
+
+The listing is a page of fifty now, and searching and filtering went to the
+query with it — they were done in the browser over whatever had been sent,
+which only worked because everything had been. A page is drawn from the
+whole bank instead, so a search finds a Card whether or not it happened to
+be in the last response. The response carries how many Cards the query
+matches, so the pager can size itself, and the tiles are unaffected: they
+are counted over every Card on the server, where the count costs nothing to
+send.
+
+**Gate:** pages partition the bank with no Card missed or repeated, a count
+answers for the query rather than the page, and no limit is still the whole
+bank; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
