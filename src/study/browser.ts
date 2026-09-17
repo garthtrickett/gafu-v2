@@ -38,6 +38,9 @@ const needsTeaching = (card: BankCard): boolean =>
 
 type BrowserSnapshot = Readonly<{
   cards: readonly BankCard[];
+  /** Cards matching the search and filter, of which `cards` is one page. */
+  cardTotal: number;
+  cardOffset: number;
   preferences: StudyPreferences;
   status: StudyStatus;
   session: SessionCounts;
@@ -72,6 +75,8 @@ type BrowserModel = {
   messageKind: "neutral" | "success" | "error";
   search: string;
   typeFilter: "all" | "grammar" | "vocabulary";
+  /** Where the shown page starts in the matching listing. */
+  bankOffset: number;
   /**
    * One dictionary lookup at a time, raised by highlighting a word in the
    * sentence. Completion is term-guarded so a slow lookup cannot land on a
@@ -244,6 +249,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     messageKind: "neutral",
     search: "",
     typeFilter: "all",
+    bankOffset: 0,
     lookup: null,
     pending: null,
     session: null,
@@ -254,13 +260,47 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const SESSION_KEY = "session";
   const SNAPSHOT_KEY = "snapshot";
 
+  /** Matches the server's page size; the pager counts pages in it. */
+  const BANK_PAGE = 50;
+
+  /** The bank query as the controls currently read. */
+  const bankQuery = (): string => {
+    const parts = new URLSearchParams();
+    if (model.search !== "") parts.set("search", model.search);
+    if (model.typeFilter !== "all") parts.set("type", model.typeFilter);
+    if (model.bankOffset !== 0) parts.set("offset", String(model.bankOffset));
+    const query = parts.toString();
+    return query === "" ? "/api/study" : `/api/study?${query}`;
+  };
+
   const refresh = async (): Promise<void> => {
     [model.snapshot, model.provider] = await Promise.all([
-      requestJson<BrowserSnapshot>("/api/study"),
+      requestJson<BrowserSnapshot>(bankQuery()),
       requestJson<ProviderStatus>("/api/provider"),
     ]);
     // The last good bank paints the next load instantly, online or not.
     void store.set(SNAPSHOT_KEY, model.snapshot);
+  };
+
+  /**
+   * Refetches the listing alone, for a search, a filter or a page turn. The
+   * provider status and the tiles are unaffected, so they are left alone; a
+   * failure leaves the page that is showing rather than emptying the bank.
+   */
+  const refetchBank = async (): Promise<void> => {
+    try {
+      const next = await requestJson<BrowserSnapshot>(bankQuery());
+      model.snapshot = next;
+      void store.set(SNAPSHOT_KEY, next);
+    } catch {
+      return;
+    }
+    draw();
+  };
+
+  const turnBankPage = (by: number): void => {
+    model.bankOffset = Math.max(0, model.bankOffset + by * BANK_PAGE);
+    void refetchBank();
   };
 
   // Session actions change counts, not the bank, so they refetch only the
@@ -1084,14 +1124,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const draw = (): void => {
     const snapshot = model.snapshot;
-    const matching =
-      snapshot?.cards.filter((card) => {
-        const haystack = `${cardTitle(card)} ${cardMeaning(card)}`.toLocaleLowerCase();
-        return (
-          (model.typeFilter === "all" || card.type === model.typeFilter) &&
-          haystack.includes(model.search.toLocaleLowerCase())
-        );
-      }) ?? [];
+    // The server searched, filtered and paged; this is that page.
+    const matching = snapshot?.cards ?? [];
     render(
       html`<main class="study-shell">
         <header class="hero">
@@ -1345,7 +1379,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
               <section class="panel bank-panel">
                 <div class="bank-heading">
-                  <div><h2>Card bank</h2><p>${snapshot.cards.length} durable Cards</p></div>
+                  <div>
+                    <h2>Card bank</h2>
+                    <p data-testid="bank-count">
+                      ${snapshot.cardTotal} durable Cards${
+                        snapshot.cardTotal > snapshot.cards.length
+                          ? html` · showing ${snapshot.cardOffset + 1}–${snapshot.cardOffset + snapshot.cards.length}`
+                          : ""
+                      }
+                    </p>
+                  </div>
                   <div class="filters">
                     <label>
                       Search
@@ -1356,7 +1399,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           model.search = (
                             event.currentTarget as HTMLInputElement
                           ).value;
+                          model.bankOffset = 0;
                           draw();
+                          void refetchBank();
                         }}
                       />
                     </label>
@@ -1367,7 +1412,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         @change=${(event: Event) => {
                           model.typeFilter = (event.currentTarget as HTMLSelectElement)
                             .value as BrowserModel["typeFilter"];
+                          model.bankOffset = 0;
                           draw();
+                          void refetchBank();
                         }}
                       >
                         <option value="all">All</option>
@@ -1377,6 +1424,32 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     </label>
                   </div>
                 </div>
+                ${
+                  snapshot.cardTotal <= snapshot.cards.length
+                    ? ""
+                    : html`<div class="bank-pager" data-testid="bank-pager">
+                        <button
+                          type="button"
+                          class="secondary"
+                          ?disabled=${snapshot.cardOffset === 0}
+                          @click=${() => turnBankPage(-1)}
+                        >
+                          Previous
+                        </button>
+                        <span
+                          >${Math.floor(snapshot.cardOffset / BANK_PAGE) + 1} of
+                          ${Math.max(1, Math.ceil(snapshot.cardTotal / BANK_PAGE))}</span
+                        >
+                        <button
+                          type="button"
+                          class="secondary"
+                          ?disabled=${snapshot.cardOffset + snapshot.cards.length >= snapshot.cardTotal}
+                          @click=${() => turnBankPage(1)}
+                        >
+                          Next
+                        </button>
+                      </div>`
+                }
                 <div class="card-list">
                   ${
                     matching.length === 0

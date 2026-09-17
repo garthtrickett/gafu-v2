@@ -86,6 +86,9 @@ export type CardQuery = Readonly<{
   search?: string;
   type?: CardType;
   state?: CardState;
+  /** A page of the listing. Absent means every match, as it always did. */
+  limit?: number;
+  offset?: number;
 }>;
 
 export type CardStateCommand = Readonly<{
@@ -297,6 +300,8 @@ export type StudyFailure =
 export type Study = Readonly<{
   createCard: (input: CreateCard) => Result<CreateCardOutcome, StudyFailure>;
   listCards: (query?: CardQuery) => Result<readonly CardSummary[], StudyFailure>;
+  /** How many Cards the query matches, ignoring limit and offset. */
+  countCards: (query?: CardQuery) => Result<number, StudyFailure>;
   updateCard: (
     cardId: CardId,
     content: CardContent,

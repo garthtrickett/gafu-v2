@@ -569,6 +569,45 @@ describe("Study admission and review", () => {
     study.close();
   });
 
+  test("the bank can be read a page at a time", () => {
+    // Every Card was sent on every load until a five thousand word import
+    // made that megabytes of Cards the learner will not meet for months.
+    const { study } = openTestStudy();
+    for (let n = 0; n < 7; n += 1) {
+      create(study, {
+        type: "vocabulary",
+        content: {
+          lemma: `語${n}`,
+          reading: `ご${n}`,
+          partOfSpeech: "noun",
+          meaning: `word ${n}`,
+          usageNotes: "",
+        },
+      });
+    }
+    expect(study.countCards()).toMatchObject({ ok: true, value: 7 });
+
+    const first = study.listCards({ limit: 3, offset: 0 });
+    const second = study.listCards({ limit: 3, offset: 3 });
+    const last = study.listCards({ limit: 3, offset: 6 });
+    if (!first.ok || !second.ok || !last.ok) throw new Error("listing failed");
+    expect([first.value.length, second.value.length, last.value.length]).toEqual([
+      3, 3, 1,
+    ]);
+    // The pages partition the bank: no Card twice, none missed.
+    const seen = [...first.value, ...second.value, ...last.value].map((c) => c.id);
+    expect(new Set(seen).size).toBe(7);
+    // No limit is still the whole bank, as it was before.
+    const whole = study.listCards();
+    if (!whole.ok) throw new Error(whole.error.kind);
+    expect(whole.value).toHaveLength(7);
+
+    // A count answers for the query, not the page, so a pager can size itself.
+    expect(study.countCards({ search: "語1" })).toMatchObject({ ok: true, value: 1 });
+    expect(study.countCards({ type: "grammar" })).toMatchObject({ ok: true, value: 0 });
+    study.close();
+  });
+
   test("teaching moves the first review a step out, so it is a retrieval", () => {
     // Teaching shows the answer and asks nothing. Left due, the Card's first
     // review is served by the very next batch — minutes later, before there
