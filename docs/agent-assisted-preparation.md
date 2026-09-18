@@ -5,6 +5,10 @@ Preparation page doing it. This is a second route to the same destination, not a
 replacement: it produces ordinary Cards through the ordinary route, and Study
 cannot tell which way they arrived.
 
+The other routes an agent runs by hand — a frequency corpus into Cards,
+auditing Cards the analyser cannot recognise, and writing a tale for the
+reading page — are in [work an agent does by hand](./agent-run-work.md).
+
 ## Why it exists
 
 Preparation splits into two stages. The first is local, deterministic and free:
