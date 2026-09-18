@@ -15,6 +15,7 @@ import type {
   ReadingFailure,
   ReadingSentence,
   Tale,
+  TaleBeat,
   TaleWord,
 } from "./contracts.ts";
 
@@ -210,6 +211,45 @@ const alreadyHas = (word: TaleWord, knowledge: KnowledgeSnapshot): boolean => {
  * that cannot be written in three rounds stops the reading and says which
  * beat it was, rather than handing over a tale with a hole in it.
  */
+/**
+ * Drafts one beat and keeps trying until it passes or the rounds run out.
+ *
+ * The reasons travel back into the next attempt, so a draft refused for a
+ * word the learner lacks is told which word. Three rounds, because a model
+ * that cannot tell one beat inside the vocabulary available will not manage
+ * it on the tenth try either.
+ */
+export const draftBeat = async (
+  dependencies: ReadingDependencies,
+  tale: Tale,
+  beat: TaleBeat,
+  preceding: readonly string[],
+  knowledge: KnowledgeSnapshot,
+  signal?: AbortSignal,
+): Promise<Result<ReadingSentence, readonly string[]>> => {
+  const target =
+    beat.word !== null && !alreadyHas(beat.word, knowledge) ? beat.word : null;
+  let rejections: readonly string[] = [];
+  for (let round = 0; round < MAX_BEAT_ROUNDS; round += 1) {
+    const draft = await dependencies.provider.write(
+      {
+        titleEnglish: tale.titleEnglish,
+        beat: beat.beat,
+        preceding,
+        target,
+        knowledge,
+        rejections,
+      },
+      signal,
+    );
+    if (!draft.ok) return err([`${draft.error.kind}: ${draft.error.detail}`]);
+    const checked = await checkBeat(dependencies, draft.value, target, knowledge);
+    if (checked.ok) return ok(checked.value);
+    rejections = checked.error;
+  }
+  return err(rejections);
+};
+
 export const writeReading = async (
   dependencies: ReadingDependencies,
   tale: Tale,
@@ -220,41 +260,19 @@ export const writeReading = async (
   const sentences: ReadingSentence[] = [];
   const preceding: string[] = [];
   for (const [index, beat] of tale.beats.entries()) {
-    const target =
-      beat.word !== null && !alreadyHas(beat.word, knowledge) ? beat.word : null;
-    let rejections: readonly string[] = [];
-    let written: ReadingSentence | null = null;
-    for (let round = 0; round < MAX_BEAT_ROUNDS; round += 1) {
-      const draft = await dependencies.provider.write(
-        {
-          titleEnglish: tale.titleEnglish,
-          beat: beat.beat,
-          preceding,
-          target,
-          knowledge,
-          rejections,
-        },
-        signal,
-      );
-      if (!draft.ok) {
-        return err({
-          kind: "beatRefused",
-          index,
-          reasons: [`${draft.error.kind}: ${draft.error.detail}`],
-        });
-      }
-      const checked = await checkBeat(dependencies, draft.value, target, knowledge);
-      if (checked.ok) {
-        written = { ...checked.value, index };
-        break;
-      }
-      rejections = checked.error;
+    const written = await draftBeat(
+      dependencies,
+      tale,
+      beat,
+      preceding,
+      knowledge,
+      signal,
+    );
+    if (!written.ok) {
+      return err({ kind: "beatRefused", index, reasons: written.error });
     }
-    if (written === null) {
-      return err({ kind: "beatRefused", index, reasons: rejections });
-    }
-    sentences.push(written);
-    preceding.push(written.japanese);
+    sentences.push({ ...written.value, index });
+    preceding.push(written.value.japanese);
   }
   return ok({
     taleId: tale.id,

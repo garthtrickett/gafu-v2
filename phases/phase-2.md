@@ -1652,6 +1652,32 @@ fails the gate that is meant to catch exactly that.
 **Gate:** the journey reaches the reading page by following a link from
 Study; the full required validation passes.
 
+### Patch 2.65 — A tale long enough to be a story
+
+桃太郎 read in eleven sentences, which is a synopsis. The cause was
+architectural leaking into editorial: one beat produced one sentence because
+that is what makes each sentence generated, checked and retried on its own,
+and the beats had been written at the grain that convenience suggested
+rather than the grain a story wants.
+
+The density was the worse half. Four new words across eleven sentences is
+one every two and a bit — relentless, and the i+1 idea only works if the i
+sentences carry the reader. 桃太郎 is a hundred and seventeen beats now,
+each saying one small thing, with seven new words: one every seventeen
+sentences.
+
+That length cannot be written in one request. A reading is laid out as
+pending beats and each poll writes one, the way a review batch advances:
+no daemon, nothing waiting minutes on a connection, and what is written
+survives, so a tale half told is carried on rather than begun again. The
+page says which sentence it is on rather than hiding the wait, and a beat
+that cannot be written is left out and counted instead of stopping the
+whole telling.
+
+**Gate:** the journey reads the advertised length off the tale rather than a
+fixed number, watches the progress, and finds that many sentences both when
+written and when read back; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

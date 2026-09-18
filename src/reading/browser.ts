@@ -22,6 +22,8 @@ type Model = {
   /** Tale words already sent to the bank this visit. */
   added: Set<string>;
   busy: boolean;
+  /** How far a tale being written has got, so a long wait can be watched. */
+  progress: { written: number; total: number; failed: number } | null;
   message: string;
   messageKind: "neutral" | "success" | "error";
 };
@@ -57,6 +59,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
     revealed: new Set<number>(),
     added: new Set<string>(),
     busy: false,
+    progress: null,
     message: "",
     messageKind: "neutral",
   };
@@ -99,15 +102,54 @@ export const mountReadingApp = (root: HTMLElement): void => {
     });
   };
 
+  /**
+   * Writes a tale, one sentence per poll.
+   *
+   * A hundred sentences is a hundred generations, so nothing waits on the
+   * whole tale: the dispatch lays out the beats and each poll writes one and
+   * says how far it has got. What is written is kept, so closing the tab
+   * costs the sentence in flight and nothing more.
+   */
   const writeTale = (id: string): void => {
     void run(async () => {
-      const reading = await request<Reading>(`/api/reading/${encodeURIComponent(id)}`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      model.reading = reading;
-      model.revealed = new Set<number>();
-      return `${reading.title} written in ${reading.sentences.length} sentences.`;
+      const started = await request<{ total: number }>(
+        `/api/reading/${encodeURIComponent(id)}`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      model.progress = { written: 0, total: started.total, failed: 0 };
+      draw();
+      for (;;) {
+        const step = await request<{
+          total: number;
+          written: number;
+          failed: number;
+          done: boolean;
+          reasons: readonly string[];
+        }>(`/api/reading/${encodeURIComponent(id)}/progress`);
+        model.progress = {
+          written: step.written,
+          total: step.total,
+          failed: step.failed,
+        };
+        draw();
+        if (!step.done) continue;
+        model.progress = null;
+        if (step.written === 0) {
+          throw new Error(
+            step.reasons.length === 0
+              ? "no sentence could be written"
+              : step.reasons.join("; "),
+          );
+        }
+        const reading = await request<Reading>(
+          `/api/reading/${encodeURIComponent(id)}`,
+        );
+        model.reading = reading;
+        model.revealed = new Set<number>();
+        return step.failed === 0
+          ? `${reading.title} written in ${reading.sentences.length} sentences.`
+          : `${reading.title} written in ${reading.sentences.length} sentences; ${step.failed} could not be written and are left out.`;
+      }
     });
   };
 
@@ -211,6 +253,14 @@ export const mountReadingApp = (root: HTMLElement): void => {
         }
       </nav>
     </header>
+    ${
+      model.progress === null
+        ? ""
+        : html`<p class="notice" data-testid="reading-progress">
+            Writing sentence ${model.progress.written + 1} of ${model.progress.total}…
+            ${model.progress.failed === 0 ? "" : ` ${model.progress.failed} refused so far.`}
+          </p>`
+    }
     ${
       model.message === ""
         ? ""

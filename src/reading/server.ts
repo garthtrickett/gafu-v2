@@ -1,7 +1,7 @@
 import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../analysis/contracts.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
 import type { ReadingFailure } from "./contracts.ts";
-import { type ReadingProvider, writeReading } from "./reading.ts";
+import { draftBeat, type ReadingProvider } from "./reading.ts";
 import type { ReadingStore } from "./store.ts";
 import { taleById, tales, taleWords } from "./tales.ts";
 
@@ -76,12 +76,100 @@ export const handleReadingApi = async (
     });
   }
 
-  const match = url.pathname.match(/^\/api\/reading\/([A-Za-z0-9-]+)$/u);
+  const match = url.pathname.match(/^\/api\/reading\/([A-Za-z0-9-]+)(\/progress)?$/u);
   if (match === null) return null;
   const taleId = match[1] ?? "";
+  const isProgress = match[2] !== undefined;
   const tale = taleById(taleId);
   if (tale === null) {
     return Response.json({ error: { kind: "taleNotFound", taleId } }, { status: 404 });
+  }
+
+  // Each poll writes one sentence, so polling is the pump: no daemon, and a
+  // tale of a hundred sentences never holds a request open for minutes. What
+  // is written is kept, so a poll that fails costs one sentence.
+  if (request.method === "GET" && isProgress) {
+    const before = api.store.progress(taleId);
+    if (!before.ok) {
+      return Response.json({ error: before.error }, { status: status(before.error) });
+    }
+    if (before.value.total === 0) {
+      return Response.json(
+        { error: { kind: "readingNotFound", taleId } },
+        { status: 404 },
+      );
+    }
+    const seq = before.value.next;
+    if (seq !== null) {
+      const knowledge = api.knowledge();
+      if (knowledge === null) {
+        return Response.json(
+          { error: { kind: "readFailed", detail: "knowledge unavailable" } },
+          { status: 500 },
+        );
+      }
+      const beat = tale.beats[seq];
+      const written = api.store.written(taleId);
+      if (!written.ok) {
+        return Response.json(
+          { error: written.error },
+          { status: status(written.error) },
+        );
+      }
+      if (beat !== undefined) {
+        const drafted = await draftBeat(
+          {
+            analyzer: api.analyzer,
+            provider: api.provider,
+            transparentPartOfSpeech: api.transparentPartOfSpeech,
+          },
+          tale,
+          beat,
+          written.value.map((sentence) => sentence.japanese),
+          knowledge,
+        );
+        const recorded = api.store.record(
+          taleId,
+          seq,
+          drafted.ok
+            ? { sentence: { ...drafted.value, index: seq } }
+            : { reasons: drafted.error },
+        );
+        if (!recorded.ok) {
+          return Response.json(
+            { error: recorded.error },
+            { status: status(recorded.error) },
+          );
+        }
+      }
+    }
+    const after = api.store.progress(taleId);
+    if (!after.ok) {
+      return Response.json({ error: after.error }, { status: status(after.error) });
+    }
+    // Finished: the sentences become the reading the page reads back.
+    if (after.value.done) {
+      const sentences = api.store.written(taleId);
+      if (!sentences.ok) {
+        return Response.json(
+          { error: sentences.error },
+          { status: status(sentences.error) },
+        );
+      }
+      const saved = api.store.save({
+        taleId,
+        title: tale.title,
+        titleReading: tale.titleReading,
+        titleEnglish: tale.titleEnglish,
+        provenance: tale.provenance,
+        generatedAt: api.now().toISOString(),
+        sentences: sentences.value,
+      });
+      if (!saved.ok) {
+        return Response.json({ error: saved.error }, { status: status(saved.error) });
+      }
+    }
+    return Response.json({ taleId, ...after.value });
   }
 
   if (request.method === "GET") {
@@ -106,43 +194,17 @@ export const handleReadingApi = async (
     });
   }
 
+  // Starting a reading lays out the beats and returns. Nothing is generated
+  // here: a hundred sentences is minutes, and no request should wait on it.
   if (request.method === "POST") {
-    const knowledge = api.knowledge();
-    if (knowledge === null) {
-      return Response.json(
-        { error: { kind: "readFailed", detail: "knowledge unavailable" } },
-        { status: 500 },
-      );
+    const begun = api.store.begin(taleId, tale.beats.length);
+    if (!begun.ok) {
+      return Response.json({ error: begun.error }, { status: status(begun.error) });
     }
-    const written = await writeReading(
-      {
-        analyzer: api.analyzer,
-        provider: api.provider,
-        transparentPartOfSpeech: api.transparentPartOfSpeech,
-      },
-      tale,
-      knowledge,
-      api.now(),
+    return Response.json(
+      { taleId, total: tale.beats.length, written: 0, failed: 0, done: false },
+      { status: 202 },
     );
-    if (!written.ok) {
-      // A refusal names the sentence and the reason. "beatRefused" alone
-      // leaves a reader — and whoever is debugging — with nothing to act on.
-      return Response.json(
-        {
-          error: written.error,
-          detail:
-            written.error.kind === "beatRefused"
-              ? `sentence ${written.error.index + 1}: ${written.error.reasons.join("; ")}`
-              : undefined,
-        },
-        { status: status(written.error) },
-      );
-    }
-    const saved = api.store.save(written.value);
-    if (!saved.ok) {
-      return Response.json({ error: saved.error }, { status: status(saved.error) });
-    }
-    return Response.json(written.value, { status: 201 });
   }
 
   return new Response(null, { status: 405 });
