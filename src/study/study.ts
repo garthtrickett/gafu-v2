@@ -5,6 +5,7 @@ import { err, ok, type Result } from "../result.ts";
 import type {
   AnswerCard,
   AnswerOutcome,
+  BaselineWordOutcome,
   CaptureCardOutcome,
   CardContent,
   CardId,
@@ -1330,21 +1331,75 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
+  /**
+   * The baseline is a claim about the learner, and it is sometimes wrong: a
+   * seed of fifteen hundred words will contain some they never knew. Saying
+   * so switches the word off, so no generated sentence leans on it, and
+   * stages a Card for it, because a word worth admitting to not knowing is a
+   * word to learn. The Card goes to the front of the queue: it was met, it
+   * was noticed, and it matters now rather than in four months.
+   *
+   * Restoring a word only switches it back on. Any Card already staged for
+   * it stays, to be suspended if that is what the learner wants; quietly
+   * removing a Card with review history behind it would be worse.
+   */
+  const BASELINE_GAP_PRIORITY = 10_000;
+
   const setBaselineWordEnabled = (
     key: string,
     enabled: boolean,
-  ): Result<KnowledgeSnapshot, StudyFailure> => {
+  ): Result<BaselineWordOutcome, StudyFailure> => {
+    type SeedRow = {
+      lemma: string;
+      reading: string;
+      meaning: string;
+      part_of_speech: string | null;
+    };
+    let found: SeedRow | null;
     try {
-      const result = database
-        .query("UPDATE known_word SET enabled = ? WHERE seed_id = ? AND seed_key = ?")
-        .run(enabled ? 1 : 0, dependencies.knownWordSeed.id, key);
-      if (result.changes !== 1) {
+      found = database
+        .query(
+          `SELECT lemma, reading, meaning, part_of_speech
+           FROM known_word WHERE seed_id = ? AND seed_key = ?`,
+        )
+        .get(dependencies.knownWordSeed.id, key) as SeedRow | null;
+      if (found === null) {
         return err({ kind: "cardNotFound", cardId: `baseline:${key}` });
       }
-      return knowledgeSnapshot();
+      database
+        .query("UPDATE known_word SET enabled = ? WHERE seed_id = ? AND seed_key = ?")
+        .run(enabled ? 1 : 0, dependencies.knownWordSeed.id, key);
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
+    const row: SeedRow = found;
+    let staged: CardSummary | null = null;
+    if (!enabled) {
+      // The Kaishi glosses carry the HTML of the deck they came from.
+      const meaning = row.meaning
+        .replace(/&nbsp;/gu, " ")
+        .replace(/\u00a0/gu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+      const made = createCard({
+        type: "vocabulary",
+        content: {
+          lemma: row.lemma,
+          reading: row.reading,
+          partOfSpeech: row.part_of_speech ?? "noun",
+          meaning,
+          usageNotes: "Marked not known in the Kaishi 1.5k baseline.",
+        },
+        stagingPriority: BASELINE_GAP_PRIORITY,
+      });
+      // A Card already standing for the word is the outcome wanted, so an
+      // identity conflict is not a failure here.
+      if (!made.ok && made.error.kind !== "identityConflict") return made;
+      if (made.ok && made.value.outcome === "created") staged = made.value.card;
+    }
+    const knowledge = knowledgeSnapshot();
+    if (!knowledge.ok) return knowledge;
+    return ok({ knowledge: knowledge.value, staged });
   };
 
   const preparationSnapshot = (): Result<StudyPreparationSnapshot, StudyFailure> => {

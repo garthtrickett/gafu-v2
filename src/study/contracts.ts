@@ -91,6 +91,17 @@ export type CardQuery = Readonly<{
   offset?: number;
 }>;
 
+/**
+ * What happened when a baseline word's known-ness changed. Saying a word is
+ * not known stages a Card for it, so the admission it was standing in for
+ * becomes something to learn; `staged` is the Card, or null when one already
+ * existed or the word was being restored.
+ */
+export type BaselineWordOutcome = Readonly<{
+  knowledge: KnowledgeSnapshot;
+  staged: CardSummary | null;
+}>;
+
 export type CardStateCommand = Readonly<{
   cardId: CardId;
   action: "markSupportReady" | "suspend" | "restore";
@@ -318,7 +329,7 @@ export type Study = Readonly<{
   setBaselineWordEnabled: (
     key: string,
     enabled: boolean,
-  ) => Result<KnowledgeSnapshot, StudyFailure>;
+  ) => Result<BaselineWordOutcome, StudyFailure>;
   exportBackup: () => Result<StudyBackup, StudyFailure>;
   /**
    * Rebuilds the database file so space freed by deleted rows is returned.

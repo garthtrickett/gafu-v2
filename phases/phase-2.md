@@ -1543,6 +1543,32 @@ send.
 answers for the query rather than the page, and no limit is still the whole
 bank; the full required validation passes.
 
+### Patch 2.60 — A word admitted not known becomes a Card
+
+The baseline is a claim about the learner, and a seed of fifteen hundred
+words will contain some they never knew. Saying so switched the word off, so
+no generated sentence would lean on it, and there it stopped: the word left
+the Known Word Bank and arrived nowhere. Admitting to a gap was the one
+action that guaranteed the gap stayed.
+
+It stages a Card now, built from the seed's own lemma, reading, meaning and
+part of speech — nothing needs looking up, the deck already carries it. The
+gloss is cleaned of the HTML the deck was published with. The Card goes to
+the front of the admission queue rather than behind everything staged: the
+word was met, the learner noticed, and it matters now rather than in four
+months.
+
+Restoring a word only counts it as known again. A Card already staged for it
+stays, to be suspended if that is what is wanted; removing a Card that may
+carry review history would lose more than it tidies. Saying the same word is
+not known twice stages nothing further — one Card stands for the word, and
+the identity claim says so.
+
+**Gate:** a word the learner does know stays out of the bank; saying one is
+not known stages a Card carrying the seed's own content; restoring leaves
+the Card; saying it twice makes one Card; the full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

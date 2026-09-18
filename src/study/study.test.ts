@@ -159,33 +159,66 @@ describe("Study Cards and knowledge", () => {
     study.close();
   });
 
-  test("keeps baseline words out of the Card bank and preserves corrections", () => {
+  test("a baseline word said not to be known becomes a Card to learn", () => {
+    // The seed is a claim about the learner and is sometimes wrong. Saying so
+    // has to do two things: stop sentences leaning on the word, and put it
+    // somewhere it will be learned. Until it did the second, admitting to a
+    // gap only made the gap permanent.
     const { study } = openTestStudy();
-    const initial = study.knowledgeSnapshot();
-    expect(initial).toMatchObject({
+    expect(study.knowledgeSnapshot()).toMatchObject({
       ok: true,
       value: {
         baseline: { availability: "available", enabledCount: 2 },
         vocabulary: { length: 2 },
       },
     });
+    // A word the learner does know stays out of the bank entirely.
     expect(study.listCards()).toEqual({ ok: true, value: [] });
-    expect(study.setBaselineWordEnabled("inu", false)).toMatchObject({
+
+    const disabled = study.setBaselineWordEnabled("inu", false);
+    expect(disabled).toMatchObject({
       ok: true,
       value: {
-        baseline: {
-          enabledCount: 1,
-          entries: [
-            { key: "inu", enabled: false },
-            { key: "neko", enabled: true },
-          ],
+        knowledge: {
+          baseline: {
+            enabledCount: 1,
+            entries: [
+              { key: "inu", enabled: false },
+              { key: "neko", enabled: true },
+            ],
+          },
+        },
+        staged: {
+          state: "staged",
+          content: {
+            lemma: "犬",
+            reading: "いぬ",
+            meaning: "dog",
+            partOfSpeech: "noun",
+          },
         },
       },
     });
+    const bank = study.listCards();
+    if (!bank.ok) throw new Error(bank.error.kind);
+    expect(bank.value).toHaveLength(1);
+
+    // Restoring it counts the word as known again and leaves the Card, which
+    // may already carry review history; removing it would lose that.
     expect(study.setBaselineWordEnabled("inu", true)).toMatchObject({
       ok: true,
-      value: { baseline: { enabledCount: 2 } },
+      value: { knowledge: { baseline: { enabledCount: 2 } }, staged: null },
     });
+    expect(study.listCards()).toMatchObject({ ok: true });
+
+    // Saying it again stages nothing further: one Card stands for the word.
+    expect(study.setBaselineWordEnabled("inu", false)).toMatchObject({
+      ok: true,
+      value: { staged: null },
+    });
+    const after = study.listCards();
+    if (!after.ok) throw new Error(after.error.kind);
+    expect(after.value).toHaveLength(1);
     study.close();
   });
 
