@@ -1618,6 +1618,26 @@ is a failure to name, so a poll that finds nothing wrong costs nothing.
 
 **Gate:** the journey unchanged; the full required validation passes.
 
+### Patch 2.63 — A word whose own spelling is a construction
+
+A Card for かわいそう could not be taught. The word ends in そう, so the
+detector finds 〜そうだ（様態）running from inside it across the copula that
+follows — 3..6 against a target at 0..5 — and the sentence was refused for
+leaning on grammar the learner had not met, when the grammar was partly the
+word's own spelling.
+
+The guard that excuses a construction found within the target required the
+detected span to sit wholly inside it. That holds for 詰める, whose める tail
+is matched in the middle of the word, and fails for any word whose last
+character begins a pattern. A pattern whose first character belongs to the
+target is matching the word, so it is excused however far past the word it
+runs. One starting where the target ends is still the learner's to know:
+the copula after かわいそう is asked for as before.
+
+**Gate:** a Card whose spelling contains a construction validates without
+that construction being required, and grammar beginning outside the word is
+still required; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
