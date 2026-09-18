@@ -464,14 +464,17 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const setBaselineWord = (key: string, enabled: boolean): void => {
     void run(async () => {
-      await requestJson(`/api/study/baseline/${encodeURIComponent(key)}`, {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      });
+      const outcome = await requestJson<{ staged: { id: string } | null }>(
+        `/api/study/baseline/${encodeURIComponent(key)}`,
+        { method: "POST", body: JSON.stringify({ enabled }) },
+      );
       await loadKnowledge();
-      return enabled
-        ? "Baseline word restored to the Known Word Bank."
-        : "Baseline word disabled. It will no longer count as known.";
+      // The bank gained a Card, so the listing and tiles are out of date.
+      if (outcome.staged !== null) await refresh();
+      if (enabled) return "Baseline word restored to the Known Word Bank.";
+      return outcome.staged === null
+        ? "Switched off as known. A Card already stood for it."
+        : "Switched off as known, and a Card is staged for it at the front of the queue.";
     });
   };
 
