@@ -82,6 +82,41 @@ test("manages durable typed Cards and settings through the local Study server", 
     "earned in the last 7 days",
   );
 
+  // A snapshot cached before a field existed must not be drawn. This is the
+  // shape of every deploy that adds one: the page paints from IndexedDB
+  // before the server answers, so a stale cache that is trusted throws
+  // inside the first paint and the bank never loads — a reload only repeats
+  // it, because the cache is still there.
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open("gafu-v2-study");
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const read = database
+      .transaction("kv", "readonly")
+      .objectStore("kv")
+      .get("snapshot");
+    const cached = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      read.onsuccess = () => resolve(read.result as Record<string, unknown>);
+      read.onerror = () => reject(read.error);
+    });
+    if (cached === undefined) throw new Error("nothing was cached to make stale");
+    delete cached["known"];
+    const write = database
+      .transaction("kv", "readwrite")
+      .objectStore("kv")
+      .put(cached, "snapshot");
+    await new Promise((resolve, reject) => {
+      write.onsuccess = resolve;
+      write.onerror = () => reject(write.error);
+    });
+  });
+  await page.reload();
+  // The stale cache is dropped and the server's answer draws the page.
+  await expect(page.getByTestId("known-total")).toBeVisible();
+  await expect(page.locator(".bank-card").first()).toBeVisible();
+
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download SQLite backup" }).click();
   const download = await downloadPromise;

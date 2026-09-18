@@ -21,6 +21,7 @@ import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import { isStuck, type SessionCounts } from "./session-split.ts";
+import { isDrawableSnapshot } from "./snapshot-cache.ts";
 
 /**
  * A Card as the bank shows it: Study's summary plus whether its teaching has
@@ -32,7 +33,7 @@ type BankCard = CardSummary & Readonly<{ taught: boolean; teachable: boolean }>;
 const needsTeaching = (card: BankCard): boolean =>
   !card.taught && !card.teachable && card.state !== "suspended";
 
-type BrowserSnapshot = Readonly<{
+export type BrowserSnapshot = Readonly<{
   cards: readonly BankCard[];
   /** Cards matching the search and filter, of which `cards` is one page. */
   cardTotal: number;
@@ -1664,9 +1665,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
   void (async () => {
     // Paint from what this device saved, then pick up the session and the
     // writes a previous page left, then ask the server for the latest.
-    const saved = await store.get<BrowserSnapshot>(SNAPSHOT_KEY);
-    if (saved !== undefined && "baseline" in saved && "session" in saved)
-      model.snapshot = saved;
+    const saved = await store.get<unknown>(SNAPSHOT_KEY);
+    if (isDrawableSnapshot(saved)) model.snapshot = saved;
     const session = await store.get<NonNullable<BrowserModel["session"]>>(SESSION_KEY);
     const current = session?.items[session.index];
     if (session !== undefined && current !== undefined) {
