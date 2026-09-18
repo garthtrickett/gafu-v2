@@ -127,7 +127,14 @@ export const createGeneratedMaterialValidator = (
         const part =
           word.partOfSpeech === null ? null : parseBroadPartOfSpeech(word.partOfSpeech);
         if (part === null) return [];
-        if (word.source === "card") {
+        // A Card that claims particular senses is known in those senses
+        // only, so 猫 the animal does not license 猫 the figurative use. A
+        // Card claiming none — anything made by hand or imported without a
+        // dictionary identity — is known outright: the learner has the Card
+        // and there is no sense here to narrow it to. Mapping over an empty
+        // list instead dropped the word from the bank entirely, so a word
+        // the learner had earned came back as one they did not know.
+        if (word.source === "card" && word.senseIds.length > 0) {
           return word.senseIds.map((senseId) => ({
             lemma: normalizeJapanese(word.lemma),
             reading: normalizeReading(word.reading),
