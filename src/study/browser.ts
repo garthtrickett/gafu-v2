@@ -44,6 +44,19 @@ type BrowserSnapshot = Readonly<{
     availability: "available" | "unavailable";
     enabledCount: number;
   }>;
+  /**
+   * The vocabulary a generated sentence may lean on, and where it came from.
+   *
+   * The baseline is a fixed seed that only ever shrinks, as words turn out
+   * not to be known; `earned` is the part that grows, and is the whole of
+   * what daily study adds.
+   */
+  known: Readonly<{
+    total: number;
+    baseline: number;
+    earned: number;
+    earnedLastWeek: number;
+  }>;
 }>;
 
 type BrowserModel = {
@@ -1460,7 +1473,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     <p class="privacy-note">Card content and the supporting-language allowlist are sent to OpenAI. Gafu requests no response storage, but OpenAI's retention and abuse-monitoring policies still apply. Video and audio are never sent.</p>
                   </div>
                   <div class="baseline baseline--${snapshot.baseline.availability}">
-                    <h3>Known Word baseline</h3>
+                    <h3>Known words</h3>
+                    <p class="known-total" data-testid="known-total">
+                      <strong>${snapshot.known.total}</strong> words a sentence may lean on
+                    </p>
+                    <p class="answer-copy">
+                      ${snapshot.known.baseline} from the baseline, which is a fixed seed and
+                      only shrinks as words turn out not to be known ·
+                      <strong>${snapshot.known.earned}</strong> earned from Cards, which is the
+                      part study adds
+                    </p>
+                    <p class="answer-copy" data-testid="known-rate">
+                      ${snapshot.known.earnedLastWeek} earned in the last 7 days. A Card counts
+                      once it is learned, not once it is admitted, so this is the rate to set
+                      New Cards per Day against.
+                    </p>
                     ${
                       snapshot.baseline.availability === "available"
                         ? html`<p>${snapshot.baseline.enabledCount} baseline words enabled.</p>

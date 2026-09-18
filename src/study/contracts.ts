@@ -324,6 +324,15 @@ export type Study = Readonly<{
   listCards: (query?: CardQuery) => Result<readonly CardSummary[], StudyFailure>;
   /** How many Cards the query matches, ignoring limit and offset. */
   countCards: (query?: CardQuery) => Result<number, StudyFailure>;
+  /**
+   * How many vocabulary Cards became support-ready on or after an instant.
+   *
+   * Known vocabulary grows when a Card is *learned*, not when it is admitted:
+   * a Card answered wrongly every day sits in rotation costing reviews and
+   * adding nothing. The rate this counts is therefore the honest one to set
+   * a daily new-Card limit against.
+   */
+  countSupportReadySince: (instant: Date) => Result<number, StudyFailure>;
   updateCard: (
     cardId: CardId,
     content: CardContent,

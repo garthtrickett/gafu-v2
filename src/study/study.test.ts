@@ -698,6 +698,40 @@ describe("Study admission and review", () => {
     study.close();
   });
 
+  test("counts the Cards learned in a window, not the Cards admitted", () => {
+    // Known vocabulary grows when a Card is learned, not when it is admitted.
+    // A limit set against admissions hides a deck being added to faster than
+    // it is being learned, which is the shape of a deck that eats its owner.
+    const { study, clock } = openTestStudy();
+    const card = create(study, vocabulary).card;
+    study.setPreferences({ newCardsPerDay: 1, timeZone: "Australia/Sydney" });
+    const queue = study.studyQueue();
+    if (!queue.ok) throw new Error(JSON.stringify(queue.error));
+    const week = (): Date => new Date(clock.now().getTime() - 7 * 24 * 60 * 60 * 1_000);
+
+    // Admitted and answered once is not yet learned, and does not count.
+    study.answer({
+      cardId: card.id,
+      grade: "good",
+      permit: permit("rate-1", card.id, clock.now()),
+    });
+    expect(study.countSupportReadySince(week())).toMatchObject({ ok: true, value: 0 });
+
+    // The second answer, on a later day and past the twenty hours, earns it.
+    clock.set("2026-09-12T12:00:00.000Z");
+    study.answer({
+      cardId: card.id,
+      grade: "good",
+      permit: permit("rate-2", card.id, clock.now()),
+    });
+    expect(study.countSupportReadySince(week())).toMatchObject({ ok: true, value: 1 });
+
+    // And it ages out of the window rather than counting for ever.
+    clock.set("2026-10-30T12:00:00.000Z");
+    expect(study.countSupportReadySince(week())).toMatchObject({ ok: true, value: 0 });
+    study.close();
+  });
+
   test("records FSRS reviews, answers a replayed grade once, refuses a changed one, and earns delayed support", () => {
     const { study, clock } = openTestStudy();
     const card = create(study, vocabulary).card;
