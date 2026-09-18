@@ -36,7 +36,10 @@ test("writes a tale in the learner's own words and reads it back", async ({ page
   });
   if (!ready.ok()) throw new Error(`support-ready: ${ready.status()}`);
 
-  await page.goto("/?view=read");
+  // Reached the way a learner reaches it: from Study. A page with no way in
+  // is a page nobody finds, which is how this one shipped.
+  await page.goto("/");
+  await page.getByRole("link", { name: "Read a tale" }).click();
 
   await expect(
     page.getByRole("heading", { name: "Tales told in the words you have." }),
