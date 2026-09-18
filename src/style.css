@@ -780,6 +780,33 @@ form {
 }
 
 /* Set apart from the buttons that answer the Card: this one puts it away. */
+/* A tale reads as prose, so the sentences sit close and the furigana has
+   room above them without the line spacing of a Card. */
+.reading-sentence {
+  padding: 1rem 0;
+  border-bottom: 1px solid #1d211d;
+}
+
+.reading-sentence .japanese {
+  font-size: 1.6rem;
+  line-height: 2.2;
+  margin: 0 0 0.5rem;
+}
+
+.reading-word {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0.5rem;
+  color: #ccd0c9;
+}
+
+.reading-english {
+  margin: 0.25rem 0 0;
+  color: #9aa096;
+}
+
 .bank-pager {
   display: flex;
   gap: 0.75rem;

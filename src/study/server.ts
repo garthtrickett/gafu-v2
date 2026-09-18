@@ -46,6 +46,10 @@ import { createOpenAiBatchProvider } from "../preparation/openai-batch-provider.
 import { openPreparation } from "../preparation/preparation.ts";
 import { handlePreparationApi } from "../preparation/server.ts";
 import { asPlanId } from "../preparation-plan-contracts.ts";
+import { createDeterministicReadingProvider } from "../reading/deterministic-reading.ts";
+import { createOpenAiReadingProvider } from "../reading/openai-reading.ts";
+import { handleReadingApi } from "../reading/server.ts";
+import { openReadingStore } from "../reading/store.ts";
 import { acquireDatabaseLock } from "../recovery/database-lock.ts";
 import type { Result } from "../result.ts";
 import { err, ok } from "../result.ts";
@@ -1031,6 +1035,21 @@ if (!openedPreparation.ok) {
   throw new Error(`Preparation failed to open: ${openedPreparation.error.kind}`);
 }
 
+// Readings share the database file the rest of the app uses, on their own
+// schema. The provider is a single call per sentence rather than a batch:
+// one sentence is fast, and a reading is written beat by beat anyway.
+const openedReading = openReadingStore({ databasePath, now: () => new Date() });
+if (!openedReading.ok) {
+  throw new Error(`Reading failed to open: ${openedReading.error.kind}`);
+}
+const readingProvider = fakeAi
+  ? createDeterministicReadingProvider()
+  : createOpenAiReadingProvider({
+      apiKey: keyCustody.readForServerAdapter,
+      model: openAiModel,
+      timeoutMs: 120_000,
+    });
+
 const port = Number(
   publicDeployment
     ? (process.env["PORT"] ?? process.env["GAFU_SERVER_PORT"] ?? 42070)
@@ -1066,6 +1085,18 @@ const server = Bun.serve({
     if (dictionaryResponse !== null) return dictionaryResponse;
     const watchResponse = await handleWatchApi(request, watch);
     if (watchResponse !== null) return watchResponse;
+    const readingResponse = await handleReadingApi(request, {
+      store: openedReading.value,
+      analyzer,
+      provider: readingProvider,
+      transparentPartOfSpeech,
+      knowledge: () => {
+        const snapshot = opened.value.knowledgeSnapshot();
+        return snapshot.ok ? snapshot.value : null;
+      },
+      now: () => new Date(),
+    });
+    if (readingResponse !== null) return readingResponse;
     const preparationResponse = await handlePreparationApi(
       request,
       openedPreparation.value,
