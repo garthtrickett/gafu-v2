@@ -791,6 +791,17 @@ export const mountStudyApp = (root: HTMLElement): void => {
     new Promise((resolve) => window.setTimeout(resolve, ms));
 
   /**
+   * How long to wait after a poll that settled nothing.
+   *
+   * Only ever reached when the provider writes a batch as one job and that
+   * job is still running, so the wait costs nothing that was not already
+   * being waited for. A hidden tab throttles timers to one a minute, which
+   * is why a poll that *did* settle a Card never waits at all: a warmed
+   * batch of twenty chains straight through with no timer in it.
+   */
+  const BATCH_IDLE_POLL_MS = 3_000;
+
+  /**
    * Advances a batch to completion, reporting each answer.
    *
    * Each status poll advances the batch one Card, so polling is the pump: no
@@ -814,6 +825,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     keepGoing: () => boolean,
   ): Promise<void> => {
     let consecutiveFailures = 0;
+    let settled = -1;
     while (keepGoing()) {
       try {
         const progress = await requestJson<ReviewBatchProgress>(
@@ -824,6 +836,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
         if (!keepGoing()) return;
         onProgress(progress);
         if (progress.done) return;
+        // Whether that poll moved anything. A poll that settled a Card paid
+        // for itself and the next goes out at once; a poll that settled
+        // nothing waits, because the only thing that returns quickly with
+        // nothing to show is a whole-batch provider whose job is still
+        // running, and asking it again immediately asks the provider again
+        // immediately.
+        const moved = progress.completed.length + progress.failed.length;
+        const advanced = moved > settled;
+        settled = moved;
+        if (!advanced) await pause(BATCH_IDLE_POLL_MS);
       } catch {
         consecutiveFailures += 1;
         if (consecutiveFailures >= 5) return;
@@ -919,19 +941,47 @@ export const mountStudyApp = (root: HTMLElement): void => {
   let backgroundPrepared = 0;
 
   /**
-   * Only one tab prepares. Several tabs of the same app, all hidden, would
-   * otherwise each dispatch a batch over the same due Cards and pay for the
-   * same sentences several times over. The lock is held for as long as the
-   * run lasts and released when it ends, so whichever tab is woken next
-   * takes over. Without the Web Locks API there is nothing to coordinate
-   * with, and one tab preparing twice is better than none preparing at all.
+   * Runs one round of preparation, if no other tab is running one.
+   *
+   * Several tabs of the same app, all hidden, would otherwise each dispatch
+   * a batch over the same due Cards and pay for the same sentences several
+   * times over. The lock covers a round and nothing else: held across the
+   * waits between rounds it would be held for minutes by a run that has
+   * already gone stale, and the tab that asked next would be turned away
+   * with nothing to wake it again. Reports whether the work ran, so a tab
+   * turned away can wait and ask again rather than stop.
+   *
+   * Without the Web Locks API there is nothing to coordinate with, and one
+   * tab preparing twice is better than none preparing at all.
    */
-  const asTheOnlyTab = async (work: () => Promise<void>): Promise<void> => {
+  const asTheOnlyTab = async (work: () => Promise<void>): Promise<boolean> => {
     const locks = navigator.locks as LockManager | undefined;
-    if (locks === undefined) return work();
-    await locks.request("gafu-background-preparation", { ifAvailable: true }, (lock) =>
-      lock === null ? Promise.resolve() : work(),
-    );
+    if (locks === undefined) {
+      await work();
+      return true;
+    }
+    let ran = false;
+    try {
+      await locks.request(
+        "gafu-background-preparation",
+        { ifAvailable: true },
+        async (lock) => {
+          if (lock === null) return;
+          ran = true;
+          await work();
+        },
+      );
+    } catch {
+      // The lock could not be asked for at all. Treat that as having no
+      // coordination rather than as another tab holding it: a tab that
+      // waits on a lock it can never take prepares nothing, ever, and one
+      // tab preparing twice is the better failure.
+      if (!ran) {
+        await work();
+        return true;
+      }
+    }
+    return ran;
   };
 
   /**
@@ -956,6 +1006,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     // Flicking past a tab is not leaving it open. Settle first, so switching
     // windows for a moment never starts a generation.
     await pause(BACKGROUND_SETTLE_MS);
+    let stalled = false;
     while (running()) {
       if (model.snapshot?.preferences.prepareInBackground !== true) return;
       if (
@@ -979,23 +1030,37 @@ export const mountStudyApp = (root: HTMLElement): void => {
         continue;
       }
       let banked = 0;
-      try {
-        const dispatched = await requestJson<{ batchId: string; total: number }>(
-          "/api/study/review-batch",
-          { method: "POST", body: JSON.stringify({}) },
-        );
-        await drainBatch(
-          dispatched.batchId,
-          (progress) => {
-            banked = progress.completed.length;
-          },
-          running,
-        );
-      } catch {
-        return;
+      let failed = false;
+      const ran = await asTheOnlyTab(async () => {
+        try {
+          const dispatched = await requestJson<{ batchId: string; total: number }>(
+            "/api/study/review-batch",
+            { method: "POST", body: JSON.stringify({}) },
+          );
+          await drainBatch(
+            dispatched.batchId,
+            (progress) => {
+              // Counted as each poll lands rather than after the drain, so a
+              // round finishing as the learner comes back is still a round
+              // they are told about.
+              backgroundPrepared += progress.completed.length - banked;
+              banked = progress.completed.length;
+            },
+            running,
+          );
+        } catch {
+          failed = true;
+        }
+      });
+      if (failed) return;
+      if (!ran) {
+        // Another tab has this round. Wait and ask again rather than stop:
+        // that tab may be closed or looked at a moment from now, and a tab
+        // that stopped asking has nothing left to wake it.
+        await pause(BACKGROUND_IDLE_MS);
+        continue;
       }
       if (!running()) return;
-      backgroundPrepared += banked;
       try {
         await refreshStatus();
       } catch {
@@ -1003,8 +1068,16 @@ export const mountStudyApp = (root: HTMLElement): void => {
       }
       // A round that left as much unprepared as it found is a round that
       // cannot succeed: no provider, or Cards that fail validation however
-      // often they are asked for. Stop until the learner looks at the tab.
-      if ((model.snapshot?.session.unpreparedCount ?? 0) >= before) return;
+      // often they are asked for. One such round is forgiven, because Cards
+      // falling due while it ran mask a round that did work; two in a row
+      // means what is left cannot be written, and asking again would spend
+      // the same money to fail the same way.
+      if ((model.snapshot?.session.unpreparedCount ?? 0) >= before) {
+        if (stalled) return;
+        stalled = true;
+      } else {
+        stalled = false;
+      }
     }
   };
 
@@ -1012,7 +1085,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     backgroundRun += 1;
     if (tabIsHidden()) {
       const token = backgroundRun;
-      void asTheOnlyTab(() => prepareWhileHidden(token));
+      void prepareWhileHidden(token).catch(() => {});
       return;
     }
     if (backgroundPrepared > 0) {
@@ -1717,7 +1790,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (tabIsHidden()) {
       backgroundRun += 1;
       const token = backgroundRun;
-      void asTheOnlyTab(() => prepareWhileHidden(token));
+      void prepareWhileHidden(token).catch(() => {});
     }
   })();
 };
