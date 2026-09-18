@@ -216,6 +216,31 @@ A beat that cannot be written in three rounds is left out and counted rather
 than stopping the telling — better a tale missing a sentence than no tale.
 The refusal names the sentence and the reason.
 
+### Writing it by hand
+
+The provider is the usual author, not the only one. `PUT
+/api/reading/<tale>` takes `{"sentences": [{"index", "japanese",
+"english"}]}` — one entry per beat, the whole tale at once — and holds every
+sentence to the same `checkBeat` the generator is held to, with the same
+target word and the same already-introduced words. One refusal rejects the
+lot: the response names the index and the reasons, and nothing is stored.
+Furigana is not sent; it is derived from the analyzer, so an author cannot
+mis-split a word.
+
+Write against a harness rather than against the server, because a round trip
+per attempt is unbearable at a hundred sentences. `/home/gust/tale-check.ts`
+takes a file of `{seq, japanese, english}`, runs the real `checkBeat` from
+the repo, and derives furigana from kuromoji so a reconstruction failure
+cannot be the author's error. Pull the vocabulary it checks against from the
+deployment being published to — `GET /api/study/knowledge` — not from a
+snapshot taken days ago. 桃太郎 differed by two words in a week, and a tale
+that passes locally and is refused on import wastes the whole import.
+
+Work in chunks of twenty-odd beats and get each to a clean pass before
+starting the next, then run the merged file once end to end: the
+already-introduced words mean a later chunk depends on earlier ones, and a
+whole-tale pass is the only thing that proves the tale holds together.
+
 ### What goes wrong
 
 **A beat that needs a word the tale did not declare.** The commonest
@@ -229,6 +254,17 @@ fact.
 **A tale word the learner already has.** Not a failure — the beat quietly
 becomes an ordinary sentence. Check the tale list, which shows only the
 words still new.
+
+**Tokenisation, when writing by hand.** Four of 桃太郎's refusals were the
+tokeniser rather than the vocabulary. 長い間男の子 splits as 間男; a comma
+after 長い間 fixes it. 約束し and 退治する come out as single unknown tokens;
+約束をしました and 鬼の退治をする do not. The refusal names a "word" that is
+not one — that is the tell.
+
+**A word the tale needs and cannot paraphrase.** 桃太郎 without a named
+monkey is not 桃太郎, and 猿 cannot be said with the words a learner of
+1,500 has. Declare it on its beat. A pheasant's 雉 is the opposite case:
+nothing is lost by calling it 鳥 and describing it.
 
 ## Conventions
 
