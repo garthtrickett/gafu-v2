@@ -1569,6 +1569,43 @@ not known stages a Card carrying the seed's own content; restoring leaves
 the Card; saying it twice makes one Card; the full required validation
 passes.
 
+### Patch 2.61 — Tales told in the words the learner has
+
+Cards teach a word at a time, and reading is where words become language.
+There was nowhere in the app to read: the only Japanese a learner met was a
+single sentence built around whatever Card was due.
+
+A tale is stored as plot, not prose. Each is a sequence of beats — what
+happens next, in English, for one sentence — and at most one word per beat
+that the tale cannot be told without: 桃太郎 needs 桃 and 鬼 however
+carefully the rest is kept to what the learner knows. No Japanese is kept
+and none is quoted. The sentences are written fresh against the vocabulary
+of the reader asking, so two learners read different Japanese, neither reads
+a published retelling, and the same tale asked for again in six months comes
+back easier.
+
+The i+1 rule is enforced per sentence, by the parts that already enforce it
+for a Card: the analyser, the known-word classifier, the rule that a target
+is itself in every form it takes, and the rule that a reading must explain
+its writing. What is not reused is the Card-shaped validator — a sentence of
+a tale has no Card, no permit and no grade, and pretending otherwise would
+have meant inventing one. A beat that cannot be written in three rounds
+stops the reading and names itself, rather than handing over a tale with a
+hole in it. A beat whose word the learner has since learned becomes an
+ordinary sentence.
+
+Two things fell out of building it. A Card claiming no dictionary sense —
+anything created by hand or imported without an identity — contributed
+nothing to the supporting vocabulary, because the bank is built by mapping
+over the senses claimed. Here such a Card is known outright: the learner has
+it, and there is no sense to narrow it to. And a refusal now carries which
+sentence and why, because a bare kind left nobody anything to act on.
+
+**Gate:** a journey writes a tale, reads it back from storage, reveals the
+English of a sentence on request, and keeps a word met in it as a Card; unit
+tests hold the line at one new word a sentence, refuse a second, refuse a
+beat that skips its own word, and refuse segments that do not rejoin.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:
