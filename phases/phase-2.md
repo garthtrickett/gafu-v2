@@ -1606,6 +1606,18 @@ English of a sentence on request, and keeps a word met in it as a Card; unit
 tests hold the line at one new word a sentence, refuse a second, refuse a
 beat that skips its own word, and refuse segments that do not rejoin.
 
+### Patch 2.62 — A failed Card keeps its name
+
+Patch 2.59 made the bank a page of fifty. The batch's failure list had been
+naming each Card by looking it up in the bank the browser already held, so a
+Card that failed from outside the shown page read as a bare identifier —
+three of four failures in a row, unreadable.
+
+The name travels with the failure now. The listing is read only when there
+is a failure to name, so a poll that finds nothing wrong costs nothing.
+
+**Gate:** the journey unchanged; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

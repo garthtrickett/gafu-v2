@@ -1213,11 +1213,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   model.batch !== null && model.batch.failures.length > 0
                     ? html`<ul class="batch-failures" data-testid="batch-failures">
                         ${model.batch.failures.map((failure) => {
-                          const card = model.snapshot?.cards.find(
-                            (item) => item.id === failure.cardId,
-                          );
+                          // The name comes with the failure: the bank on
+                          // screen is one page and the Card may not be on it.
+                          const named = failure as typeof failure & { title?: string };
                           return html`<li>
-                            <strong lang="ja">${card === undefined ? failure.cardId : cardTitle(card)}</strong>
+                            <strong lang="ja">${named.title ?? failure.cardId}</strong>
                             stays due: ${failure.reasons.length > 0 ? failure.reasons.join("; ") : failure.kind}
                           </li>`;
                         })}
