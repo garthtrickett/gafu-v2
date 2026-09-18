@@ -45,6 +45,21 @@ const locateSurface = (
   return { start: at, end: at + surface.length };
 };
 
+/**
+ * Whether a detected pattern begins among the target's own characters.
+ *
+ * Containment alone is not enough. かわいそう ends in そう, so 〜そうだ（様態）
+ * is detected from inside the word across the copula that follows it —
+ * 3..6 against a target at 0..5 — and a sentence teaching the word was
+ * refused for leaning on grammar that is partly its own spelling. A pattern
+ * whose first character belongs to the target is matching the word, so it
+ * says nothing about what the learner must already know.
+ */
+const startsInsideSpan = (
+  inner: DecodedPresentation["targetSpan"],
+  outer: DecodedPresentation["targetSpan"],
+): boolean => inner.start >= outer.start && inner.start < outer.end;
+
 const insideSpan = (
   inner: DecodedPresentation["targetSpan"],
   outer: DecodedPresentation["targetSpan"],
@@ -303,16 +318,16 @@ export const createLearningMaterialValidator = (
       .filter(
         (item) =>
           !(target.kind === "grammar" && item.canonicalForm === target.canonicalForm) &&
-          // A pattern found only inside the target is the target word's own
+          // A pattern found only within the target is the target word's own
           // morphology, not language the learner must already have. 詰める is
           // a plain る-verb, and the potential-form patterns match its める
           // tail, so a sentence teaching 詰める would be refused for leaning
           // on 可能形 it never used; a れた tail inside a passive span is the
-          // same shape. A pattern found only inside the target says nothing
-          // about what the learner must already know.
+          // same shape. かわいそう is the same shape again, reaching one
+          // character past its own end into the copula.
           !(
             item.spans.length > 0 &&
-            item.spans.every((found) => insideSpan(found, span))
+            item.spans.every((found) => startsInsideSpan(found, span))
           ) &&
           !knowledge.grammar.has(item.canonicalForm),
       )

@@ -392,3 +392,71 @@ describe("a miscounted span is repaired from the sentence", () => {
     expect(reasons).toContain("targetSurfaceMismatch");
   });
 });
+
+describe("a word whose own spelling is a construction", () => {
+  // The Card that found this: かわいそう ends in そう, so 〜そうだ（様態） is
+  // detected from inside the word across the copula after it — 3..6 against
+  // a target at 0..5 — and the sentence was refused for grammar that is
+  // partly the word's own spelling.
+  const pitiable: CardSummary = {
+    ...card,
+    id: asCardId("kawaisou"),
+    content: {
+      lemma: "かわいそう",
+      reading: "かわいそう",
+      partOfSpeech: "adjective",
+      meaning: "poor; pitiable",
+      usageNotes: "",
+    },
+  };
+  const japanese = "かわいそうだ。";
+  const material = {
+    ...valid,
+    targetKind: "vocabulary" as const,
+    target: {
+      lemma: "かわいそう",
+      reading: "かわいそう",
+      partOfSpeech: "adjective" as const,
+      meaning: "poor; pitiable",
+    },
+    japanese,
+    targetSurface: "かわいそう",
+    targetSpan: { ...valid.targetSpan, start: 0, end: 5 },
+    readingSegments: [{ written: japanese, reading: "" }],
+    answer: "The poor thing.",
+    explanation: "The marked word means poor or pitiable.",
+    usageNote: "Said of someone you feel sorry for.",
+  };
+
+  test("the construction inside the word is not grammar the learner must know", async () => {
+    expect(
+      await validate({
+        value: material,
+        mode: "teach",
+        card: pitiable,
+        knowledge: {
+          ...knowledge,
+          // Only the copula, which genuinely stands outside the word.
+          grammar: [{ cardId: asCardId("background-da"), canonicalForm: "だ" }],
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test("grammar that starts outside the word is still required", async () => {
+    // だ begins where the target ends, so it is the learner's to know, and
+    // a learner without it is told so rather than let through.
+    const refused = await validate({
+      value: material,
+      mode: "teach",
+      card: pitiable,
+      knowledge: { ...knowledge, grammar: [] },
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    const reasons =
+      refused.error.kind === "validationRejected" ? refused.error.reasons : [];
+    expect(reasons.join(" ")).toContain("unknownGrammar");
+    expect(reasons.join(" ")).toContain("だ");
+  });
+});
