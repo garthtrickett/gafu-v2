@@ -1638,6 +1638,20 @@ the copula after かわいそう is asked for as before.
 that construction being required, and grammar beginning outside the word is
 still required; the full required validation passes.
 
+### Patch 2.64 — A way in to the reading page
+
+Patch 2.61 built the reading page and gave it a link back to Study. It gave
+Study no link to it, so the only way in was a query string nobody would
+guess. The journey had been going straight to the address, which is why
+nothing failed.
+
+Study lists it beside Watch and Prepare, and the journey walks in from
+Study rather than typing the address, so a page with no way to reach it
+fails the gate that is meant to catch exactly that.
+
+**Gate:** the journey reaches the reading page by following a link from
+Study; the full required validation passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

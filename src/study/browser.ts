@@ -1140,6 +1140,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             </p>
           </div>
           <div class="button-row">
+            <a class="secondary button-link" href="?view=read">Read a tale</a>
             <a class="secondary button-link" href="?view=watch">Watch</a>
             <a class="secondary button-link" href="?view=prepare">Prepare a show</a>
             <a class="secondary button-link" href="?diagnostic=phase0">Phase 0 diagnostic</a>
