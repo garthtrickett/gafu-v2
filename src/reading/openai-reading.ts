@@ -62,7 +62,7 @@ const supporting = (knowledge: KnowledgeSnapshot) => ({
  */
 const instructions = [
   "Write exactly one Japanese sentence telling the beat you are given, as the next sentence of a tale being retold for a learner.",
-  "Use only words from supporting.vocabulary and grammar from supporting.grammar. If a target word is supplied you may also use that one word, and you must use it. Use no other word the learner does not have.",
+  "Use only words from supporting.vocabulary and grammar from supporting.grammar. If a target word is supplied you may also use that one word, and you must use it. Words in alreadyIntroduced were taught earlier in this same tale and may be used freely. Use no other word the learner does not have.",
   "The tales are traditional and have no author, but retellings of them do: write your own plain sentences and do not reproduce any published translation or retelling.",
   "Keep it short and plain. A reader should meet at most one unfamiliar word in the sentence, and that is the target.",
   "Continue from preceding without repeating it. Do not summarise, do not add events the beat does not contain.",
@@ -111,6 +111,7 @@ export const createOpenAiReadingProvider = (options: Options): ReadingProvider =
           beat: request.beat,
           preceding: request.preceding,
           target: request.target,
+          alreadyIntroduced: request.introduced,
           supporting: supporting(request.knowledge),
           previousRejections: request.rejections,
         }),

@@ -28,6 +28,8 @@ export type ReadingBeatRequest = Readonly<{
   /** The one word this sentence may introduce, or null for all-known words. */
   target: TaleWord | null;
   knowledge: KnowledgeSnapshot;
+  /** Words this tale has already taught, which may be used freely. */
+  introduced: readonly TaleWord[];
   /** Why the last attempt was refused, so the next one can avoid it. */
   rejections: readonly string[];
 }>;
@@ -100,6 +102,15 @@ export const checkBeat = async (
   draft: ReadingBeatDraft,
   target: TaleWord | null,
   knowledge: KnowledgeSnapshot,
+  /**
+   * Words earlier beats already introduced.
+   *
+   * A word met once is met: a tale about a peach that may say 桃 in one
+   * sentence and never again is not a tale, and meeting a new word
+   * repeatedly across a page is most of what reading is for. Only the
+   * sentence that *introduces* a word is i+1; afterwards it is i.
+   */
+  introduced: readonly TaleWord[] = [],
 ): Promise<Result<ReadingSentence, readonly string[]>> => {
   const reasons: string[] = [];
   const japanese = normalizeJapanese(draft.japanese);
@@ -138,6 +149,22 @@ export const checkBeat = async (
   const isWanted = (token: Parameters<typeof isTargetToken>[0]): boolean =>
     wanted !== null && isTargetToken(token, wanted);
 
+  // The tale's own vocabulary so far, which the reader has already met.
+  const met = introduced.flatMap((word) => {
+    const part = parseBroadPartOfSpeech(word.partOfSpeech);
+    return part === null
+      ? []
+      : [
+          {
+            lemma: normalizeJapanese(word.lemma),
+            reading: normalizeReading(word.reading),
+            partOfSpeech: part,
+          },
+        ];
+  });
+  const isMet = (token: Parameters<typeof isTargetToken>[0]): boolean =>
+    met.some((word) => isTargetToken(token, word));
+
   let span: ReadingSentence["wordSpan"] = null;
   if (wanted !== null) {
     const hit = analyzed.value.tokens.find(isWanted);
@@ -159,7 +186,13 @@ export const checkBeat = async (
       if (dependencies.transparentPartOfSpeech.has(token.broadPartOfSpeech))
         return false;
       if (token.broadPartOfSpeech === "interjection") return false;
-      if (isWanted(token)) return false;
+      // Bound forms are grammar wearing a noun's tag: the nominaliser の in
+      // 出るのが, and the suffixes. Asking the learner to have met one as
+      // vocabulary asks them to have met a word that is not one. Coverage
+      // has always bucketed these as grammar; this agrees with it.
+      const tags = token.partOfSpeech;
+      if (tags.includes("非自立") || tags.includes("接尾")) return false;
+      if (isWanted(token) || isMet(token)) return false;
       return status !== "known";
     })
     .map(({ token }) => token.surface);
@@ -181,6 +214,21 @@ export const checkBeat = async (
   });
 };
 
+/**
+ * The tale's own words introduced before a given beat, and still new to the
+ * learner. A word the learner already had never needed introducing.
+ */
+export const introducedBefore = (
+  tale: Tale,
+  index: number,
+  knowledge: KnowledgeSnapshot,
+): readonly TaleWord[] =>
+  tale.beats
+    .slice(0, index)
+    .flatMap((beat) =>
+      beat.word !== null && !alreadyHas(beat.word, knowledge) ? [beat.word] : [],
+    );
+
 /** Rounds allowed per beat before the reading gives up and says which beat. */
 const MAX_BEAT_ROUNDS = 3;
 
@@ -192,14 +240,19 @@ const MAX_BEAT_ROUNDS = 3;
  * ordinary sentence, and presenting it as new would be a small lie about
  * where the reader is.
  */
-const alreadyHas = (word: TaleWord, knowledge: KnowledgeSnapshot): boolean => {
+const kanaOnly = /^[ぁ-ゟ゠-ヿー]+$/u;
+
+export const alreadyHas = (word: TaleWord, knowledge: KnowledgeSnapshot): boolean => {
   const lemma = normalizeJapanese(word.lemma);
   const reading = normalizeReading(word.reading);
-  return knowledge.vocabulary.some(
-    (entry) =>
-      normalizeJapanese(entry.lemma) === lemma ||
-      normalizeReading(entry.reading) === reading,
-  );
+  // Reading alone conflates homophones: 洗濯 and 選択 are both せんたく, and
+  // matching on the reading reported 洗濯 as already known because the
+  // Kaishi baseline holds 選択. A word written in kanji has to match the
+  // writing; only a word written in kana can be matched by its sound.
+  return knowledge.vocabulary.some((entry) => {
+    if (normalizeJapanese(entry.lemma) === lemma) return true;
+    return kanaOnly.test(lemma) && normalizeReading(entry.reading) === reading;
+  });
 };
 
 /**
@@ -225,6 +278,7 @@ export const draftBeat = async (
   beat: TaleBeat,
   preceding: readonly string[],
   knowledge: KnowledgeSnapshot,
+  introduced: readonly TaleWord[] = [],
   signal?: AbortSignal,
 ): Promise<Result<ReadingSentence, readonly string[]>> => {
   const target =
@@ -238,12 +292,19 @@ export const draftBeat = async (
         preceding,
         target,
         knowledge,
+        introduced,
         rejections,
       },
       signal,
     );
     if (!draft.ok) return err([`${draft.error.kind}: ${draft.error.detail}`]);
-    const checked = await checkBeat(dependencies, draft.value, target, knowledge);
+    const checked = await checkBeat(
+      dependencies,
+      draft.value,
+      target,
+      knowledge,
+      introduced,
+    );
     if (checked.ok) return ok(checked.value);
     rejections = checked.error;
   }
@@ -266,6 +327,7 @@ export const writeReading = async (
       beat,
       preceding,
       knowledge,
+      introducedBefore(tale, index, knowledge),
       signal,
     );
     if (!written.ok) {
