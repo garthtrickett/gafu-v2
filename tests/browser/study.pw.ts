@@ -67,6 +67,21 @@ test("manages durable typed Cards and settings through the local Study server", 
   await expect(page.locator(".bank-card")).toHaveCount(1);
   await expect(page.locator(".bank-card")).toContainText("〜てしまう");
 
+  // What a sentence may lean on, and which half of it study can move. The
+  // baseline is a fixed seed; only the earned count grows, so a learner
+  // watching the baseline figure would see a plan make no progress at all.
+  const total = page.getByTestId("known-total");
+  await expect(total).toBeVisible();
+  const totalText = (await total.textContent()) ?? "";
+  const known = Number(/(\d+)/u.exec(totalText)?.[1] ?? "0");
+  expect(known).toBeGreaterThan(0);
+  // 開く was answered twice a day apart above, so it has been learned and is
+  // counted — the split is not two numbers that happen to add up.
+  await expect(page.getByTestId("known-total")).toContainText("lean on");
+  await expect(page.getByTestId("known-rate")).toContainText(
+    "earned in the last 7 days",
+  );
+
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download SQLite backup" }).click();
   const download = await downloadPromise;

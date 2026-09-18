@@ -321,6 +321,14 @@ const snapshot = (
   if (!preferences.ok) return failureResponse(preferences.error);
   const knowledge = study.knowledgeSnapshot();
   if (!knowledge.ok) return failureResponse(knowledge.error);
+  // The one number a daily new-Card limit should be set against: how fast
+  // Cards are actually being learned, rather than how fast they are admitted.
+  const week = new Date(
+    Date.parse(counts.value.status.observedAt) - 7 * 24 * 60 * 60 * 1_000,
+  );
+  const earnedLastWeek = study.countSupportReadySince(week);
+  if (!earnedLastWeek.ok) return failureResponse(earnedLastWeek.error);
+  const recentlyEarned = earnedLastWeek.value;
   const flags = material.teachingFlags();
   if (!flags.ok) return materialResponse(flags);
   // Whether each Card has been taught (acknowledged) or can be taught from a
@@ -341,6 +349,14 @@ const snapshot = (
     baseline: {
       availability: knowledge.value.baseline.availability,
       enabledCount: knowledge.value.baseline.enabledCount,
+    },
+    known: {
+      total: knowledge.value.vocabulary.length,
+      baseline: knowledge.value.vocabulary.filter((word) => word.source !== "card")
+        .length,
+      earned: knowledge.value.vocabulary.filter((word) => word.source === "card")
+        .length,
+      earnedLastWeek: recentlyEarned,
     },
   });
 };

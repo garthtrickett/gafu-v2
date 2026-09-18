@@ -382,6 +382,24 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     }
   };
 
+  const countSupportReadySince = (instant: Date): Result<number, StudyFailure> => {
+    try {
+      const row = database
+        .query(
+          `SELECT count(*) AS total
+           FROM card c
+           JOIN card_progress p ON p.card_id = c.id
+           WHERE c.type = 'vocabulary'
+             AND p.support_ready_at IS NOT NULL
+             AND p.support_ready_at >= ?`,
+        )
+        .get(instant.toISOString()) as { total: number };
+      return ok(row.total);
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const updateCard = (
     cardId: CardId,
     content: CardContent,
@@ -1506,6 +1524,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     createCard,
     listCards,
     countCards,
+    countSupportReadySince,
     updateCard,
     setCardState,
     studyQueue,
