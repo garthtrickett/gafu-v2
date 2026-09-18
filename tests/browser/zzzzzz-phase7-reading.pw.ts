@@ -96,6 +96,34 @@ test("writes a tale in the learner's own words and reads it back", async ({ page
   await expect(page.getByRole("status")).toContainText("staged as a Card");
   await expect(firstWord).toContainText("staged");
 
+  // Reading is where an unknown word is met, so the dictionary is here too.
+  // Only the tale's own word is glossed under its sentence; every other word
+  // is one the reader is supposed to know and sometimes does not. The
+  // selection is made the way a drag ends, with the furigana excluded.
+  await page.evaluate(() => {
+    const sentences = document.querySelectorAll("[data-japanese-sentence]");
+    const last = sentences[sentences.length - 1];
+    if (last === undefined) throw new Error("no sentence");
+    const span = last.querySelector("span, ruby");
+    if (span === null) throw new Error("no word to highlight");
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  // The highlight alone does nothing; Alt does.
+  await expect(page.getByTestId("jisho-lookup")).toHaveCount(0);
+  await page.keyboard.press("Alt");
+  const lookup = page.getByTestId("jisho-lookup");
+  await expect(lookup).toBeVisible();
+  await expect(lookup.getByRole("link", { name: /jisho\.org/u })).toHaveAttribute(
+    "href",
+    /^https:\/\/jisho\.org\/search\//u,
+  );
+  await page.keyboard.press("Escape");
+  await expect(lookup).toHaveCount(0);
+
   // The reading was kept, so the tale can be carried on rather than rewritten.
   await page.getByRole("button", { name: "All tales" }).click();
   const again = page

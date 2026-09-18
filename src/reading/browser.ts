@@ -1,4 +1,5 @@
 import { html, render, type TemplateResult } from "lit-html";
+import { createJishoLookup } from "../dictionary/lookup-panel.ts";
 import { mutationHeaders } from "../local-api.ts";
 import { sentencePieces } from "../study/furigana.ts";
 import type { Reading, ReadingSentence, TaleWord } from "./contracts.ts";
@@ -67,6 +68,16 @@ export const mountReadingApp = (root: HTMLElement): void => {
   const draw = (): void => {
     render(view(), root);
   };
+
+  // Reading is where an unknown word is met, so the dictionary belongs here
+  // most of all: highlight a word, press Alt, and Jisho opens over the tale.
+  // A tale's own new word is glossed beneath its sentence, but every other
+  // word is one the reader is only supposed to know — and sometimes doesn't.
+  const lookup = createJishoLookup({ root, draw: () => draw() });
+
+  document.addEventListener("keydown", (event) => {
+    lookup.handleKeydown(event);
+  });
 
   const run = async (operation: () => Promise<string>): Promise<void> => {
     model.busy = true;
@@ -241,6 +252,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
           Each tale is written fresh against your own vocabulary: every sentence uses
           words you know, except for the one word the tale cannot be told without.
         </p>
+        <p class="hint">Highlight a word, then press Alt (Option on Mac) for Jisho.</p>
       </div>
       <nav class="button-row">
         <a class="button-link secondary" href="/">Study</a>
@@ -272,6 +284,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
           </p>`
     }
     ${model.reading === null ? taleList() : readingView(model.reading)}
+    ${lookup.dialog()}
   </main>`;
 
   const taleList = (): TemplateResult =>
