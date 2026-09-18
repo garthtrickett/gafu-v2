@@ -518,7 +518,32 @@ const handleApi = async (
     if (batchId === undefined || batchId === "") {
       return invalidRequest("Missing review batch ID.");
     }
-    return materialResponse(await material.advanceReviewBatch(batchId));
+    const progress = await material.advanceReviewBatch(batchId);
+    if (!progress.ok) return materialResponse(progress);
+    if (progress.value.failed.length === 0) return Response.json(progress.value);
+    // A failure names its Card, and the browser used to find the name in the
+    // bank it already had. The bank is a page now, so a Card that failed
+    // from outside that page read as a bare id. The name travels with the
+    // failure instead; the listing is only read when there is one.
+    const all = study.listCards();
+    if (!all.ok) return failureResponse(all.error);
+    const titles = new Map(
+      all.value.map((card) => [
+        card.id,
+        card.type === "grammar" && "canonicalForm" in card.content
+          ? card.content.canonicalForm
+          : "lemma" in card.content
+            ? card.content.lemma
+            : card.id,
+      ]),
+    );
+    return Response.json({
+      ...progress.value,
+      failed: progress.value.failed.map((failure) => ({
+        ...failure,
+        title: titles.get(failure.cardId) ?? failure.cardId,
+      })),
+    });
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/prepare") {
     // Serves one named Card for batch work-through. Unlike the mode routes
