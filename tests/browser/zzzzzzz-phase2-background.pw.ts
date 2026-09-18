@@ -132,3 +132,124 @@ test("a tab left in the background writes the sentences that are due", async ({
   await page.getByRole("button", { name: "Prepare batch" }).click();
   await expect(page.locator(".presentation")).toBeVisible({ timeout: 30_000 });
 });
+
+/**
+ * A poll that settles nothing must not be asked again immediately.
+ *
+ * The provider in front of a real deployment writes a whole batch as one
+ * background job, so a poll while that job runs returns at once with nothing
+ * settled. Chaining the next poll straight onto it — which is right when
+ * each poll advances a Card — turns that into a tight loop against the
+ * provider for as long as the job takes. The responses here are stubbed, so
+ * what is measured is purely the page's pacing.
+ */
+test("polls that settle nothing are paced, not chained", async ({ page }) => {
+  let polls = 0;
+  await page.route("**/api/study/review-batch", async (route) => {
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ batchId: "paced-batch", total: 1 }),
+    });
+  });
+  await page.route("**/api/study/review-batch/paced-batch", async (route) => {
+    polls += 1;
+    // Always pending, and always the same: a job that has not finished.
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "paced-batch",
+        done: false,
+        pending: 1,
+        completed: [],
+        failed: [],
+        round: 1,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Prepare batch" }).click();
+  // Six seconds of a job that never finishes. Paced at one poll per three
+  // seconds that is a handful; chained it is however many round trips fit,
+  // which is hundreds.
+  await page.waitForTimeout(6_000);
+  expect(polls).toBeGreaterThan(0);
+  expect(polls).toBeLessThan(10);
+});
+
+/**
+ * Preparation survives a tab being looked at and left again.
+ *
+ * The lock that stops two tabs buying the same sentences used to be held for
+ * the whole run, including the waits between rounds. A run that had gone
+ * stale still held it, so the run that replaced it was turned away with
+ * nothing left to wake it, and the tab sat hidden preparing nothing.
+ *
+ * What is asserted is that the second leaving dispatches a batch at all.
+ * Whether that batch can write a sentence depends on Cards other journeys
+ * left behind; whether it is even attempted does not.
+ */
+test("a tab looked at and left again still prepares", async ({ page }) => {
+  const id = await ensureCard(page, "vocabulary", "鳥", {
+    lemma: "鳥",
+    reading: "とり",
+    partOfSpeech: "noun",
+    meaning: "bird",
+    usageNotes: "A general word for a bird.",
+  });
+  expect(id).not.toBe("");
+
+  let dispatches = 0;
+  await page.route("**/api/study/review-batch", async (route) => {
+    dispatches += 1;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ batchId: "relock-batch", total: 1 }),
+    });
+  });
+  await page.route("**/api/study/review-batch/relock-batch", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "relock-batch",
+        done: true,
+        pending: 0,
+        completed: ["stub"],
+        failed: [],
+        round: 1,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByLabel("New Cards per Day").fill("100");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Study settings saved");
+
+  const setVisibility = (state: "hidden" | "visible") =>
+    page.evaluate((value) => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => value,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, state);
+
+  // Something has to be worth preparing, or a tab correctly does nothing.
+  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
+
+  // Hide, look back before the settle is over, then leave again. The second
+  // leaving is the one that has to work: the first run is still asleep
+  // holding whatever it holds.
+  await setVisibility("hidden");
+  await page.waitForTimeout(1_000);
+  await setVisibility("visible");
+  await page.waitForTimeout(1_000);
+  await setVisibility("hidden");
+
+  await expect.poll(() => dispatches, { timeout: 30_000 }).toBeGreaterThan(0);
+});
