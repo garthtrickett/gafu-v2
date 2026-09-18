@@ -1,8 +1,10 @@
 import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../analysis/contracts.ts";
+import { readBoundedJson } from "../local-api.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
-import type { ReadingFailure } from "./contracts.ts";
+import type { ReadingFailure, ReadingSentence } from "./contracts.ts";
 import {
   alreadyHas,
+  checkBeat,
   draftBeat,
   introducedBefore,
   type ReadingProvider,
@@ -207,6 +209,125 @@ export const handleReadingApi = async (
       { taleId, total: tale.beats.length, written: 0, failed: 0, done: false },
       { status: 202 },
     );
+  }
+
+  // A tale may also be written by hand. The provider is the usual author,
+  // but it is not the only one a tale can have, and prose written by a
+  // person is held to exactly the rule generated prose is held to: every
+  // sentence goes through the same check, and one refusal rejects the lot
+  // rather than leaving half a tale standing.
+  if (request.method === "PUT") {
+    const knowledge = api.knowledge();
+    if (knowledge === null) {
+      return Response.json(
+        { error: { kind: "readFailed", detail: "knowledge unavailable" } },
+        { status: 500 },
+      );
+    }
+    const body = await readBoundedJson(request);
+    if (!body.ok) {
+      return Response.json(
+        { error: { kind: "beatRefused", index: 0, reasons: [body.error.kind] } },
+        { status: 400 },
+      );
+    }
+    const authored =
+      (
+        body.value as {
+          sentences?: { index?: number; japanese?: string; english?: string }[];
+        }
+      ).sentences ?? [];
+    if (authored.length !== tale.beats.length) {
+      return Response.json(
+        {
+          error: {
+            kind: "beatRefused",
+            index: 0,
+            reasons: [
+              `the tale has ${tale.beats.length} beats and ${authored.length} were sent`,
+            ],
+          },
+        },
+        { status: 422 },
+      );
+    }
+    const checked: { index: number; sentence: ReadingSentence }[] = [];
+    for (const [index, beat] of tale.beats.entries()) {
+      const written = authored.find((item) => item.index === index);
+      if (written?.japanese === undefined || written.english === undefined) {
+        return Response.json(
+          {
+            error: { kind: "beatRefused", index, reasons: ["no sentence was sent"] },
+          },
+          { status: 422 },
+        );
+      }
+      // Furigana is derived, not sent: the analyzer's own tokens rejoin into
+      // the sentence by construction, so an author cannot mis-split a word.
+      const analyzed = await api.analyzer.analyze("reading", written.japanese);
+      if (!analyzed.ok) {
+        return Response.json(
+          {
+            error: {
+              kind: "beatRefused",
+              index,
+              reasons: [`the sentence could not be analyzed`],
+            },
+          },
+          { status: 422 },
+        );
+      }
+      const segments = analyzed.value.tokens.map((token) => ({
+        written: token.surface,
+        reading: token.reading ?? token.surface,
+      }));
+      const target =
+        beat.word !== null && !alreadyHas(beat.word, knowledge) ? beat.word : null;
+      const result = await checkBeat(
+        {
+          analyzer: api.analyzer,
+          provider: api.provider,
+          transparentPartOfSpeech: api.transparentPartOfSpeech,
+        },
+        { japanese: written.japanese, english: written.english, segments },
+        target,
+        knowledge,
+        introducedBefore(tale, index, knowledge),
+      );
+      if (!result.ok) {
+        return Response.json(
+          { error: { kind: "beatRefused", index, reasons: result.error } },
+          { status: 422 },
+        );
+      }
+      checked.push({ index, sentence: { ...result.value, index } });
+    }
+    const begun = api.store.begin(taleId, tale.beats.length);
+    if (!begun.ok) {
+      return Response.json({ error: begun.error }, { status: status(begun.error) });
+    }
+    for (const { index, sentence } of checked) {
+      const recorded = api.store.record(taleId, index, { sentence });
+      if (!recorded.ok) {
+        return Response.json(
+          { error: recorded.error },
+          { status: status(recorded.error) },
+        );
+      }
+    }
+    const saved = api.store.save({
+      taleId,
+      title: tale.title,
+      titleReading: tale.titleReading,
+      titleEnglish: tale.titleEnglish,
+      provenance: tale.provenance,
+      generatedAt: api.now().toISOString(),
+      sentences: checked.map(({ sentence }) => sentence),
+    });
+    if (!saved.ok) {
+      return Response.json({ error: saved.error }, { status: status(saved.error) });
+    }
+    return Response.json({ taleId, total: checked.length, written: checked.length });
   }
 
   return new Response(null, { status: 405 });
