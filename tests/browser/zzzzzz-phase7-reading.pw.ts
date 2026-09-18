@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 // instant, so this journey is about the plumbing and the promise: every
 // sentence lands, the tale's own word is marked and glossed where it is met,
 // and a word worth keeping becomes a Card without leaving the page.
-test.setTimeout(120_000);
+test.setTimeout(180_000);
 
 test("writes a tale in the learner's own words and reads it back", async ({ page }) => {
   // A tale is written out of what the learner knows, so the learner has to
@@ -56,13 +56,25 @@ test("writes a tale in the learner's own words and reads it back", async ({ page
   // Nothing has been written yet, so there is nothing to read.
   await expect(momotaro.getByRole("button", { name: "Read it" })).toHaveCount(0);
 
+  // How long the tale runs, so the assertion below is about the tale rather
+  // than a number that goes stale when a beat is added.
+  const advertised = ((await momotaro.textContent()) ?? "").match(
+    /(\d+) sentences/u,
+  )?.[1];
+  expect(advertised).toBeDefined();
+  const total = Number(advertised);
+  expect(total).toBeGreaterThan(50);
+
   await momotaro.getByRole("button", { name: "Write it" }).click();
-  await expect(page.getByTestId("reading")).toBeVisible({ timeout: 60_000 });
+  // A hundred sentences is a hundred generations, so the wait is watched
+  // rather than hidden: it says which sentence it is on.
+  await expect(page.getByTestId("reading-progress")).toContainText("Writing sentence");
+  await expect(page.getByTestId("reading")).toBeVisible({ timeout: 90_000 });
   await expect(page.getByRole("status")).toContainText("written in");
 
   // One sentence per beat, each of them shown.
   const sentences = page.getByTestId("reading-sentence");
-  await expect(sentences).toHaveCount(11);
+  await expect(sentences).toHaveCount(total);
 
   // The tale's own words are marked where they are met, with their meaning,
   // so a reader is never left guessing at the one word that is new.
@@ -91,7 +103,7 @@ test("writes a tale in the learner's own words and reads it back", async ({ page
     .locator(".bank-card[data-tale-id='momotaro']");
   await expect(again.getByRole("button", { name: "Read it" })).toBeVisible();
   await again.getByRole("button", { name: "Read it" }).click();
-  await expect(page.getByTestId("reading-sentence")).toHaveCount(11);
+  await expect(page.getByTestId("reading-sentence")).toHaveCount(total);
 
   // And it reached the Card bank, where Study will serve it like any other.
   // Its state is not asserted: looking at Study admits under the daily
