@@ -1,5 +1,12 @@
 import type { AnalyzedToken, BroadPartOfSpeech } from "../analysis/contracts.ts";
-import { classifyKnownVocabulary } from "../analysis/known-vocabulary.ts";
+import {
+  adjectiveLemma,
+  classifyKnownVocabulary,
+  wordForms,
+} from "../analysis/known-vocabulary.ts";
+
+export { adjectiveLemma };
+
 import { dictionaryFormReading, normalizeJapanese } from "../analysis/normalization.ts";
 import { err, ok } from "../result.ts";
 import { readingFits } from "../study/furigana.ts";
@@ -65,6 +72,17 @@ const insideSpan = (
   outer: DecodedPresentation["targetSpan"],
 ): boolean => inner.start >= outer.start && inner.end <= outer.end;
 
+/**
+ * A canonical form, with the two tildes read as one.
+ *
+ * The declared patterns write the gap as ～ (U+FF5E); Cards imported from V1
+ * write it as ~ (U+007E). Compared verbatim, すこしも~ない could never match
+ * the pattern named すこしも～ない, so the Card was refused for not using the
+ * construction it was entirely made of, every time, for ever.
+ */
+const sameCanonicalForm = (left: string, right: string): boolean =>
+  left.replace(/[~～]/gu, "~") === right.replace(/[~～]/gu, "~");
+
 const grammarContainsTarget = (
   evidence: readonly DetectedGrammar[],
   canonicalForm: string,
@@ -72,20 +90,12 @@ const grammarContainsTarget = (
 ): boolean =>
   evidence.some(
     (item) =>
-      item.canonicalForm === canonicalForm &&
+      sameCanonicalForm(item.canonicalForm, canonicalForm) &&
       // The model spans the whole target word; the detector only ever matches
       // the construction's suffix, so containment — not equality — is the
       // evidence the target is there.
       item.spans.some((span) => insideSpan(span, targetSpan)),
   );
-
-/**
- * Kuromoji lemmatizes a な-adjective stem with its copula (肝心だ), while a
- * Card claims the bare stem (肝心). Strip one trailing だ for the comparison
- * so the claim and the analysis can meet. Anything else compares verbatim.
- */
-export const adjectiveLemma = (lemma: string): string =>
-  lemma.length > 1 && lemma.endsWith("だ") ? lemma.slice(0, -1) : lemma;
 
 /**
  * Whether one token is the target word, in any form it may take.
@@ -99,19 +109,48 @@ export const adjectiveLemma = (lemma: string): string =>
  * now, and irregular verbs, whose dictionary form cannot be derived, keep
  * the old behaviour rather than a wrong derivation.
  */
+/**
+ * Whether the token is the target word folded together with a する that the
+ * word does not itself carry.
+ *
+ * びっくりしました analyzes as 私|は|びっくりし|まし|た: the noun and the verb
+ * it forms are one token. A highlight over びっくり — which is the word, and
+ * is what the learner should see coloured — therefore ends in the middle of
+ * that token, and no tiling can end where it does.
+ */
+const isSuruHost = (
+  token: AnalyzedToken,
+  target: Readonly<{ lemma: string; reading: string; partOfSpeech: BroadPartOfSpeech }>,
+): boolean =>
+  wordForms(token).some(
+    (form) =>
+      form.inflectsWithSuru &&
+      form.lemma === target.lemma &&
+      form.partOfSpeech === target.partOfSpeech &&
+      normalizeReading(token.reading ?? token.surface).startsWith(
+        normalizeReading(target.reading),
+      ),
+  );
+
 export const isTargetToken = (
   token: AnalyzedToken,
   target: Readonly<{ lemma: string; reading: string; partOfSpeech: BroadPartOfSpeech }>,
 ): boolean => {
-  const lemma =
-    token.broadPartOfSpeech === "adjective" ? adjectiveLemma(token.lemma) : token.lemma;
-  if (lemma !== target.lemma) return false;
-  if (token.broadPartOfSpeech !== target.partOfSpeech) return false;
   const surfaceReading = token.reading ?? token.surface;
   const wanted = normalizeReading(target.reading);
-  if (normalizeReading(surfaceReading) === wanted) return true;
-  const dictionary = dictionaryFormReading(token.surface, surfaceReading, lemma);
-  return dictionary !== null && normalizeReading(dictionary) === wanted;
+  return wordForms(token).some((form) => {
+    if (form.lemma !== target.lemma) return false;
+    if (form.partOfSpeech !== target.partOfSpeech) return false;
+    if (normalizeReading(surfaceReading) === wanted) return true;
+    // A noun folded into one token with its する reads past its own end:
+    // 約束し is やくそくし where 約束 is やくそく. The する tail is the verb's,
+    // not the word's, so the word is there if its reading opens the token's.
+    if (form.inflectsWithSuru) {
+      return normalizeReading(surfaceReading).startsWith(wanted);
+    }
+    const dictionary = dictionaryFormReading(token.surface, surfaceReading, form.lemma);
+    return dictionary !== null && normalizeReading(dictionary) === wanted;
+  });
 };
 
 /**
@@ -212,10 +251,21 @@ export const createLearningMaterialValidator = (
     const grammar = dependencies.grammar.detect(normalizedJapanese);
     if (target.kind === "vocabulary") {
       const covering = tilings(analyzed.value.tokens, span);
-      if (covering.length === 0) {
+      // Nothing tiles a highlight that stops inside a token, and a noun
+      // highlighted without the する it takes always does. The token that
+      // opens at the highlight and reaches past it is that word.
+      const suruHost = analyzed.value.tokens.find(
+        (token) =>
+          token.span.start === span.start &&
+          token.span.end > span.end &&
+          isSuruHost(token, target),
+      );
+      const candidates =
+        covering.length > 0 ? covering : suruHost === undefined ? [] : [[suruHost]];
+      if (candidates.length === 0) {
         reasons.push({ kind: "targetAbsent" });
       } else {
-        const matching = covering.find((tiling) => {
+        const matching = candidates.find((tiling) => {
           const head = tiling[0];
           // A conjugated target is one word to a learner and several tokens
           // to the analyzer: 聞き出した tiles as 聞き出し|た. The head carries
@@ -317,7 +367,10 @@ export const createLearningMaterialValidator = (
     const unknownGrammar = grammar
       .filter(
         (item) =>
-          !(target.kind === "grammar" && item.canonicalForm === target.canonicalForm) &&
+          !(
+            target.kind === "grammar" &&
+            sameCanonicalForm(item.canonicalForm, target.canonicalForm)
+          ) &&
           // A pattern found only within the target is the target word's own
           // morphology, not language the learner must already have. 詰める is
           // a plain る-verb, and the potential-form patterns match its める

@@ -129,3 +129,56 @@ test("kana matching does not reach across parts of speech or to another word", (
     classifyKnownVocabulary(inflected("わける", "わけ", "verb"), bank)[0]?.status,
   ).toBe("unresolved");
 });
+
+/**
+ * Kuromoji tags a word by the job it is doing in the sentence, and a Card
+ * records what the word is. Where those disagree systematically the learner
+ * still has the word, and calling it unknown makes ordinary sentences
+ * unwritable.
+ */
+const analyzed = async (japanese: string): Promise<AnalyzedText> => {
+  const { createKuromojiAnalyzer } = await import("./kuromoji-analyzer.ts");
+  const { loadKuromojiFromDirectory } = await import("./loaders.ts");
+  const analyzer = createKuromojiAnalyzer(() =>
+    loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
+  );
+  const result = await analyzer.analyze("known-vocabulary", japanese);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+};
+
+const statusOf = (
+  text: AnalyzedText,
+  surface: string,
+  bank: Parameters<typeof classifyKnownVocabulary>[1],
+): string | undefined =>
+  classifyKnownVocabulary(text, bank).find((item) => item.token.surface === surface)
+    ?.status;
+
+const noun = (lemma: string, reading: string) => ({
+  lemma,
+  reading,
+  partOfSpeech: "noun" as const,
+  scope: { kind: "allSenses" as const },
+});
+
+test("a noun Card is the same word used as a な-adjective", async () => {
+  // 失礼な lemmatizes 失礼だ and is tagged 形容動詞語幹, so an exact
+  // part-of-speech comparison called a learned word new.
+  const text = await analyzed("失礼なことを言いました。");
+  expect(statusOf(text, "失礼", [noun("失礼", "しつれい")])).toBe("known");
+});
+
+test("a noun Card is the same word taking する", async () => {
+  // びっくりし is one token, lemmatized びっくりする and tagged both
+  // 名詞/サ変接続 and 動詞/自立. びっくり is used no other way.
+  const text = await analyzed("私はびっくりしました。");
+  expect(statusOf(text, "びっくりし", [noun("びっくり", "びっくり")])).toBe("known");
+  const promised = await analyzed("男の子は約束しました。");
+  expect(statusOf(promised, "約束し", [noun("約束", "やくそく")])).toBe("known");
+});
+
+test("an unrelated word is still unknown", async () => {
+  const text = await analyzed("私はびっくりしました。");
+  expect(statusOf(text, "びっくりし", [noun("約束", "やくそく")])).toBe("unresolved");
+});
