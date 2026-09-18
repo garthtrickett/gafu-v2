@@ -5,7 +5,13 @@ import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
 import type { TaleWord } from "./contracts.ts";
 import { createDeterministicReadingProvider } from "./deterministic-reading.ts";
-import { checkBeat, type ReadingDependencies, writeReading } from "./reading.ts";
+import {
+  alreadyHas,
+  checkBeat,
+  introducedBefore,
+  type ReadingDependencies,
+  writeReading,
+} from "./reading.ts";
 import { taleById } from "./tales.ts";
 
 const known = (
@@ -233,5 +239,101 @@ describe("a tale is written beat by beat", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatchObject({ kind: "beatRefused", index: 0 });
+  });
+});
+
+describe("a word met once is met", () => {
+  test("a word an earlier beat introduced is not new again", async () => {
+    // 桃太郎 says 桃 in ten sentences. If only the beat introducing it may
+    // use it the tale cannot be written at all, and the reader meets the
+    // word once — which is not how anyone learns one.
+    const result = await checkBeat(
+      dependencies,
+      draft("女は桃を見る。", "The woman sees the peach."),
+      null,
+      knowledge,
+      [momo],
+    );
+    expect(result).toMatchObject({ ok: true });
+    // It is not this beat's word, so the page colours nothing.
+    if (result.ok) expect(result.value.word).toBeNull();
+  });
+
+  test("a word no beat has introduced yet is still refused", async () => {
+    const result = await checkBeat(
+      dependencies,
+      draft("女は桃を見る。", "The woman sees the peach."),
+      null,
+      knowledge,
+      [],
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.join(" ")).toContain("桃");
+  });
+
+  test("only the beats before this one count as introduced", () => {
+    const tale = taleById("momotaro");
+    if (tale === null) throw new Error("no tale");
+    const first = tale.beats.findIndex((beat) => beat.word !== null);
+    expect(introducedBefore(tale, first, knowledge)).toHaveLength(0);
+    expect(introducedBefore(tale, first + 1, knowledge)).toHaveLength(1);
+  });
+});
+
+describe("a homophone is not the same word", () => {
+  test("a word sharing only a reading does not count as known", () => {
+    const sentaku: TaleWord = {
+      lemma: "洗濯",
+      reading: "せんたく",
+      partOfSpeech: "noun",
+      meaning: "washing",
+    };
+    // 選択 (choice) is also せんたく. Matching on the reading alone would
+    // tell a reader they know 洗濯 because they once learned 選択, and the
+    // tale would promise one fewer new word than it delivers.
+    const choice: KnowledgeSnapshot = {
+      ...knowledge,
+      vocabulary: [...knowledge.vocabulary, known("選択", "せんたく", "noun")],
+    };
+    expect(alreadyHas(sentaku, choice)).toBe(false);
+    expect(
+      alreadyHas(sentaku, {
+        ...knowledge,
+        vocabulary: [...knowledge.vocabulary, known("洗濯", "せんたく", "noun")],
+      }),
+    ).toBe(true);
+  });
+
+  test("a kana word still matches a known writing of it", () => {
+    // Kana has no writing to disagree about: ある written 有る is the word.
+    const aru: TaleWord = {
+      lemma: "もも",
+      reading: "もも",
+      partOfSpeech: "noun",
+      meaning: "peach",
+    };
+    expect(
+      alreadyHas(aru, {
+        ...knowledge,
+        vocabulary: [...knowledge.vocabulary, known("桃", "もも", "noun")],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("bound forms are grammar, not vocabulary", () => {
+  test("the nominaliser の is not a word the learner must have met", async () => {
+    // 名詞/非自立: kuromoji tags it a noun, but nobody learns it as one.
+    // Coverage has always bucketed 非自立 and 接尾 as grammar; asking the
+    // reader to have met this の as vocabulary makes ordinary sentences
+    // unwritable.
+    const result = await checkBeat(
+      dependencies,
+      draft("女が川に行くのを見る。", "She sees them go to the river."),
+      null,
+      knowledge,
+    );
+    expect(result).toMatchObject({ ok: true });
   });
 });

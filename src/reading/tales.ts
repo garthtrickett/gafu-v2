@@ -142,7 +142,10 @@ export const tales: readonly Tale[] = [
         word: word("家来", "けらい", "noun", "retainer; follower"),
       },
       { beat: "The dog walked at his side and kept watch.", word: null },
-      { beat: "Later a monkey came down out of a tree.", word: null },
+      {
+        beat: "Later a monkey came down out of a tree.",
+        word: word("猿", "さる", "noun", "monkey"),
+      },
       { beat: "The monkey asked him the same question.", word: null },
       { beat: "The boy told him where he was going and why.", word: null },
       { beat: "The monkey asked for a dumpling as well.", word: null },

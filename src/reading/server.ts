@@ -1,7 +1,12 @@
 import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../analysis/contracts.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
 import type { ReadingFailure } from "./contracts.ts";
-import { draftBeat, type ReadingProvider } from "./reading.ts";
+import {
+  alreadyHas,
+  draftBeat,
+  introducedBefore,
+  type ReadingProvider,
+} from "./reading.ts";
 import type { ReadingStore } from "./store.ts";
 import { taleById, tales, taleWords } from "./tales.ts";
 
@@ -52,16 +57,12 @@ export const handleReadingApi = async (
     return Response.json({
       tales: tales.map((tale) => {
         const words = taleWords(tale);
+        // The same rule the beat itself uses, so the list cannot promise a
+        // tale is cheaper than it turns out to be.
         const unknown =
           knowledge === null
             ? words
-            : words.filter(
-                (word) =>
-                  !knowledge.vocabulary.some(
-                    (entry) =>
-                      entry.lemma === word.lemma || entry.reading === word.reading,
-                  ),
-              );
+            : words.filter((word) => !alreadyHas(word, knowledge));
         return {
           id: tale.id,
           title: tale.title,
@@ -127,6 +128,7 @@ export const handleReadingApi = async (
           beat,
           written.value.map((sentence) => sentence.japanese),
           knowledge,
+          introducedBefore(tale, seq, knowledge),
         );
         const recorded = api.store.record(
           taleId,
