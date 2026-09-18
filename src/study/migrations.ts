@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 9;
+export const STUDY_SCHEMA_VERSION = 10;
 
 const migrations: readonly Migration[] = [
   {
@@ -358,6 +358,31 @@ const migrations: readonly Migration[] = [
       SELECT singleton, local_day, time_zone, 0 FROM admission_window;
       DROP TABLE admission_window;
       ALTER TABLE admission_window_v9 RENAME TO admission_window;
+    `,
+  },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE study_preferences_v10 (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        new_cards_per_day INTEGER NOT NULL CHECK (new_cards_per_day BETWEEN 0 AND 100),
+        time_zone TEXT NOT NULL,
+        first_review_after_minutes INTEGER NOT NULL DEFAULT 30
+          CHECK (first_review_after_minutes BETWEEN 0 AND 720),
+        day_starts_at_hour INTEGER NOT NULL DEFAULT 4
+          CHECK (day_starts_at_hour BETWEEN 0 AND 23),
+        prepare_in_background INTEGER NOT NULL DEFAULT 1
+          CHECK (prepare_in_background IN (0, 1))
+      );
+      INSERT INTO study_preferences_v10(
+        singleton, new_cards_per_day, time_zone, first_review_after_minutes,
+        day_starts_at_hour
+      )
+      SELECT singleton, new_cards_per_day, time_zone, first_review_after_minutes,
+             day_starts_at_hour
+      FROM study_preferences;
+      DROP TABLE study_preferences;
+      ALTER TABLE study_preferences_v10 RENAME TO study_preferences;
     `,
   },
 ];

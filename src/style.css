@@ -676,6 +676,25 @@ form {
   gap: 0.85rem;
 }
 
+/* A switch, not a field: the box sits beside its words, with the
+   explanation under both. */
+.check-setting {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+}
+
+.check-setting input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.check-setting small {
+  grid-column: 2;
+}
+
 .settings-panel {
   position: sticky;
   top: 1rem;

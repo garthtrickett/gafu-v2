@@ -711,6 +711,24 @@ export const openLearningMaterial = (
     }
   };
 
+  const reserveFlags: LearningMaterial["reserveFlags"] = () => {
+    try {
+      const teach = new Set<CardId>();
+      const review = new Set<CardId>();
+      for (const row of database
+        .query(
+          `SELECT DISTINCT card_id, mode FROM validated_presentation
+           WHERE shown_at IS NULL`,
+        )
+        .all() as { card_id: CardId; mode: string }[]) {
+        (row.mode === "teach" ? teach : review).add(row.card_id);
+      }
+      return ok({ teach, review });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
+    }
+  };
+
   const hasReserve = (
     cardId: CardId,
     mode: "teach" | "review",
@@ -1339,6 +1357,7 @@ export const openLearningMaterial = (
     presentationAudio,
     canTeach,
     teachingFlags,
+    reserveFlags,
     purgeFinishedBatches,
     permitVerifier,
     close: () => database.close(),

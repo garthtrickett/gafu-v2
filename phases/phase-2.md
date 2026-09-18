@@ -1678,6 +1678,39 @@ whole telling.
 fixed number, watches the progress, and finds that many sentences both when
 written and when read back; the full required validation passes.
 
+### Patch 2.66 — A tab in the background prepares what is due
+
+Preparing is the expensive half of a session and none of it needs the
+learner: the batch banks reserves without taking them, so a sentence written
+now is served later through the ordinary path with a fresh permit. A tab
+left open therefore writes the sentences for whatever is due, and coming back
+to it finds them ready rather than a wait on the provider.
+
+It is bounded by what it would cost rather than by a timer. The status counts
+gain `unpreparedCount` — due Cards with nothing banked for the mode they want
+— from one bulk read of the reserves, and a hidden tab prepares only while
+that is above zero. An idle tab spends nothing; a round that banks nothing
+stops rather than paying again to fail the same way. It stands off a session
+or a batch already running, waits five seconds before starting so flicking
+past a tab is not a generation, and takes a Web Lock so several open tabs
+cannot buy the same sentences several times over.
+
+Polling a batch lost its timer with this. Each poll advances one Card, so
+the request is its own pacing, and the fixed three-second wait only slowed
+the Cards that needed nothing — which is most of a warmed batch. A hidden
+tab has its timers throttled to one a minute, which would have made twenty
+Cards take twenty minutes; a chained fetch is not a timer. Pressing Prepare
+batch over banked sentences is now seconds rather than a minute.
+
+Preparing without being asked spends provider budget, so it is a preference,
+on by default, in Study settings.
+
+**Gate:** a journey creates a due Card with nothing banked, tells the page it
+is hidden, and finds the unprepared count reaching zero with nothing pressed
+and no session opened; returning to the tab says what was prepared, and the
+batch that follows opens a Card straight away. The full required validation
+passes.
+
 ## Exit gate
 
 Phase 2 is implemented when all of the following are true:

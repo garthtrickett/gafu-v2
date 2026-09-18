@@ -232,6 +232,18 @@ export type LearningMaterial = Readonly<{
    * `taught` and `canTeach` for every Card at once, two queries instead of
    * two per Card: the bank snapshot asks about hundreds of Cards per refresh.
    */
+  /**
+   * The Cards holding a banked reserve, by the mode it was written for. A
+   * Card with one needs no generation to be served, so this is what says
+   * whether preparing would cost anything.
+   */
+  reserveFlags: () => Result<
+    Readonly<{
+      teach: ReadonlySet<CardSummary["id"]>;
+      review: ReadonlySet<CardSummary["id"]>;
+    }>,
+    MaterialFailure
+  >;
   teachingFlags: () => Result<
     Readonly<{
       taught: ReadonlySet<CardSummary["id"]>;

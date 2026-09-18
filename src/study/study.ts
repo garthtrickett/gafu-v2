@@ -64,6 +64,7 @@ type PreferenceRow = {
   time_zone: string;
   first_review_after_minutes: number;
   day_starts_at_hour: number;
+  prepare_in_background: number;
 };
 
 const detail = (cause: unknown): string =>
@@ -127,7 +128,7 @@ const readPreferences = (database: Database): StudyPreferences => {
   const row = database
     .query(
       `SELECT new_cards_per_day, time_zone, first_review_after_minutes,
-              day_starts_at_hour
+              day_starts_at_hour, prepare_in_background
        FROM study_preferences WHERE singleton = 1`,
     )
     .get() as PreferenceRow;
@@ -136,6 +137,7 @@ const readPreferences = (database: Database): StudyPreferences => {
     timeZone: row.time_zone,
     firstReviewAfterMinutes: row.first_review_after_minutes,
     dayStartsAtHour: row.day_starts_at_hour,
+    prepareInBackground: row.prepare_in_background === 1,
   };
 };
 
@@ -527,6 +529,15 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         detail: "must be a whole hour from 0 through 23",
       });
     }
+    const nextBackground =
+      change.prepareInBackground ?? current.value.prepareInBackground;
+    if (typeof nextBackground !== "boolean") {
+      return err({
+        kind: "invalidPreference",
+        field: "prepareInBackground",
+        detail: "must be true or false",
+      });
+    }
     const zone = validateTimeZone(change.timeZone ?? current.value.timeZone);
     if (!zone.ok) return zone;
     const now = safeNow(dependencies.clock);
@@ -537,10 +548,10 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           .query(
             `UPDATE study_preferences
              SET new_cards_per_day = ?, time_zone = ?, first_review_after_minutes = ?,
-                 day_starts_at_hour = ?
+                 day_starts_at_hour = ?, prepare_in_background = ?
              WHERE singleton = 1`,
           )
-          .run(nextLimit, zone.value, nextGap, nextStart);
+          .run(nextLimit, zone.value, nextGap, nextStart, nextBackground ? 1 : 0);
         if (zone.value !== current.value.timeZone) {
           database
             .query(
@@ -557,6 +568,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         timeZone: zone.value,
         firstReviewAfterMinutes: nextGap,
         dayStartsAtHour: nextStart,
+        prepareInBackground: nextBackground,
       });
     } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });

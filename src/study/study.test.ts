@@ -815,6 +815,7 @@ describe("Study persistence and recovery", () => {
         timeZone: "Asia/Tokyo",
         firstReviewAfterMinutes: 30,
         dayStartsAtHour: 4,
+        prepareInBackground: true,
       },
     });
     expect(reopened.value.listCards()).toMatchObject({
@@ -886,7 +887,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 9 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 10 },
     });
   });
 

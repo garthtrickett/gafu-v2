@@ -22,6 +22,15 @@ export type SessionCounts = Readonly<{
   learnCount: number;
   reviewCount: number;
   laterCount: number;
+  /**
+   * How many due Cards have no sentence banked for the mode they want.
+   *
+   * This is the only honest measure of what preparing would cost: a Card
+   * holding a reserve is served without asking the provider for anything.
+   * A background tab prepares while this is above zero and stops when it is
+   * not, so an idle tab spends nothing.
+   */
+  unpreparedCount: number;
 }>;
 
 /**
@@ -33,10 +42,13 @@ export const countSessionModes = <Failure>(
   cards: readonly CardSummary[],
   hasTeaching: (cardId: CardSummary["id"]) => Result<boolean, Failure>,
   now: string,
+  /** Whether a sentence is already banked for that Card in that mode. */
+  hasReserve: (cardId: CardSummary["id"], mode: "teach" | "review") => boolean,
 ): Result<SessionCounts, Failure> => {
   let learnCount = 0;
   let reviewCount = 0;
   let laterCount = 0;
+  let unpreparedCount = 0;
   for (const card of cards) {
     if (card.state !== "active") continue;
     if (card.dueAt === null || card.dueAt > now) {
@@ -45,10 +57,12 @@ export const countSessionModes = <Failure>(
     }
     const taught = hasTeaching(card.id);
     if (!taught.ok) return taught;
-    if (wantsTeaching(card, taught.value)) learnCount += 1;
+    const mode = wantsTeaching(card, taught.value) ? "teach" : "review";
+    if (mode === "teach") learnCount += 1;
     else reviewCount += 1;
+    if (!hasReserve(card.id, mode)) unpreparedCount += 1;
   }
-  return ok({ learnCount, reviewCount, laterCount });
+  return ok({ learnCount, reviewCount, laterCount, unpreparedCount });
 };
 
 /**
