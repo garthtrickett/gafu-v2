@@ -35,6 +35,14 @@ const taughtSet =
   (cardId: CardId): Result<boolean, never> =>
     ok(taught.includes(cardId));
 
+/** Nothing is banked, so every due Card counts as unprepared. */
+const nothingBanked = (): boolean => false;
+
+const bankedFor =
+  (banked: readonly string[]) =>
+  (cardId: CardId): boolean =>
+    banked.includes(cardId);
+
 describe("which session mode a due Card belongs to", () => {
   test("a new Card nobody has been shown yet is for Learn", () => {
     expect(wantsTeaching({ schedulePhase: "new" }, false)).toBe(true);
@@ -61,24 +69,25 @@ describe("counting the two session queues", () => {
       ],
       taughtSet(["taught-new"]),
       NOW,
+      nothingBanked,
     );
     expect(counts).toEqual({
       ok: true,
-      value: { learnCount: 1, reviewCount: 2, laterCount: 0 },
+      value: { learnCount: 1, reviewCount: 2, laterCount: 0, unpreparedCount: 3 },
     });
   });
 
   test("Seen it moves exactly one Card from Learn to Review", () => {
     const cards = [card("a"), card("b")];
-    const before = countSessionModes(cards, taughtSet([]), NOW);
-    const after = countSessionModes(cards, taughtSet(["a"]), NOW);
+    const before = countSessionModes(cards, taughtSet([]), NOW, nothingBanked);
+    const after = countSessionModes(cards, taughtSet(["a"]), NOW, nothingBanked);
     expect(before).toEqual({
       ok: true,
-      value: { learnCount: 2, reviewCount: 0, laterCount: 0 },
+      value: { learnCount: 2, reviewCount: 0, laterCount: 0, unpreparedCount: 2 },
     });
     expect(after).toEqual({
       ok: true,
-      value: { learnCount: 1, reviewCount: 1, laterCount: 0 },
+      value: { learnCount: 1, reviewCount: 1, laterCount: 0, unpreparedCount: 2 },
     });
   });
 
@@ -92,11 +101,12 @@ describe("counting the two session queues", () => {
       ],
       taughtSet([]),
       NOW,
+      nothingBanked,
     );
     // learn + review + later is the whole active set: 2 of the 5 Cards.
     expect(counts).toEqual({
       ok: true,
-      value: { learnCount: 1, reviewCount: 0, laterCount: 1 },
+      value: { learnCount: 1, reviewCount: 0, laterCount: 1, unpreparedCount: 1 },
     });
   });
 
@@ -108,16 +118,74 @@ describe("counting the two session queues", () => {
         schedulePhase: "review",
       }),
     ];
-    const counts = countSessionModes(cards, taughtSet(["later-taught"]), NOW);
+    const counts = countSessionModes(
+      cards,
+      taughtSet(["later-taught"]),
+      NOW,
+      nothingBanked,
+    );
     expect(counts).toEqual({
       ok: true,
-      value: { learnCount: 0, reviewCount: 0, laterCount: 2 },
+      value: { learnCount: 0, reviewCount: 0, laterCount: 2, unpreparedCount: 0 },
     });
   });
 
   test("a failed teaching read fails the count rather than guessing", () => {
     const failure = { kind: "readFailed", detail: "locked" } as const;
-    const counts = countSessionModes([card("a")], () => err(failure), NOW);
+    const counts = countSessionModes(
+      [card("a")],
+      () => err(failure),
+      NOW,
+      nothingBanked,
+    );
     expect(counts).toEqual({ ok: false, error: failure });
+  });
+});
+
+describe("how much of the due work still needs a sentence", () => {
+  test("a due Card holding a reserve costs nothing to prepare", () => {
+    const cards = [
+      card("banked"),
+      card("bare"),
+      card("banked-review", { schedulePhase: "review" }),
+    ];
+    const counts = countSessionModes(
+      cards,
+      taughtSet(["banked-review"]),
+      NOW,
+      bankedFor(["banked", "banked-review"]),
+    );
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 2, reviewCount: 1, laterCount: 0, unpreparedCount: 1 },
+    });
+  });
+
+  test("a reserve in the wrong mode does not prepare the Card", () => {
+    // The Card wants teaching; what is banked is a review sentence. Asking
+    // by mode is the whole point: a review reserve cannot be a first look.
+    const counts = countSessionModes(
+      [card("untaught")],
+      taughtSet([]),
+      NOW,
+      (_cardId, mode) => mode === "review",
+    );
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 1, reviewCount: 0, laterCount: 0, unpreparedCount: 1 },
+    });
+  });
+
+  test("Cards not yet due are never counted as unprepared", () => {
+    const counts = countSessionModes(
+      [card("later", { dueAt: "2026-09-13T00:00:00.000Z" })],
+      taughtSet([]),
+      NOW,
+      nothingBanked,
+    );
+    expect(counts).toEqual({
+      ok: true,
+      value: { learnCount: 0, reviewCount: 0, laterCount: 1, unpreparedCount: 0 },
+    });
   });
 });

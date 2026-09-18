@@ -122,6 +122,16 @@ export type StudyPreferences = Readonly<{
    * done at two in the morning counts towards the day just spent.
    */
   dayStartsAtHour: number;
+  /**
+   * Whether a tab sitting in the background may prepare the Cards that are
+   * due, so returning to it finds sentences already written.
+   *
+   * It is a preference because it spends provider budget with nothing
+   * pressed. Preparing costs a generation per Card the first time and
+   * nothing afterwards, so an idle tab with everything banked is free; a
+   * tab left open the day a hundred Cards come due is not.
+   */
+  prepareInBackground: boolean;
 }>;
 
 export type PreferenceChange = Readonly<{
@@ -129,6 +139,7 @@ export type PreferenceChange = Readonly<{
   timeZone?: string;
   firstReviewAfterMinutes?: number;
   dayStartsAtHour?: number;
+  prepareInBackground?: boolean;
 }>;
 
 export type QueueCard = Readonly<{

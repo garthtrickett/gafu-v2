@@ -455,6 +455,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           newCardsPerDay: Number(value(fields, "newCardsPerDay")),
           firstReviewAfterMinutes: Number(value(fields, "firstReviewAfterMinutes")),
           dayStartsAtHour: Number(value(fields, "dayStartsAtHour")),
+          prepareInBackground: fields.get("prepareInBackground") !== null,
           timeZone: value(fields, "timeZone"),
         }),
       });
@@ -786,49 +787,82 @@ export const mountStudyApp = (root: HTMLElement): void => {
     );
   };
 
-  const pollReviewBatch = (batchId: string): void => {
-    // Each status poll advances the batch one Card, so polling is the pump:
-    // no daemon, resumable across processes, every call bounded by one
-    // generation. Failures are informational here; the batch keeps whatever
-    // it already banked and the next poll retries.
-    const poller = window.setInterval(() => {
-      if (model.batch?.id !== batchId) {
-        window.clearInterval(poller);
-        return;
+  const pause = (ms: number): Promise<void> =>
+    new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  /**
+   * Advances a batch to completion, reporting each answer.
+   *
+   * Each status poll advances the batch one Card, so polling is the pump: no
+   * daemon, resumable across processes, every call bounded by one
+   * generation. The next poll goes out the moment the last one lands, with
+   * no timer between them, and that is deliberate twice over. The request
+   * itself is the pacing — a Card needing generation holds it for seconds —
+   * so a fixed wait only slowed the Cards that needed nothing, which is most
+   * of a batch whose sentences were already banked. And a hidden tab has its
+   * timers throttled to one a minute, which would have made a batch of
+   * twenty take twenty minutes there; a chained fetch is not a timer and is
+   * not throttled.
+   *
+   * Failures are informational: the batch keeps whatever it banked and the
+   * next poll retries, but a server that keeps refusing is left alone rather
+   * than hammered.
+   */
+  const drainBatch = async (
+    batchId: string,
+    onProgress: (progress: ReviewBatchProgress) => void,
+    keepGoing: () => boolean,
+  ): Promise<void> => {
+    let consecutiveFailures = 0;
+    while (keepGoing()) {
+      try {
+        const progress = await requestJson<ReviewBatchProgress>(
+          `/api/study/review-batch/${encodeURIComponent(batchId)}`,
+          { method: "GET" },
+        );
+        consecutiveFailures = 0;
+        if (!keepGoing()) return;
+        onProgress(progress);
+        if (progress.done) return;
+      } catch {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 5) return;
+        await pause(3_000);
       }
-      void requestJson<ReviewBatchProgress>(
-        `/api/study/review-batch/${encodeURIComponent(batchId)}`,
-        { method: "GET" },
-      )
-        .then((progress) => {
-          if (model.batch?.id !== batchId) return;
-          const handedIds = model.batch.handedIds;
-          model.batch = {
-            id: batchId,
-            total:
-              progress.completed.length + progress.failed.length + progress.pending,
-            completed: progress.completed.length,
-            completedIds: [...progress.completed],
-            failed: progress.failed.length,
-            failures: [...progress.failed],
-            pending: progress.pending,
-            done: progress.done,
-            round: progress.round,
-            handedIds,
-          };
-          if (progress.done) {
-            window.clearInterval(poller);
-            model.message =
-              progress.failed.length === 0
-                ? `Batch ready: ${progress.completed.length} to review.`
-                : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
-            model.messageKind = "success";
-          }
-          handOver(progress.completed.filter((cardId) => !handedIds.includes(cardId)));
-          draw();
-        })
-        .catch(() => {});
-    }, 3_000);
+    }
+  };
+
+  const pollReviewBatch = (batchId: string): void => {
+    void drainBatch(
+      batchId,
+      (progress) => {
+        const batch = model.batch;
+        if (batch === null) return;
+        const handedIds = batch.handedIds;
+        model.batch = {
+          id: batchId,
+          total: progress.completed.length + progress.failed.length + progress.pending,
+          completed: progress.completed.length,
+          completedIds: [...progress.completed],
+          failed: progress.failed.length,
+          failures: [...progress.failed],
+          pending: progress.pending,
+          done: progress.done,
+          round: progress.round,
+          handedIds,
+        };
+        if (progress.done) {
+          model.message =
+            progress.failed.length === 0
+              ? `Batch ready: ${progress.completed.length} to review.`
+              : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
+          model.messageKind = "success";
+        }
+        handOver(progress.completed.filter((cardId) => !handedIds.includes(cardId)));
+        draw();
+      },
+      () => model.batch?.id === batchId,
+    );
   };
 
   const startReviewBatch = (): void => {
@@ -859,6 +893,137 @@ export const mountStudyApp = (root: HTMLElement): void => {
       "status",
     );
   };
+
+  /**
+   * How long the tab must stay hidden before it starts preparing.
+   *
+   * Short, because leaving too early costs nothing: a run abandoned halfway
+   * keeps every sentence it banked, and the sentences it did not write were
+   * owed anyway. The wait is only so that flicking past a tab does not
+   * start a generation nobody was waiting on.
+   */
+  const BACKGROUND_SETTLE_MS = 5_000;
+
+  /** How long to wait before looking again when there is nothing to prepare. */
+  const BACKGROUND_IDLE_MS = 5 * 60_000;
+
+  const tabIsHidden = (): boolean => document.visibilityState === "hidden";
+
+  /**
+   * Bumped whenever the tab changes visibility, which is how a run in
+   * progress learns it is stale: it holds the token it started with.
+   */
+  let backgroundRun = 0;
+
+  /** Cards banked since the learner last looked, to tell them on return. */
+  let backgroundPrepared = 0;
+
+  /**
+   * Only one tab prepares. Several tabs of the same app, all hidden, would
+   * otherwise each dispatch a batch over the same due Cards and pay for the
+   * same sentences several times over. The lock is held for as long as the
+   * run lasts and released when it ends, so whichever tab is woken next
+   * takes over. Without the Web Locks API there is nothing to coordinate
+   * with, and one tab preparing twice is better than none preparing at all.
+   */
+  const asTheOnlyTab = async (work: () => Promise<void>): Promise<void> => {
+    const locks = navigator.locks as LockManager | undefined;
+    if (locks === undefined) return work();
+    await locks.request("gafu-background-preparation", { ifAvailable: true }, (lock) =>
+      lock === null ? Promise.resolve() : work(),
+    );
+  };
+
+  /**
+   * Writes the sentences for whatever is due while the tab sits unwatched.
+   *
+   * Preparing is the expensive half of a study session and none of it needs
+   * the learner: the batch banks reserves without taking them, so a Card
+   * warmed here is served later through the ordinary path with a fresh
+   * permit. Nothing is shown, nothing is graded, no session is opened — come
+   * back to the tab and it looks as it did, except that pressing Prepare
+   * batch no longer waits on the provider.
+   *
+   * What it will not do: prepare over a session left open, because the
+   * learner is mid-something and their Cards are already in hand; prepare
+   * when the counts say every due Card holds a reserve, because that is what
+   * makes an idle tab free; or keep going when a round banks nothing, which
+   * means the Cards left cannot be written at all and trying again would
+   * only spend the same money to fail the same way.
+   */
+  const prepareWhileHidden = async (token: number): Promise<void> => {
+    const running = (): boolean => token === backgroundRun && tabIsHidden();
+    // Flicking past a tab is not leaving it open. Settle first, so switching
+    // windows for a moment never starts a generation.
+    await pause(BACKGROUND_SETTLE_MS);
+    while (running()) {
+      if (model.snapshot?.preferences.prepareInBackground !== true) return;
+      if (
+        model.session !== null ||
+        model.presentation !== null ||
+        (model.batch !== null && !model.batch.done)
+      ) {
+        await pause(BACKGROUND_IDLE_MS);
+        continue;
+      }
+      try {
+        await refreshStatus();
+      } catch {
+        return;
+      }
+      if (!running()) return;
+      draw();
+      const before = model.snapshot?.session.unpreparedCount ?? 0;
+      if (before === 0) {
+        await pause(BACKGROUND_IDLE_MS);
+        continue;
+      }
+      let banked = 0;
+      try {
+        const dispatched = await requestJson<{ batchId: string; total: number }>(
+          "/api/study/review-batch",
+          { method: "POST", body: JSON.stringify({}) },
+        );
+        await drainBatch(
+          dispatched.batchId,
+          (progress) => {
+            banked = progress.completed.length;
+          },
+          running,
+        );
+      } catch {
+        return;
+      }
+      if (!running()) return;
+      backgroundPrepared += banked;
+      try {
+        await refreshStatus();
+      } catch {
+        return;
+      }
+      // A round that left as much unprepared as it found is a round that
+      // cannot succeed: no provider, or Cards that fail validation however
+      // often they are asked for. Stop until the learner looks at the tab.
+      if ((model.snapshot?.session.unpreparedCount ?? 0) >= before) return;
+    }
+  };
+
+  document.addEventListener("visibilitychange", () => {
+    backgroundRun += 1;
+    if (tabIsHidden()) {
+      const token = backgroundRun;
+      void asTheOnlyTab(() => prepareWhileHidden(token));
+      return;
+    }
+    if (backgroundPrepared > 0) {
+      model.message = `Prepared ${backgroundPrepared} Card${
+        backgroundPrepared === 1 ? "" : "s"
+      } while this tab was in the background. Prepare batch will open them without waiting.`;
+      model.messageKind = "success";
+      backgroundPrepared = 0;
+      draw();
+    }
+  });
 
   // Running out of Cards ends the session, however its last Card was
   // answered. What to say comes from the session rather than the batch,
@@ -1319,6 +1484,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
                       Time zone
                       <input name="timeZone" required .value=${snapshot.preferences.timeZone} />
                     </label>
+                    <label class="check-setting">
+                      <input
+                        name="prepareInBackground"
+                        type="checkbox"
+                        .checked=${snapshot.preferences.prepareInBackground}
+                      />
+                      Prepare while this tab is in the background
+                      <small
+                        >A tab left open writes the sentences for whatever is due, so
+                        coming back to it finds them ready. Each Card costs one
+                        generation once; a tab with nothing left to prepare spends
+                        nothing.</small
+                      >
+                    </label>
                     <button type="submit" ?disabled=${model.busy}>Save settings</button>
                   </form>
                   <div class="provider-settings">
@@ -1533,5 +1712,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
         ? "Picking up where you left off."
         : "Card bank ready. No Cards are admitted until study asks for a queue.";
     });
+    // Opened into a background tab: there is no visibility change to wait
+    // for, so the run starts here.
+    if (tabIsHidden()) {
+      backgroundRun += 1;
+      const token = backgroundRun;
+      void asTheOnlyTab(() => prepareWhileHidden(token));
+    }
   })();
 };

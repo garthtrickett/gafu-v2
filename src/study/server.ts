@@ -273,6 +273,10 @@ const statusSnapshot = (
   if (!status.ok) return err(failureResponse(status.error));
   const flags = material.teachingFlags();
   if (!flags.ok) return err(materialResponse(flags));
+  // What is banked, so the counts can say how much of the due work would
+  // cost a generation. A background tab prepares against this number.
+  const reserved = material.reserveFlags();
+  if (!reserved.ok) return err(materialResponse(reserved));
   // The due tile alone cannot show that Seen it did anything: teaching moves
   // a Card between session modes, not between states. Count the modes from
   // the listing already in hand, at the instant the status was read.
@@ -280,6 +284,7 @@ const statusSnapshot = (
     cards.value,
     (cardId) => ok(flags.value.taught.has(cardId)),
     status.value.observedAt,
+    (cardId, mode) => reserved.value[mode].has(cardId),
   );
   if (!session.ok) return err(materialResponse(session));
   return ok({ status: status.value, session: session.value });
@@ -781,6 +786,12 @@ const handleApi = async (
         return invalidRequest("dayStartsAtHour must be a number.");
       }
       Object.assign(change, { dayStartsAtHour: body["dayStartsAtHour"] });
+    }
+    if (body["prepareInBackground"] !== undefined) {
+      if (typeof body["prepareInBackground"] !== "boolean") {
+        return invalidRequest("prepareInBackground must be a boolean.");
+      }
+      Object.assign(change, { prepareInBackground: body["prepareInBackground"] });
     }
     if (body["timeZone"] !== undefined) {
       if (typeof body["timeZone"] !== "string") {
