@@ -945,7 +945,7 @@ const materialProvider = fakeAi
       // are English: a scene and explanation written in Japanese reached the
       // learner. v5 says what answer is for, after v3's no-translation rule
       // was read as covering it and the Japanese sentence came back verbatim.
-      promptVersion: "study-v8",
+      promptVersion: "study-v10",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
