@@ -206,3 +206,40 @@ describe("colouring the target within a sentence", () => {
     ).toBe("右(みぎ)から");
   });
 });
+
+describe("a kanji run is given at least a kana per character", () => {
+  test("the kana after a word is not matched inside the word's own reading", () => {
+    // 彼女の能力: the reading is かのじょ‖の‖のうりょく, and the first の in
+    // it belongs to かのじょ. A lazy run stopped at that one, so 彼女 was
+    // given か and 能力 was given じょののうりょく — every sentence opening
+    // with 彼女の came out this way.
+    expect(aligned("彼女の能力", "かのじょののうりょく")).toBe(
+      "[彼女:かのじょ]の[能力:のうりょく]",
+    );
+    expect(aligned("彼女の能力は高い。", "かのじょののうりょくはたかい。")).toBe(
+      "[彼女:かのじょ]の[能力:のうりょく]は[高:たか]い。",
+    );
+  });
+
+  test("a word whose reading does not contain the kana after it is unaffected", () => {
+    expect(aligned("今日の天気", "きょうのてんき")).toBe(
+      "[今日:きょう]の[天気:てんき]",
+    );
+    expect(aligned("人の子", "ひとのこ")).toBe("[人:ひと]の[子:こ]");
+  });
+
+  test("a reading of exactly one kana per kanji still places", () => {
+    // The rule is a floor, not a preference: 明日 is あす and 二十歳 is はたち,
+    // and both sit exactly on it.
+    expect(aligned("明日", "あす")).toBe("[明日:あす]");
+    expect(aligned("二十歳", "はたち")).toBe("[二十歳:はたち]");
+    expect(aligned("従兄弟", "いとこ")).toBe("[従兄弟:いとこ]");
+  });
+
+  test("a reading the rule cannot explain is still placed permissively", () => {
+    // Shorter than one kana a character, which no real reading is — but a
+    // reading that placed before must place now, so the floor is dropped
+    // rather than the reading refused.
+    expect(aligned("彼女", "か")).toBe("[彼女:か]");
+  });
+});

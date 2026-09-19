@@ -102,7 +102,25 @@ const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[]
  * reading the pattern cannot explain falls back to trimming the shared edges,
  * so nothing renders worse than it did.
  */
-const placed = (written: string, reading: string): readonly FuriganaPiece[] | null => {
+const placedWith = (
+  written: string,
+  reading: string,
+  /**
+   * Least kana a kanji run may be given, per character.
+   *
+   * One, first. A kanji run's pattern is lazy, so the kana that follows it is
+   * matched at its first occurrence in the reading — and in 彼女の能力 the
+   * first の is the one inside かのじょ, which handed 彼女 the reading か and
+   * 能力 the reading じょののうりょく. No kanji is read as nothing, so
+   * requiring a kana apiece walks the boundary past the の that belongs to
+   * the word and onto the の that follows it.
+   *
+   * Zero, second, as a fallback: a reading this rule cannot explain is still
+   * better placed by the old permissive pattern than not placed at all, and
+   * a sentence that validated before must validate now.
+   */
+  minimumPerKanji: 0 | 1,
+): readonly FuriganaPiece[] | null => {
   const runs: { text: string; kanji: boolean }[] = [];
   let cursor = 0;
   for (const match of written.matchAll(kanjiRun)) {
@@ -113,7 +131,15 @@ const placed = (written: string, reading: string): readonly FuriganaPiece[] | nu
   }
   if (cursor < written.length) runs.push({ text: written.slice(cursor), kanji: false });
   const pattern = new RegExp(
-    `^${runs.map((run) => (run.kanji ? "(.+?)" : literalRun(run.text))).join("")}$`,
+    `^${runs
+      .map((run) =>
+        run.kanji
+          ? minimumPerKanji === 0
+            ? "(.+?)"
+            : `(.{${run.text.length},}?)`
+          : literalRun(run.text),
+      )
+      .join("")}$`,
     "u",
   );
   const matched = pattern.exec(toHiragana(reading));
@@ -139,6 +165,9 @@ const placed = (written: string, reading: string): readonly FuriganaPiece[] | nu
   }
   return pieces;
 };
+
+const placed = (written: string, reading: string): readonly FuriganaPiece[] | null =>
+  placedWith(written, reading, 1) ?? placedWith(written, reading, 0);
 
 /** Whitespace is how a model separates words in a reading; the writing has none. */
 const spoken = (rawReading: string): string => rawReading.replace(/\s+/gu, "");
