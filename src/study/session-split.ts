@@ -49,9 +49,16 @@ export const countSessionModes = <Failure>(
   let reviewCount = 0;
   let laterCount = 0;
   let unpreparedCount = 0;
+  const rotation = stuckRotation(cards, now);
   for (const card of cards) {
     if (card.state !== "active") continue;
     if (card.dueAt === null || card.dueAt > now) {
+      laterCount += 1;
+      continue;
+    }
+    // A stuck Card past the rotation is due and waiting, not due and owed:
+    // counting it here would ask for work the queue will not hand out.
+    if (isStuck(card) && !rotation.has(card.id)) {
       laterCount += 1;
       continue;
     }
@@ -74,7 +81,54 @@ export const countSessionModes = <Failure>(
  * out, and six sessions of failing is enough to say so. Nothing is
  * suspended automatically: which of the two it is, only a person can tell.
  */
-export const STUCK_AFTER_FAILURES = 6;
+export const STUCK_AFTER_FAILURES = 3;
 
 export const isStuck = (card: { consecutiveFailures: number }): boolean =>
   card.consecutiveFailures >= STUCK_AFTER_FAILURES;
+
+/**
+ * How many stuck Cards may be worked at once.
+ *
+ * A Card that keeps failing needs to be met several times a day, and meeting
+ * thirty of them several times a day is how a day stops being study. Weak
+ * traces also compete: a small set worked hard is the shape intensive
+ * language therapy takes, and the evidence there is that the same hours
+ * spread thinner do worse. The rest are not suspended and not lost — they
+ * wait, and take a slot as the ones ahead of them come right.
+ */
+export const STUCK_ROTATION_LIMIT = 8;
+
+type Rotatable = Readonly<{
+  id: string;
+  state: string;
+  dueAt: string | null;
+  consecutiveFailures: number;
+}>;
+
+/**
+ * Which stuck Cards may be worked right now, by id.
+ *
+ * Deterministic on the Cards and the instant, so the queue and the tiles
+ * agree without sharing a query: both apply this to the same deck and get
+ * the same answer. Oldest due first, so a Card waits its turn rather than
+ * losing its place to whichever was answered last.
+ */
+export const stuckRotation = (
+  cards: readonly Rotatable[],
+  now: string,
+): ReadonlySet<string> => {
+  const waiting = cards
+    .filter(
+      (card) =>
+        card.state === "active" &&
+        card.dueAt !== null &&
+        card.dueAt <= now &&
+        isStuck(card),
+    )
+    .sort((left, right) =>
+      left.dueAt === right.dueAt
+        ? left.id.localeCompare(right.id)
+        : (left.dueAt ?? "").localeCompare(right.dueAt ?? ""),
+    );
+  return new Set(waiting.slice(0, STUCK_ROTATION_LIMIT).map((card) => card.id));
+};

@@ -2,13 +2,20 @@ import { describe, expect, test } from "bun:test";
 import type { Result } from "../result.ts";
 import { err, ok } from "../result.ts";
 import type { CardId, CardSummary } from "./contracts.ts";
-import { countSessionModes, wantsTeaching } from "./session-split.ts";
+import {
+  countSessionModes,
+  STUCK_ROTATION_LIMIT,
+  stuckRotation,
+  wantsTeaching,
+} from "./session-split.ts";
 
 const NOW = "2026-09-12T02:00:00.000Z";
 
 const card = (
   id: string,
-  overrides: Partial<Pick<CardSummary, "state" | "dueAt" | "schedulePhase">> = {},
+  overrides: Partial<
+    Pick<CardSummary, "state" | "dueAt" | "schedulePhase" | "consecutiveFailures">
+  > = {},
 ): CardSummary => ({
   id: id as CardId,
   type: "vocabulary",
@@ -187,5 +194,49 @@ describe("how much of the due work still needs a sentence", () => {
       ok: true,
       value: { learnCount: 0, reviewCount: 0, laterCount: 1, unpreparedCount: 0 },
     });
+  });
+});
+
+describe("only so many stuck Cards are worked at once", () => {
+  const stuck = (id: string, dueAt: string) =>
+    card(id, { dueAt, consecutiveFailures: 4, schedulePhase: "review" });
+
+  test("the oldest due take the slots, and the rest wait their turn", () => {
+    const cards = Array.from({ length: STUCK_ROTATION_LIMIT + 4 }, (_, index) =>
+      stuck(`c${index}`, `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`),
+    );
+    const rotation = stuckRotation(cards, NOW);
+    expect(rotation.size).toBe(STUCK_ROTATION_LIMIT);
+    // Oldest due first, so a Card keeps its place rather than losing it to
+    // whichever was answered last.
+    const oldest = [...cards]
+      .sort((left, right) => (left.dueAt ?? "").localeCompare(right.dueAt ?? ""))
+      .slice(0, STUCK_ROTATION_LIMIT)
+      .map((item) => item.id);
+    expect([...rotation].sort()).toEqual([...oldest].sort());
+  });
+
+  test("a Card that is not yet due takes no slot", () => {
+    const later = card("later", {
+      dueAt: "2099-01-01T00:00:00.000Z",
+      consecutiveFailures: 9,
+    });
+    expect(stuckRotation([later], NOW).size).toBe(0);
+  });
+
+  test("a stuck Card past the rotation counts as later, not as due", () => {
+    const cards = Array.from({ length: STUCK_ROTATION_LIMIT + 3 }, (_, index) =>
+      stuck(`c${index}`, "2026-09-11T00:00:00.000Z"),
+    );
+    const counts = countSessionModes(cards, taughtSet([]), NOW, nothingBanked);
+    expect(counts).toMatchObject({
+      ok: true,
+      value: { reviewCount: STUCK_ROTATION_LIMIT, laterCount: 3 },
+    });
+    // The tiles must agree with the queue: a Card counted due that the queue
+    // will not hand out is work the learner is told to do and cannot.
+    if (counts.ok) {
+      expect(counts.value.reviewCount + counts.value.laterCount).toBe(cards.length);
+    }
   });
 });

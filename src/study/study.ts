@@ -39,10 +39,12 @@ import { createPlanOperations } from "./plans.ts";
 import {
   deferFirstRetrieval,
   newSchedule,
+  retrySameDay,
   SCHEDULER_VERSION,
   type StoredSchedule,
   scheduleAnswer,
 } from "./scheduler.ts";
+import { isStuck, stuckRotation } from "./session-split.ts";
 import { localDayKey, validateTimeZone } from "./time.ts";
 
 type CardRow = {
@@ -948,6 +950,22 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
            ORDER BY CASE s.phase WHEN 'new' THEN 1 ELSE 0 END, s.due_at, c.id`,
         )
         .all(now.value.toISOString()) as CardRow[];
+      // Only so many stuck Cards are worked at once. The rest keep their
+      // place and take a slot as the ones ahead of them come right.
+      const rotating = stuckRotation(
+        dueRows.map((row) => ({
+          id: row.id,
+          state: row.state,
+          dueAt: row.due_at,
+          consecutiveFailures: row.consecutive_failures,
+        })),
+        now.value.toISOString(),
+      );
+      const servable = dueRows.filter(
+        (row) =>
+          !isStuck({ consecutiveFailures: row.consecutive_failures }) ||
+          rotating.has(row.id),
+      );
       const admitted = database
         .query(
           "SELECT count(*) AS count FROM admission_event WHERE local_day = ? AND time_zone = ?",
@@ -961,7 +979,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         localDay: admissionDay,
         admittedToday: admitted.count,
         newlyAdmitted,
-        due: dueRows.map((row) => {
+        due: servable.map((row) => {
           const card = toSummary(row);
           if (card.dueAt === null || card.schedulePhase === null) {
             throw new Error("active due Card is missing its schedule");
@@ -1110,6 +1128,15 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       const before = JSON.parse(scheduleRow.schedule_json) as StoredSchedule;
       const after = scheduleAnswer(before, command.grade, now.value);
       if (!after.ok) return after;
+      // Read the run forward: this answer is the one that makes it stuck. A
+      // Card missed this often was never consolidated, so an ordinary lapse
+      // interval only reproduces the failure a day later; it comes back in
+      // the next session instead, and one right answer ends that.
+      const failures =
+        command.grade === "again" ? current.value.consecutiveFailures + 1 : 0;
+      const scheduled = isStuck({ consecutiveFailures: failures })
+        ? retrySameDay(after.value, now.value)
+        : after.value;
       const eventId = dependencies.nextId();
       const apply = database.transaction(() => {
         database
@@ -1129,7 +1156,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             day.value,
             preference.value.timeZone,
             JSON.stringify(before),
-            JSON.stringify(after.value),
+            JSON.stringify(scheduled),
             SCHEDULER_VERSION,
             verified.value.contractVersion,
             verified.value.presentationId,
@@ -1141,9 +1168,9 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
              WHERE card_id = ?`,
           )
           .run(
-            after.value.dueAt,
-            after.value.phase,
-            JSON.stringify(after.value),
+            scheduled.dueAt,
+            scheduled.phase,
+            JSON.stringify(scheduled),
             SCHEDULER_VERSION,
             command.cardId,
           );

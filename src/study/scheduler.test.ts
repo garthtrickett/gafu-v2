@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { newSchedule, SCHEDULER_VERSION, scheduleAnswer } from "./scheduler.ts";
+import {
+  newSchedule,
+  retrySameDay,
+  SCHEDULER_VERSION,
+  STUCK_RETRY_MINUTES,
+  scheduleAnswer,
+} from "./scheduler.ts";
 
 const hours = 60 * 60 * 1_000;
 const days = 24 * hours;
@@ -61,6 +67,28 @@ describe("FSRS adapter", () => {
     // It leaves the same day behind: the first review interval is days.
     const gapMs = new Date(schedule.dueAt).getTime() - answeredAt.getTime();
     expect(gapMs).toBeGreaterThanOrEqual(1 * days);
+  });
+
+  test("a Card that keeps failing comes back the same day instead", () => {
+    // The rule above is right for a memory that was consolidated and then
+    // failed. A Card missed three times running was never consolidated, so
+    // an ordinary lapse interval only reproduces the failure a day later —
+    // which is how a Card is missed six times without being met twice in one
+    // day. Only this case is carved out; the ordinary lapse is untouched.
+    const now = new Date("2026-09-08T10:00:00.000Z");
+    const { schedule } = graduate(now);
+    const later = new Date(new Date(schedule.dueAt).getTime() + 7 * days);
+    const lapsed = scheduleAnswer(schedule, "again", later);
+    if (!lapsed.ok) throw new Error(lapsed.error.kind);
+    const soon = retrySameDay(lapsed.value, later);
+    const gapMs = new Date(soon.dueAt).getTime() - later.getTime();
+    expect(gapMs).toBe(STUCK_RETRY_MINUTES * 60 * 1_000);
+    // It only ever brings a Card forward; a Card already due sooner is left.
+    const already = {
+      ...lapsed.value,
+      dueAt: new Date(later.getTime() + 60_000).toISOString(),
+    };
+    expect(retrySameDay(already, later).dueAt).toBe(already.dueAt);
   });
 
   test("a lapse on a learned Card is days away, never later today", () => {
