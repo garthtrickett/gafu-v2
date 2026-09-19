@@ -18,7 +18,8 @@ const SHARED = [
   // Measured, not guessed: してる fails the target match and 〜てる reads as
   // a word the learner does not have, so natural must not mean contracted.
   "a spoken contraction such as してる",
-  "allowedSupportingGrammar lists",
+  "every construction in the sentence",
+  "including the sentence-final 。",
   "Do not pad",
   // A sentence that hands over the target is not a review.
   "more than one word should still fit the gap",
@@ -26,6 +27,7 @@ const SHARED = [
   // Rules that predate this and must survive it.
   "must not be able to guess the target",
   "are English prose",
+  "without the helper verbs that follow it",
   "falls inside",
 ];
 
@@ -42,5 +44,5 @@ test("the prompt version moves when the ask changes", () => {
   // A generation completed under an older ask is not re-checked, so banked
   // sentences only make way for the new instruction if the version differs.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v8"');
+  expect(server).toContain('promptVersion: "study-v10"');
 });
