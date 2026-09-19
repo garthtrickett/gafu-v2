@@ -132,14 +132,30 @@ const isSuruHost = (
       ),
   );
 
+/**
+ * The target's lemma as the analyzer writes one, with the copula removed.
+ *
+ * Kuromoji lemmatizes a な-adjective stem with its copula — 真剣 in 真剣な
+ * comes back as 真剣だ — and the token side has always been stripped to meet
+ * a Card claiming the bare stem. Cards claim it both ways: the CEJC import
+ * writes 真剣, and a Kaishi entry staged by hand writes 真剣だ. Stripping
+ * only the token left the second kind unable to match itself, so a Card made
+ * from "I don't know this word" was refused for not containing its own word.
+ */
+const targetLemma = (
+  target: Readonly<{ lemma: string; partOfSpeech: BroadPartOfSpeech }>,
+): string =>
+  target.partOfSpeech === "adjective" ? adjectiveLemma(target.lemma) : target.lemma;
+
 export const isTargetToken = (
   token: AnalyzedToken,
   target: Readonly<{ lemma: string; reading: string; partOfSpeech: BroadPartOfSpeech }>,
 ): boolean => {
   const surfaceReading = token.reading ?? token.surface;
   const wanted = normalizeReading(target.reading);
+  const lemma = targetLemma(target);
   return wordForms(token).some((form) => {
-    if (form.lemma !== target.lemma) return false;
+    if (form.lemma !== lemma) return false;
     if (form.partOfSpeech !== target.partOfSpeech) return false;
     if (normalizeReading(surfaceReading) === wanted) return true;
     // A noun folded into one token with its する reads past its own end:
@@ -297,7 +313,7 @@ export const createLearningMaterialValidator = (
                 : token.lemma,
             )
             .join("");
-          if (lemma !== target.lemma) return false;
+          if (lemma !== targetLemma(target)) return false;
           // Readings are phonological, so a compound matches across kana
           // variants (モテる tiled as モテ|る).
           const reading = tiling
