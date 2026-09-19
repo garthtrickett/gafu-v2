@@ -104,6 +104,8 @@ const BACKGROUND = [
   "な",
   "し",
   "こと",
+  "で",
+  "〜て",
   "〜た (る)",
   "〜た (う)",
 ];
@@ -213,6 +215,29 @@ describe("a word is the word however the sentence uses it", () => {
         knowledge,
       }),
     ).toMatchObject({ ok: true });
+  });
+
+  test("a な-adjective Card matches whether or not it writes the copula", async () => {
+    // Kuromoji lemmatizes 真剣 in 真剣な as 真剣だ, and the token side has
+    // always been stripped to meet a Card claiming the bare stem. Cards
+    // claim it both ways — the CEJC import writes 真剣, a Kaishi entry
+    // staged from "I don't know this word" writes 真剣だ — so stripping only
+    // the token refused the second kind for not containing its own word.
+    const knowledge = knowing(
+      [{ lemma: "顔", reading: "かお", partOfSpeech: "noun" }],
+      BACKGROUND,
+    );
+    for (const lemma of ["真剣だ", "真剣"]) {
+      const card = vocabularyCard(lemma, "しんけん", "adjective", "serious");
+      expect(
+        await validate({
+          value: material("真剣な顔です。", "真剣", card),
+          mode: "teach",
+          card,
+          knowledge,
+        }),
+      ).toMatchObject({ ok: true });
+    }
   });
 
   test("a canonical form written with either tilde is the same pattern", async () => {
