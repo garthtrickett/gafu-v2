@@ -207,6 +207,42 @@ describe("colouring the target within a sentence", () => {
   });
 });
 
+describe("the reading is shared out evenly among the kanji", () => {
+  test("a particle spoken as わ is not matched inside the word before it", () => {
+    // 我々は原因 read われわれはげんいん can be cut at either わ: the one inside
+    // われわれ, or the particle, because は is spoken わ and the placement has
+    // to allow that. Taking the first cut gave 我々 the reading われ and 原因
+    // the reading れはげんいん.
+    expect(aligned("我々は原因", "われわれはげんいん")).toBe(
+      "[我々:われわれ]は[原因:げんいん]",
+    );
+    expect(
+      aligned("我々は原因を調査する。", "われわれはげんいんをちょうさする。"),
+    ).toBe("[我々:われわれ]は[原因:げんいん]を[調査:ちょうさ]する。");
+  });
+
+  test("neither the shortest nor the longest first run is right", () => {
+    // 我々 wants the longer cut and 彼女 the shorter, so no preference for one
+    // end works. The evenly shared cut is right in both, and where two are
+    // equally even the earlier one keeps 彼女 from borrowing the particle's の.
+    expect(aligned("彼女の能力", "かのじょののうりょく")).toBe(
+      "[彼女:かのじょ]の[能力:のうりょく]",
+    );
+    expect(aligned("私は本を読む", "わたしはほんをよむ")).toBe(
+      "[私:わたし]は[本:ほん]を[読:よ]む",
+    );
+  });
+
+  test("a long sentence in one segment still places, and quickly", () => {
+    const written = "先ほどの会議で部長が新しい計画について説明していました。";
+    const reading =
+      "さきほどのかいぎでぶちょうがあたらしいけいかくについてせつめいしていました。";
+    const started = performance.now();
+    expect(aligned(written, reading)).toContain("[会議:かいぎ]");
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
 describe("a kanji run is given at least a kana per character", () => {
   test("the kana after a word is not matched inside the word's own reading", () => {
     // 彼女の能力: the reading is かのじょ‖の‖のうりょく, and the first の in

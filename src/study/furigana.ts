@@ -102,22 +102,114 @@ const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[]
  * reading the pattern cannot explain falls back to trimming the shared edges,
  * so nothing renders worse than it did.
  */
+/**
+ * How many of the writing's kana had to be read as their spoken variant for
+ * it to sit at this point of the reading, or null if it does not sit here.
+ *
+ * は is spoken わ, so the tolerance has to exist; but it is a concession, not
+ * a preference. 今日は私 read きょうはわたし can be cut with 今日 taking きょうは
+ * and the particle then matching the わ of わたし, which is both wrong and
+ * perfectly even — so evenness alone chooses it. Counting the concessions
+ * and preferring the cut that makes fewest settles it: the cut where は is
+ * simply は.
+ */
+const literalAt = (reading: string, at: number, text: string): number | null => {
+  const written = toHiragana(text);
+  let spoken = 0;
+  for (let index = 0; index < written.length; index += 1) {
+    const want = written[index] as string;
+    const got = reading[at + index];
+    if (got === undefined) return null;
+    if (got === want) continue;
+    if (spokenAs[want] === got) {
+      spoken += 1;
+      continue;
+    }
+    return null;
+  }
+  return spoken;
+};
+
+/** Longest reading a kanji run is allowed, and the work budget for the walk. */
+const MOST_KANA_PER_KANJI = 4;
+const SPLIT_BUDGET = 20_000;
+
+/**
+ * Every way the reading can be cut so that each non-kanji run matches itself.
+ *
+ * There is usually more than one, and which one is taken is the whole
+ * problem. 我々は原因 read われわれはげんいん can be cut at either わ — the one
+ * inside われわれ or the particle — because は is spoken わ and the pattern has
+ * to allow that. Taking the first cut gave 我々 the reading われ and 原因 the
+ * reading れはげんいん.
+ */
+const splits = (
+  runs: readonly { text: string; kanji: boolean }[],
+  reading: string,
+  minimumPerKanji: 0 | 1,
+): { split: string[]; spoken: number }[] => {
+  const hiragana = toHiragana(reading);
+  const found: { split: string[]; spoken: number }[] = [];
+  let budget = SPLIT_BUDGET;
+  const walk = (index: number, at: number, taken: string[], spoken: number): void => {
+    if (budget <= 0) return;
+    budget -= 1;
+    const run = runs[index];
+    if (run === undefined) {
+      if (at === reading.length) found.push({ split: [...taken], spoken });
+      return;
+    }
+    if (!run.kanji) {
+      const concessions = literalAt(hiragana, at, run.text);
+      if (concessions !== null) {
+        walk(index + 1, at + run.text.length, taken, spoken + concessions);
+      }
+      return;
+    }
+    const least = Math.max(1, run.text.length * minimumPerKanji);
+    const most = Math.min(
+      reading.length - at,
+      run.text.length * MOST_KANA_PER_KANJI + 3,
+    );
+    for (let length = least; length <= most; length += 1) {
+      taken.push(reading.slice(at, at + length));
+      walk(index + 1, at + length, taken, spoken);
+      taken.pop();
+    }
+  };
+  walk(0, 0, [], 0);
+  return found;
+};
+
+/**
+ * How unevenly a cut shares the reading out among the kanji.
+ *
+ * Kanji in a compound run about two kana each, and a cut that gives one run
+ * a kana and the next three has almost certainly taken a kana belonging to
+ * the first. Neither preferring the shortest first run nor the longest gets
+ * both 我々は原因 and 彼女の能力 right — the balanced cut does. Where two cuts
+ * are equally balanced the earlier one is kept, which is how 彼女 keeps かのじょ
+ * rather than borrowing the particle's の.
+ */
+const unevenness = (
+  runs: readonly { text: string; kanji: boolean }[],
+  split: readonly string[],
+): number => {
+  const kanji = runs.filter((run) => run.kanji);
+  const per = kanji.map((run, index) => (split[index]?.length ?? 0) / run.text.length);
+  const mean = per.reduce((total, value) => total + value, 0) / per.length;
+  return per.reduce((total, value) => total + (value - mean) ** 2, 0) / per.length;
+};
+
 const placedWith = (
   written: string,
   reading: string,
   /**
-   * Least kana a kanji run may be given, per character.
-   *
-   * One, first. A kanji run's pattern is lazy, so the kana that follows it is
-   * matched at its first occurrence in the reading — and in 彼女の能力 the
-   * first の is the one inside かのじょ, which handed 彼女 the reading か and
-   * 能力 the reading じょののうりょく. No kanji is read as nothing, so
-   * requiring a kana apiece walks the boundary past the の that belongs to
-   * the word and onto the の that follows it.
-   *
-   * Zero, second, as a fallback: a reading this rule cannot explain is still
-   * better placed by the old permissive pattern than not placed at all, and
-   * a sentence that validated before must validate now.
+   * Least kana a kanji run may be given, per character. One first, because no
+   * kanji is read as nothing and the floor rules out the worst cuts outright;
+   * zero second, as a fallback, so a reading this cannot explain is still
+   * placed rather than refused — readingFits shares this code, and a stricter
+   * rule alone would start rejecting generations that place fine today.
    */
   minimumPerKanji: 0 | 1,
 ): readonly FuriganaPiece[] | null => {
@@ -130,37 +222,40 @@ const placedWith = (
     cursor = start + match[0].length;
   }
   if (cursor < written.length) runs.push({ text: written.slice(cursor), kanji: false });
-  const pattern = new RegExp(
-    `^${runs
-      .map((run) =>
-        run.kanji
-          ? minimumPerKanji === 0
-            ? "(.+?)"
-            : `(.{${run.text.length},}?)`
-          : literalRun(run.text),
-      )
-      .join("")}$`,
-    "u",
-  );
-  const matched = pattern.exec(toHiragana(reading));
-  if (matched === null) return null;
-  // Kana normalisation keeps every length, so the captures' positions in the
-  // normalised reading are their positions in the original.
+  // Fewest concessions to a spoken variant, then the most evenly shared cut,
+  // then the earliest — the order of how much each one tells us.
+  //
+  // Penalising a run that ends on the kana written after it was tried too,
+  // to keep 部屋 from taking the particle in 部屋は初めて. It cannot be done
+  // positionally: 建物 and 食べ物 end in の before a の because the words do,
+  // and the rule took their last kana away. Without a dictionary the two
+  // cases look identical, so the rule is left out and 部屋は初めて is left
+  // wrong — one sentence in the learner's two thousand.
+  const rank = (candidate: { split: string[]; spoken: number }): readonly number[] => [
+    candidate.spoken,
+    unevenness(runs, candidate.split),
+  ];
+  const best = splits(runs, reading, minimumPerKanji).reduce<{
+    split: readonly string[];
+    rank: readonly number[];
+  } | null>((chosen, candidate) => {
+    const scored = { split: candidate.split, rank: rank(candidate) };
+    if (chosen === null) return scored;
+    for (const [index, value] of scored.rank.entries()) {
+      const against = chosen.rank[index] ?? 0;
+      if (value !== against) return value < against ? scored : chosen;
+    }
+    return chosen;
+  }, null);
+  if (best === null) return null;
   const pieces: FuriganaPiece[] = [];
-  let offset = 0;
-  let group = 1;
+  let taken = 0;
   for (const run of runs) {
     if (run.kanji) {
-      const captured = matched[group] ?? "";
-      group += 1;
-      pieces.push({
-        text: run.text,
-        reading: reading.slice(offset, offset + captured.length),
-      });
-      offset += captured.length;
+      pieces.push({ text: run.text, reading: best.split[taken] ?? "" });
+      taken += 1;
     } else {
       pieces.push({ text: run.text, reading: null });
-      offset += run.text.length;
     }
   }
   return pieces;
