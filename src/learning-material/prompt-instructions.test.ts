@@ -13,7 +13,7 @@ const SHARED = [
   // The Japanese is a remark, not a dictionary example. Without this the
   // model wrote the shortest thing that passed: 友達を応援する。
   "the Japanese is what they say to them",
-  "is a dictionary example, not speech",
+  "is a dictionary example however politely it is phrased",
   "the particles and the words it normally goes with",
   // Measured, not guessed: してる fails the target match and 〜てる reads as
   // a word the learner does not have, so natural must not mean contracted.
@@ -42,5 +42,5 @@ test("the prompt version moves when the ask changes", () => {
   // A generation completed under an older ask is not re-checked, so banked
   // sentences only make way for the new instruction if the version differs.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v7"');
+  expect(server).toContain('promptVersion: "study-v8"');
 });
