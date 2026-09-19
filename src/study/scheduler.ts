@@ -83,6 +83,30 @@ export const deferFirstRetrieval = (
         dueAt: new Date(now.getTime() + minutes * 60 * 1_000).toISOString(),
       };
 
+/** How soon a Card that keeps failing comes back, in minutes. */
+export const STUCK_RETRY_MINUTES = 30;
+
+/**
+ * Brings a Card that keeps failing back the same day.
+ *
+ * An ordinary lapse is left to FSRS, which puts it a day or more out, and the
+ * reasoning there is sound: a memory that was consolidated and then failed
+ * gains little from an hour's gap. A Card missed three times running was
+ * never consolidated, so the reasoning does not reach it — testing it again
+ * tomorrow only produces the same failure a day later, which is how a Card
+ * comes to be missed six times in a row without ever being met twice in one
+ * day. This puts it in the next session instead, while the exposure is still
+ * warm, and it stops of its own accord: one correct answer clears the run.
+ */
+export const retrySameDay = (
+  current: StoredSchedule,
+  now: Date,
+  minutes: number = STUCK_RETRY_MINUTES,
+): StoredSchedule => {
+  const soon = new Date(now.getTime() + minutes * 60 * 1_000).toISOString();
+  return current.dueAt <= soon ? current : { ...current, dueAt: soon };
+};
+
 const phases: Record<State, SchedulePhase> = {
   [State.New]: "new",
   [State.Learning]: "learning",
