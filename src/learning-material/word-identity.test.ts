@@ -240,6 +240,36 @@ describe("a word is the word however the sentence uses it", () => {
     }
   });
 
+  test("a construction is the same construction inflected", async () => {
+    // The declared patterns match citation forms: /にする/ finds にする and
+    // not にします, /てしまう/ finds てしまう and not てしまいました. Asking a
+    // sentence to carry the citation form asks it to be unnatural — お茶に
+    // します is what a person says — and にする had never once produced a
+    // valid sentence in this learner's whole history.
+    const knowledge = knowing(
+      [
+        { lemma: "お茶", reading: "おちゃ", partOfSpeech: "noun" },
+        { lemma: "魚", reading: "さかな", partOfSpeech: "noun" },
+        { lemma: "食べる", reading: "たべる", partOfSpeech: "verb" },
+      ],
+      [...BACKGROUND, "にする", "てしまう / ちゃう", "〜ます"],
+    );
+    for (const [form, japanese, surface] of [
+      ["にする", "お茶にします。", "にします"],
+      ["てしまう / ちゃう", "魚を食べてしまいました。", "てしまいました"],
+    ] as const) {
+      const card = grammarCard(form);
+      expect(
+        await validate({
+          value: material(japanese, surface, card),
+          mode: "teach",
+          card,
+          knowledge,
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
   test("a canonical form written with either tilde is the same pattern", async () => {
     // The Card says すこしも~ない (U+007E, from the V1 import); the declared
     // pattern says すこしも～ない (U+FF5E). Compared verbatim the Card could
