@@ -83,3 +83,62 @@ test("a database already at version 2 still receives every later step", () => {
     Array.from({ length: MATERIAL_SCHEMA_VERSION }, (_, index) => index + 1),
   );
 });
+
+test("a banked sentence with no reading over its kanji is dropped, once", () => {
+  // The prompt that asked only for the written fields to reconstruct the
+  // sentence let a model answer with one segment and no reading, and those
+  // sentences would each be served once, furigana-less, before going away.
+  const directory = mkdtempSync(join(tmpdir(), "gafu-unreadable-"));
+  directories.push(directory);
+  const databasePath = join(directory, "material.sqlite");
+  open(databasePath).close();
+
+  const banked = (
+    id: string,
+    written: string,
+    reading: string,
+    shownAt: string | null,
+  ) => {
+    const raw = new Database(databasePath);
+    raw
+      .query(
+        `INSERT INTO validated_presentation(
+           id, card_id, mode, payload_json, normalized_japanese, exact_signature,
+           near_signature, generated_at, shown_at, provider, model, prompt_version,
+           validation_version
+         ) VALUES (?, 'c', 'review', ?, ?, ?, ?, '2026-09-19T00:00:00.000Z', ?, 'p', 'm', 'v', 'w')`,
+      )
+      .run(
+        id,
+        JSON.stringify({ readingSegments: [{ written, reading }] }),
+        written,
+        id,
+        id,
+        shownAt,
+      );
+    raw.close();
+  };
+  banked("empty-over-kanji", "清潔感があります。", "", null);
+  banked("kana-needs-none", "あります。", "", null);
+  banked("has-its-reading", "清潔感があります。", "せいけつかんがあります。", null);
+  banked("already-shown", "清潔感があります。", "", "2026-09-19T01:00:00.000Z");
+
+  // Force the step to run again over the rows just inserted.
+  const reset = new Database(databasePath);
+  reset
+    .query("DELETE FROM learning_material_migration WHERE version = ?")
+    .run(MATERIAL_SCHEMA_VERSION);
+  reset.close();
+  open(databasePath).close();
+
+  const check = new Database(databasePath, { readonly: true });
+  const left = (
+    check.query("SELECT id FROM validated_presentation").all() as {
+      id: string;
+    }[]
+  ).map((row) => row.id);
+  check.close();
+  expect(left.sort()).toEqual(
+    ["already-shown", "has-its-reading", "kana-needs-none"].sort(),
+  );
+});

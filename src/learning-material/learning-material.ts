@@ -25,7 +25,7 @@ import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 7;
+export const MATERIAL_SCHEMA_VERSION = 8;
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 // One lifetime, owned by Study's contract, enforced here and there.
 const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
@@ -263,6 +263,46 @@ const migrate = (
         database
           .query(
             "INSERT INTO learning_material_migration(version, applied_at) VALUES (7, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 8) {
+        // A prompt that asked only for the written fields to reconstruct the
+        // sentence let a model answer with one segment and no reading at
+        // all, and the page then showed a sentence with no furigana over any
+        // of it. The provider refuses that now, but the sentences already
+        // banked would each be served once before going away, so they are
+        // dropped here and written again. Only unshown ones: a sentence
+        // already seen is history, and history is not rewritten.
+        for (const row of database
+          .query(
+            `SELECT id, payload_json FROM validated_presentation WHERE shown_at IS NULL`,
+          )
+          .all() as { id: string; payload_json: string }[]) {
+          let unreadable = false;
+          try {
+            const payload = JSON.parse(row.payload_json) as {
+              readingSegments?: { written?: string; reading?: string }[];
+            };
+            unreadable = (payload.readingSegments ?? []).some(
+              (segment) =>
+                typeof segment.written === "string" &&
+                /[一-鿿々〆]/u.test(segment.written) &&
+                (segment.reading ?? "").trim() === "",
+            );
+          } catch {
+            // A payload that will not parse cannot be served either.
+            unreadable = true;
+          }
+          if (unreadable) {
+            database
+              .query("DELETE FROM validated_presentation WHERE id = ?")
+              .run(row.id);
+          }
+        }
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (8, ?)",
           )
           .run(appliedAt);
       }
