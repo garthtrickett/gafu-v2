@@ -97,6 +97,47 @@ const grammarContainsTarget = (
       item.spans.some((span) => insideSpan(span, targetSpan)),
   );
 
+/** A canonical form may name more than one shape: "てしまう / ちゃう". */
+const canonicalAlternatives = (canonicalForm: string): readonly string[] =>
+  canonicalForm
+    .split("/")
+    .map((part) => part.replace(/[~～〜]/gu, "").trim())
+    .filter((part) => part.length > 1);
+
+/**
+ * The construction inside the span, put back into its dictionary form.
+ *
+ * The declared patterns match citation forms: にする matches にする and not
+ * にします, てしまう matches てしまう and not てしまいました. A construction is
+ * the same construction however it is inflected, and asking a sentence to
+ * carry the citation form asks it to be unnatural — お茶にします is what a
+ * person says. にする had never once produced a valid sentence.
+ *
+ * The analyzer already knows the dictionary form of every token, so the span
+ * is rebuilt from lemmas rather than from a table of endings: にします is
+ * に|し|ます, and し lemmatizes する. Politeness and tense at the end belong
+ * to the sentence and not to the construction, so they come off first.
+ */
+const spanDictionaryForm = (
+  tokens: readonly AnalyzedToken[],
+  span: DecodedPresentation["targetSpan"],
+): string => {
+  const inside = tokens.filter((token) => insideSpan(token.span, span));
+  let end = inside.length;
+  while (end > 0) {
+    const last = inside[end - 1];
+    if (last === undefined) break;
+    if (last.broadPartOfSpeech !== "auxiliary" && last.broadPartOfSpeech !== "copula") {
+      break;
+    }
+    end -= 1;
+  }
+  return inside
+    .slice(0, end)
+    .map((token) => token.lemma)
+    .join("");
+};
+
 /**
  * Whether one token is the target word, in any form it may take.
  *
@@ -340,7 +381,14 @@ export const createLearningMaterialValidator = (
         // independent sense. Form equality above is the whole check.
       }
     } else if (!grammarContainsTarget(grammar, target.canonicalForm, span)) {
-      reasons.push({ kind: "targetAbsent" });
+      // The detector only knows the citation form. Before refusing, ask the
+      // analyzer what the span says in dictionary form — an inflected
+      // construction is the same construction.
+      const rebuilt = spanDictionaryForm(analyzed.value.tokens, span);
+      const names = canonicalAlternatives(target.canonicalForm).some((form) =>
+        rebuilt.endsWith(form),
+      );
+      if (!names) reasons.push({ kind: "targetAbsent" });
     }
 
     const analysisWithSenses = {
