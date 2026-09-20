@@ -28,6 +28,8 @@ const request: MaterialProviderRequest = {
     schedulePhase: "new",
     reviewCount: 0,
     consecutiveFailures: 0,
+    stage: "sentence",
+    consecutiveCorrect: 0,
   },
   knowledge: {
     vocabulary: [],

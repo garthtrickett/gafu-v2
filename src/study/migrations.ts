@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 10;
+export const STUDY_SCHEMA_VERSION = 11;
 
 const migrations: readonly Migration[] = [
   {
@@ -383,6 +383,23 @@ const migrations: readonly Migration[] = [
       FROM study_preferences;
       DROP TABLE study_preferences;
       ALTER TABLE study_preferences_v10 RENAME TO study_preferences;
+    `,
+  },
+  {
+    version: 11,
+    sql: `
+      -- A word is met as a word first and only later in a sentence. The
+      -- first form-meaning link lands faster from a bare pair than from
+      -- prose, a word Card needs no generation at all, and by the time the
+      -- Card graduates the learner knows more words, so the sentence it
+      -- graduates into is easier to write.
+      ALTER TABLE card_progress ADD COLUMN stage TEXT NOT NULL DEFAULT 'word'
+        CHECK (stage IN ('word', 'sentence'));
+      ALTER TABLE card_progress ADD COLUMN consecutive_correct INTEGER NOT NULL DEFAULT 0;
+      -- A Card already earned stays where it is: support readiness is the
+      -- mark of a word handled twice a day apart, and demoting those would
+      -- take words out of the bank that sentences already lean on.
+      UPDATE card_progress SET stage = 'sentence' WHERE support_ready_at IS NOT NULL;
     `,
   },
 ];

@@ -96,6 +96,11 @@ describe("a Card taught from a sentence written when it was made", () => {
     const { material, study } = harness();
     const created = study.createCard(card);
     if (!created.ok) throw new Error(created.error.kind);
+    // Past the word stage: this test is about an authored sentence, and a
+    // word Card is served from the Card itself.
+    if (!study.setCardState({ cardId: created.value.card.id, action: "graduate" }).ok) {
+      throw new Error("graduate");
+    }
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) throw new Error(knowledge.error.kind);
 
@@ -167,6 +172,11 @@ describe("a Card taught from a sentence written when it was made", () => {
     };
     const created = study.createCard(verb);
     if (!created.ok) throw new Error(created.error.kind);
+    // Past the word stage: this test is about an authored sentence, and a
+    // word Card is served from the Card itself.
+    if (!study.setCardState({ cardId: created.value.card.id, action: "graduate" }).ok) {
+      throw new Error("graduate");
+    }
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) throw new Error(knowledge.error.kind);
 

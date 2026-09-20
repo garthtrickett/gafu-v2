@@ -54,6 +54,13 @@ const harness = () => {
     },
   });
   if (!created.ok) throw new Error(created.error.kind);
+  // Past the word stage: this test is about generated material, and a word
+  // Card is served from the Card itself without reaching the provider.
+  if (
+    !study.value.setCardState({ cardId: created.value.card.id, action: "graduate" }).ok
+  ) {
+    throw new Error("graduate");
+  }
   const queue = study.value.studyQueue();
   if (!queue.ok || queue.value.due[0] === undefined) throw new Error("no due card");
   const knowledge = study.value.knowledgeSnapshot();

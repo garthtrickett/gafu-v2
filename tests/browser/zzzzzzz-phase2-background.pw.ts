@@ -85,6 +85,18 @@ test("a tab left in the background writes the sentences that are due", async ({
     usageNotes: "A general word for a monkey.",
   });
 
+  // A word Card is served from the Card itself and never reaches a batch, so
+  // the Card this journey watches is put past that stage first.
+  const monkey = (await (
+    await page.request.get(`/api/study?search=${encodeURIComponent("猿")}`)
+  ).json()) as { cards: { id: string; content: { lemma?: string } }[] };
+  const monkeyId = monkey.cards.find((card) => card.content.lemma === "猿")?.id;
+  if (monkeyId === undefined) throw new Error("no 猿 Card");
+  await page.request.post(`/api/study/cards/${monkeyId}/state`, {
+    headers: MUTATION,
+    data: { action: "graduate" },
+  });
+
   await page.goto("/");
   // Admit whatever is staged on the spot: the point is the preparing, not
   // the daily limit.
@@ -200,6 +212,12 @@ test("a tab looked at and left again still prepares", async ({ page }) => {
     usageNotes: "A general word for a bird.",
   });
   expect(id).not.toBe("");
+  // Only a sentence Card has anything to prepare, so this one is put past
+  // the word stage or the hidden tab correctly finds nothing to do.
+  await page.request.post(`/api/study/cards/${id}/state`, {
+    headers: MUTATION,
+    data: { action: "graduate" },
+  });
 
   let dispatches = 0;
   await page.route("**/api/study/review-batch", async (route) => {

@@ -71,7 +71,14 @@ const harness = (refuseRounds: Record<string, number>) => {
       content: { lemma, reading, partOfSpeech: "noun", meaning, usageNotes: "" },
     });
     if (!created.ok) throw new Error(created.error.kind);
-    return created.value.card;
+    // Past the word stage: these tests are about generated sentences, and a
+    // word Card is served from the Card itself without asking the provider.
+    const graduated = study.value.setCardState({
+      cardId: created.value.card.id,
+      action: "graduate",
+    });
+    if (!graduated.ok) throw new Error("graduate");
+    return graduated.value;
   };
   const bird = make("鳥", "とり", "bird");
   const cat = make("猫", "ねこ", "cat");

@@ -14,7 +14,15 @@ const NOW = "2026-09-12T02:00:00.000Z";
 const card = (
   id: string,
   overrides: Partial<
-    Pick<CardSummary, "state" | "dueAt" | "schedulePhase" | "consecutiveFailures">
+    Pick<
+      CardSummary,
+      | "state"
+      | "dueAt"
+      | "schedulePhase"
+      | "consecutiveFailures"
+      | "stage"
+      | "consecutiveCorrect"
+    >
   > = {},
 ): CardSummary => ({
   id: id as CardId,
@@ -34,6 +42,8 @@ const card = (
   schedulePhase: "new",
   reviewCount: 0,
   consecutiveFailures: 0,
+  stage: "sentence",
+  consecutiveCorrect: 0,
   ...overrides,
 });
 
@@ -199,7 +209,13 @@ describe("how much of the due work still needs a sentence", () => {
 
 describe("only so many stuck Cards are worked at once", () => {
   const stuck = (id: string, dueAt: string) =>
-    card(id, { dueAt, consecutiveFailures: 4, schedulePhase: "review" });
+    card(id, {
+      dueAt,
+      consecutiveFailures: 4,
+      stage: "sentence",
+      consecutiveCorrect: 0,
+      schedulePhase: "review",
+    });
 
   test("the oldest due take the slots, and the rest wait their turn", () => {
     const cards = Array.from({ length: STUCK_ROTATION_LIMIT + 4 }, (_, index) =>
@@ -220,6 +236,8 @@ describe("only so many stuck Cards are worked at once", () => {
     const later = card("later", {
       dueAt: "2099-01-01T00:00:00.000Z",
       consecutiveFailures: 9,
+      stage: "sentence",
+      consecutiveCorrect: 0,
     });
     expect(stuckRotation([later], NOW).size).toBe(0);
   });

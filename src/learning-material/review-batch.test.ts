@@ -98,7 +98,14 @@ const createWord = (
     content: { lemma, reading, partOfSpeech: "noun", meaning, usageNotes: "" },
   });
   if (!created.ok || created.value.outcome !== "created") throw new Error("create");
-  return created.value.card;
+  // Past the word stage: these tests are about generated sentences, and a
+  // word Card is served from the Card itself without asking the provider.
+  const graduated = study.setCardState({
+    cardId: created.value.card.id,
+    action: "graduate",
+  });
+  if (!graduated.ok) throw new Error("graduate");
+  return graduated.value;
 };
 
 const markBackgroundKnown = (study: ReturnType<typeof harness>["study"]) => {

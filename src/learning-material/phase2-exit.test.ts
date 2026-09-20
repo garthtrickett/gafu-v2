@@ -95,6 +95,9 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!created.ok) throw new Error(created.error.kind);
+    // A word Card is served from the Card itself; this test is about
+    // generated material, so the Card is put past that stage.
+    app.study.setCardState({ cardId: created.value.card.id, action: "graduate" });
     const queue = app.study.studyQueue();
     if (!queue.ok || queue.value.due[0] === undefined) throw new Error("missing queue");
     // The deterministic provider's sentences use background particles the
@@ -289,6 +292,9 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!grammar.ok) throw new Error(grammar.error.kind);
+    // A word Card is served from the Card itself; this test is about
+    // generated material, so the Card is put past that stage.
+    app.study.setCardState({ cardId: grammar.value.card.id, action: "graduate" });
     // The deterministic かもしれない sentence ends in かな, contains も,
     // ない, and もし, and also fires the verbatim twin かもしれない
     // alongside the 〜-prefixed target. Alias unification (knowing either
@@ -366,6 +372,12 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!card.ok) throw new Error(card.error.kind);
+    // A word Card is served from the Card itself; this test is about
+    // generated material, so the Card is put past that stage.
+    app.study.setCardState({ cardId: card.value.card.id, action: "graduate" });
+    // A word Card is served from the Card itself; this test is about
+    // generated material, so the Card is put past that stage.
+    app.study.setCardState({ cardId: card.value.card.id, action: "graduate" });
     const invalidQueue = app.study.studyQueue();
     const invalidKnowledge = app.study.knowledgeSnapshot();
     if (
