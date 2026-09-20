@@ -19,6 +19,7 @@ const SHARED = [
   // a word the learner does not have, so natural must not mean contracted.
   "a spoken contraction such as してる",
   "every construction in the sentence",
+  "never empty where the writing has kanji",
   "including the sentence-final 。",
   "Do not pad",
   // A sentence that hands over the target is not a review.
@@ -44,5 +45,20 @@ test("the prompt version moves when the ask changes", () => {
   // A generation completed under an older ask is not re-checked, so banked
   // sentences only make way for the new instruction if the version differs.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v10"');
+  expect(server).toContain('promptVersion: "study-v11"');
+});
+
+/**
+ * The prompt asks for the readings; the provider is what makes asking count.
+ * A reading of "" passes every other check — the written fields still spell
+ * the sentence, and an absent reading cannot be misplaced — so a model told
+ * "the written fields must reconstruct japanese" satisfied it with one
+ * segment carrying the whole sentence and no reading at all. Twenty-four
+ * sentences reached the learner with no ruby over any of them.
+ */
+test("a candidate with no reading over its kanji is not accepted", () => {
+  const source = readFileSync("src/learning-material/openai-provider.ts", "utf8");
+  // Both paths a candidate can arrive by: one Card at a time, and the batch.
+  expect(source.split("carriesReadings").length - 1).toBeGreaterThanOrEqual(3);
+  expect(source).toContain("left the readings empty over kanji");
 });

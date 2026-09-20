@@ -425,6 +425,33 @@ const variants = (surface: string, mode: "teach" | "review"): readonly string[] 
     ? [`${surface}かな。`, `でも${surface}。`, `${surface}だけだ。`]
     : [`${surface}よね。`, `${surface}だって。`, `${surface}かね。`];
 
+/**
+ * The target with its own reading, and the kana around it reading as itself.
+ * A な-adjective Card writes the copula into its lemma (真剣だ) but not into
+ * its reading (しんけん), so the copula is put back or the two do not line up.
+ */
+const readingSegmentsFor = (
+  japanese: string,
+  targetSurface: string,
+  targetReading: string,
+): { written: string; reading: string }[] => {
+  const start = japanese.indexOf(targetSurface);
+  if (targetSurface === "" || start < 0) {
+    return [{ written: japanese, reading: japanese }];
+  }
+  const before = japanese.slice(0, start);
+  const after = japanese.slice(start + targetSurface.length);
+  const reading =
+    targetSurface.endsWith("だ") && !targetReading.endsWith("だ")
+      ? `${targetReading}だ`
+      : targetReading;
+  return [
+    ...(before === "" ? [] : [{ written: before, reading: before }]),
+    { written: targetSurface, reading },
+    ...(after === "" ? [] : [{ written: after, reading: after }]),
+  ];
+};
+
 export const deterministicMaterialResult = (
   request: MaterialProviderRequest,
 ): Result<MaterialProviderResult, MaterialProviderFailure> => {
@@ -436,6 +463,10 @@ export const deterministicMaterialResult = (
       : "lemma" in content
         ? content.lemma
         : "";
+  const targetReading =
+    request.card.type === "vocabulary" && "reading" in content
+      ? content.reading
+      : targetSurface;
   const candidates = variants(targetSurface, request.mode).map((japanese) => {
     const start = japanese.indexOf(targetSurface);
     const shared = {
@@ -453,7 +484,12 @@ export const deterministicMaterialResult = (
         unit: "utf16-code-unit" as const,
         normalization: "nfkc-v1" as const,
       },
-      readingSegments: [{ written: japanese, reading: "" }],
+      // Real furigana, not an empty reading. An empty one used to mean "no
+      // ruby wanted", which is indistinguishable from a model omitting the
+      // readings altogether — and once the validator had to refuse that, the
+      // fixtures had to stop relying on it. The tail of each variant is kana,
+      // so it reads as itself.
+      readingSegments: readingSegmentsFor(japanese, targetSurface, targetReading),
       answer: content.meaning,
       explanation: content.usageNotes || content.meaning,
       usageNote: content.usageNotes || "Use it in an appropriate everyday context.",
