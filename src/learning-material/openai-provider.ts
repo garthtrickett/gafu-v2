@@ -243,15 +243,46 @@ const decodeTerminalJson = (body: unknown): DecodedJson => {
  * A whole-batch answer. Each item names its Card; an item that is not an
  * object, names no Card, or carries no materials is dropped on its own.
  */
+const kanji = /[一-鿿々〆]/u;
+
+/**
+ * Whether the model actually wrote the furigana it was asked for.
+ *
+ * A reading of "" passes every other check: the written fields still spell
+ * the sentence, and a reading that is absent cannot be misplaced. So a model
+ * told the written fields must reconstruct japanese can satisfy that with one
+ * segment carrying the whole sentence and no reading at all — which is what
+ * happened, and the page showed a sentence with no ruby over any of it. The
+ * prompt asks for the readings; this is what makes asking count.
+ *
+ * Kana needs no reading, so only a segment showing kanji owes one. Checked
+ * here rather than in the shared validator because it is a fact about what
+ * came back from the model, not about whether the sentence suits the learner.
+ */
+const carriesReadings = (candidate: unknown): boolean => {
+  if (!isRecord(candidate)) return true;
+  const segments = candidate["readingSegments"];
+  if (!Array.isArray(segments)) return true;
+  return segments.every((segment) => {
+    if (!isRecord(segment)) return true;
+    const written = segment["written"];
+    const reading = segment["reading"];
+    if (typeof written !== "string" || !kanji.test(written)) return true;
+    return typeof reading === "string" && reading.trim() !== "";
+  });
+};
+
 const decodeBatchItems = (value: unknown): readonly MaterialBatchItem[] => {
   if (!isRecord(value) || !Array.isArray(value["items"])) return [];
   const items: MaterialBatchItem[] = [];
   for (const item of value["items"]) {
     if (!isRecord(item) || typeof item["cardId"] !== "string") continue;
     if (!Array.isArray(item["materials"]) || item["materials"].length === 0) continue;
+    const carrying = item["materials"].filter(carriesReadings);
+    if (carrying.length === 0) continue;
     items.push({
       cardId: item["cardId"] as MaterialBatchItem["cardId"],
-      candidates: item["materials"],
+      candidates: carrying,
     });
   }
   return items;
@@ -323,10 +354,19 @@ const decodeTerminal = (body: unknown, options: Options): DecodedMaterial => {
       },
     };
   }
+  const carrying = value["materials"].filter(carriesReadings);
+  if (carrying.length === 0) {
+    return {
+      failure: {
+        kind: "malformedResponse",
+        detail: "OpenAI output left the readings empty over kanji",
+      },
+    };
+  }
   return {
     result: {
       requestId: body["id"],
-      candidates: value["materials"],
+      candidates: carrying,
       provider: "openai-responses",
       model: options.model,
       promptVersion: options.promptVersion,
@@ -383,7 +423,7 @@ const requestBody = (options: Options, request: MaterialProviderRequest): unknow
   store: false,
   reasoning: { effort: "low" },
   instructions:
-    "Create exactly three materially different Japanese learning presentations for the one target Card. Use only the supplied supporting vocabulary and grammar. The context names someone speaking to someone else, and the Japanese is what they say to them: address the listener, and use です・ます unless the scene is plainly between close friends. Let the target take the particles and the words it normally goes with, so the sentence shows how it is used. A bare subject and predicate — 能力は高い。, あの人は冷静です。 — is a dictionary example however politely it is phrased; say instead what the speaker would be saying at that moment, reacting to what has just happened, asking about it, or explaining it. Keep to standard forms: a spoken contraction such as してる is not a word the learner has, so write している, and every construction in the sentence — not only the ending, but every connective, auxiliary and set phrase in the middle of it — must be one that allowedSupportingGrammar lists. Do not pad — a longer sentence is only better if every word in it is still one the learner has. The English context sets the scene in one sentence — who is speaking, where, in what mood — and must not state, paraphrase, translate, or hint at the target's meaning or the action it names; a learner reading the context alone must not be able to guess the target. Where mode is review the rest of the Japanese must not do the target's work either: with the target taken out, more than one word should still fit the gap. Where mode is teach the learner is meeting the word rather than recalling it, so the situation may be set out plainly. answer is what the whole Japanese sentence means, in English; explanation says how it works, naming what the target itself means; usageNote says when to use it. context, answer, explanation, and usageNote are English prose; Japanese appears in them only as the target word or a short quoted form. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. targetSurface is the target word as it stands in the sentence, with its own okurigana but without the helper verbs that follow it: in 応援しています the target is 応援し, not 応援しています. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct japanese exactly, character for character, including the sentence-final 。 — concatenating every written field must give japanese back with nothing added and nothing left off. Do not include another learning target.",
+    "Create exactly three materially different Japanese learning presentations for the one target Card. Use only the supplied supporting vocabulary and grammar. The context names someone speaking to someone else, and the Japanese is what they say to them: address the listener, and use です・ます unless the scene is plainly between close friends. Let the target take the particles and the words it normally goes with, so the sentence shows how it is used. A bare subject and predicate — 能力は高い。, あの人は冷静です。 — is a dictionary example however politely it is phrased; say instead what the speaker would be saying at that moment, reacting to what has just happened, asking about it, or explaining it. Keep to standard forms: a spoken contraction such as してる is not a word the learner has, so write している, and every construction in the sentence — not only the ending, but every connective, auxiliary and set phrase in the middle of it — must be one that allowedSupportingGrammar lists. Do not pad — a longer sentence is only better if every word in it is still one the learner has. The English context sets the scene in one sentence — who is speaking, where, in what mood — and must not state, paraphrase, translate, or hint at the target's meaning or the action it names; a learner reading the context alone must not be able to guess the target. Where mode is review the rest of the Japanese must not do the target's work either: with the target taken out, more than one word should still fit the gap. Where mode is teach the learner is meeting the word rather than recalling it, so the situation may be set out plainly. answer is what the whole Japanese sentence means, in English; explanation says how it works, naming what the target itself means; usageNote says when to use it. context, answer, explanation, and usageNote are English prose; Japanese appears in them only as the target word or a short quoted form. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. targetSurface is the target word as it stands in the sentence, with its own okurigana but without the helper verbs that follow it: in 応援しています the target is 応援し, not 応援しています. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments carry the furigana: each segment's written field is a piece of japanese and its reading field is that piece in kana, never empty where the writing has kanji. Concatenating every written field must give japanese back exactly, character for character, including the sentence-final 。, with nothing added and nothing left off. Do not include another learning target.",
   input: JSON.stringify(promptInput(request)),
   text: {
     format: {
@@ -418,7 +458,7 @@ const batchRequestBody = (
     background: true,
     store: false,
     reasoning: { effort: "low" },
-    instructions: `For every target Card in "targets", create exactly ${perCard} materially different Japanese learning presentations. Return one item per target, in the same order, with cardId copied exactly. Use only the supplied supporting vocabulary and grammar, shared by all targets. The context names someone speaking to someone else, and the Japanese is what they say to them: address the listener, and use です・ます unless the scene is plainly between close friends. Let the target take the particles and the words it normally goes with, so the sentence shows how it is used. A bare subject and predicate — 能力は高い。, あの人は冷静です。 — is a dictionary example however politely it is phrased; say instead what the speaker would be saying at that moment, reacting to what has just happened, asking about it, or explaining it. Keep to standard forms: a spoken contraction such as してる is not a word the learner has, so write している, and every construction in the sentence — not only the ending, but every connective, auxiliary and set phrase in the middle of it — must be one that allowedSupportingGrammar lists. Do not pad — a longer sentence is only better if every word in it is still one the learner has. Where a target lists previousRejections, an earlier attempt was refused for those reasons (for example an unknown word it used); do not repeat them. The English context sets the scene in one sentence — who is speaking, where, in what mood — and must not state, paraphrase, translate, or hint at the target's meaning or the action it names; a learner reading the context alone must not be able to guess the target. Where mode is review the rest of the Japanese must not do the target's work either: with the target taken out, more than one word should still fit the gap. Where mode is teach the learner is meeting the word rather than recalling it, so the situation may be set out plainly. answer is what the whole Japanese sentence means, in English; explanation says how it works, naming what the target itself means; usageNote says when to use it. context, answer, explanation, and usageNote are English prose; Japanese appears in them only as the target word or a short quoted form. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. targetSurface is the target word as it stands in the sentence, with its own okurigana but without the helper verbs that follow it: in 応援しています the target is 応援し, not 応援しています. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments must reconstruct japanese exactly, character for character, including the sentence-final 。 — concatenating every written field must give japanese back with nothing added and nothing left off. Do not include another learning target in any sentence.`,
+    instructions: `For every target Card in "targets", create exactly ${perCard} materially different Japanese learning presentations. Return one item per target, in the same order, with cardId copied exactly. Use only the supplied supporting vocabulary and grammar, shared by all targets. The context names someone speaking to someone else, and the Japanese is what they say to them: address the listener, and use です・ます unless the scene is plainly between close friends. Let the target take the particles and the words it normally goes with, so the sentence shows how it is used. A bare subject and predicate — 能力は高い。, あの人は冷静です。 — is a dictionary example however politely it is phrased; say instead what the speaker would be saying at that moment, reacting to what has just happened, asking about it, or explaining it. Keep to standard forms: a spoken contraction such as してる is not a word the learner has, so write している, and every construction in the sentence — not only the ending, but every connective, auxiliary and set phrase in the middle of it — must be one that allowedSupportingGrammar lists. Do not pad — a longer sentence is only better if every word in it is still one the learner has. Where a target lists previousRejections, an earlier attempt was refused for those reasons (for example an unknown word it used); do not repeat them. The English context sets the scene in one sentence — who is speaking, where, in what mood — and must not state, paraphrase, translate, or hint at the target's meaning or the action it names; a learner reading the context alone must not be able to guess the target. Where mode is review the rest of the Japanese must not do the target's work either: with the target taken out, more than one word should still fit the gap. Where mode is teach the learner is meeting the word rather than recalling it, so the situation may be set out plainly. answer is what the whole Japanese sentence means, in English; explanation says how it works, naming what the target itself means; usageNote says when to use it. context, answer, explanation, and usageNote are English prose; Japanese appears in them only as the target word or a short quoted form. Copy target identity fields exactly. targetSpan is a zero-based UTF-16 code-unit span in NFKC Japanese. targetSurface is the target word as it stands in the sentence, with its own okurigana but without the helper verbs that follow it: in 応援しています the target is 応援し, not 応援しています. For a grammar target, span the whole target word; the construction's own detected form falls inside that span. Reading segments carry the furigana: each segment's written field is a piece of japanese and its reading field is that piece in kana, never empty where the writing has kanji. Concatenating every written field must give japanese back exactly, character for character, including the sentence-final 。, with nothing added and nothing left off. Do not include another learning target in any sentence.`,
     input: JSON.stringify({
       targets: targets.map((target) => {
         const { usageNotes: _cue, ...contentWithoutCue } = target.card.content;
