@@ -57,7 +57,22 @@ export type CardSummary = Readonly<{
   reviewCount: number;
   /** Answers of Again in a row, reset by any other answer. */
   consecutiveFailures: number;
+  /**
+   * Whether the Card is still met as a bare word or has graduated to a
+   * sentence. A word Card is the Card itself — writing, reading, meaning —
+   * and costs no generation; a sentence Card is written against what the
+   * learner knows. Graduating is also what makes a word count as known, so
+   * a sentence may only lean on words handled in a sentence.
+   */
+  stage: CardStage;
+  /** Answers other than Again in a row, reset by an Again. */
+  consecutiveCorrect: number;
 }>;
+
+export type CardStage = "word" | "sentence";
+
+/** Correct answers in a row that move a Card from a word to a sentence. */
+export const GRADUATE_AFTER_CORRECT = 3;
 
 export type CreateCardOutcome = Readonly<{
   outcome: "created" | "existing";
@@ -104,7 +119,7 @@ export type BaselineWordOutcome = Readonly<{
 
 export type CardStateCommand = Readonly<{
   cardId: CardId;
-  action: "markSupportReady" | "suspend" | "restore";
+  action: "markSupportReady" | "graduate" | "suspend" | "restore";
 }>;
 
 export type StudyPreferences = Readonly<{

@@ -26,6 +26,9 @@ import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
 export const MATERIAL_SCHEMA_VERSION = 8;
+
+/** Marks a row written for a word Card rather than generated as a sentence. */
+const WORD_CARD_PROVIDER = "word-card";
 export const MATERIAL_VALIDATION_VERSION = "material-v1";
 // One lifetime, owned by Study's contract, enforced here and there.
 const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
@@ -442,7 +445,8 @@ export const openLearningMaterial = (
     try {
       const rows = database
         .query(`SELECT normalized_japanese FROM validated_presentation
-        WHERE card_id = ? AND shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 5`)
+        WHERE card_id = ? AND shown_at IS NOT NULL AND provider <> '${WORD_CARD_PROVIDER}'
+        ORDER BY shown_at DESC LIMIT 5`)
         .all(cardId) as { normalized_japanese: string }[];
       return ok(rows.map((row) => row.normalized_japanese));
     } catch (cause) {
@@ -861,10 +865,122 @@ export const openLearningMaterial = (
     return ok(card.schedulePhase === "new" && !taught.value ? "teach" : "review");
   };
 
+  /**
+   * A word Card, served from the Card itself.
+   *
+   * Nothing is generated and nothing is stored: the writing, its reading and
+   * its meaning are already on the Card, and a bare pair is what the first
+   * form-meaning link wants. It costs no provider call, so it cannot fail
+   * validation and cannot be refused for a word the learner has not met —
+   * which is the whole reason a Card can be met before a sentence for it can
+   * be written at all.
+   */
+  /**
+   * The row a word Card's first exposure is recorded as.
+   *
+   * Teaching is acknowledged against a presentation id, so a first exposure
+   * has to exist somewhere even though nothing was generated. Written once
+   * per Card and marked as its own provider, so it is not offered back to the
+   * model as a sentence to avoid repeating — the word is the one thing a
+   * sentence for that Card must contain.
+   */
+  const wordTeachingRow = (card: CardSummary, japanese: string, at: Date): string => {
+    const found = database
+      .query(
+        `SELECT id FROM validated_presentation
+         WHERE card_id = ? AND mode = 'teach' AND provider = ?`,
+      )
+      .get(card.id, WORD_CARD_PROVIDER) as { id: string } | null;
+    if (found !== null) return found.id;
+    const id = options.nextId();
+    database
+      .query(
+        `INSERT INTO validated_presentation(
+           id, card_id, mode, payload_json, normalized_japanese, exact_signature,
+           near_signature, generated_at, shown_at, provider, model, prompt_version,
+           validation_version
+         ) VALUES (?, ?, 'teach', '{}', ?, ?, ?, ?, ?, ?, '-', '-', ?)`,
+      )
+      .run(
+        id,
+        card.id,
+        japanese,
+        `word:${card.id}`,
+        `word:${card.id}`,
+        at.toISOString(),
+        at.toISOString(),
+        WORD_CARD_PROVIDER,
+        MATERIAL_VALIDATION_VERSION,
+      );
+    return id;
+  };
+
+  const wordPresentation = (
+    card: CardSummary,
+    mode: "teach" | "review",
+  ): Result<PreparedMaterial, MaterialFailure> => {
+    const observedAt = safeNow(options.clock);
+    if (!observedAt.ok) return observedAt;
+    const content = card.content as Record<string, string>;
+    const written = content["lemma"] ?? content["canonicalForm"] ?? "";
+    const reading = content["reading"] ?? "";
+    const id =
+      mode === "teach"
+        ? wordTeachingRow(card, written, observedAt.value)
+        : options.nextId();
+    let permit: PresentationPermit | null = null;
+    if (mode === "review") {
+      prunePermits(observedAt.value.getTime());
+      const token = options.nextToken();
+      issuePermit({
+        token,
+        id: options.nextId(),
+        cardId: card.id,
+        presentationId: id,
+        issuedAt: observedAt.value,
+        contractVersion: MATERIAL_VALIDATION_VERSION,
+      });
+      permit = { token };
+    }
+    const material = {
+      mode,
+      context: "",
+      prompt: mode === "teach" ? "A new word." : "What does this word mean?",
+      japanese: written,
+      targetSurface: written,
+      targetSpan: {
+        start: 0,
+        end: written.length,
+        unit: "utf16-code-unit" as const,
+        normalization: "nfkc-v1" as const,
+      },
+      // Furigana on the front: the reading is shown with the word, not held
+      // back, because this stage asks for the meaning and not the reading.
+      readingSegments: [{ written, reading }],
+      answer: content["meaning"] ?? "",
+      explanation: content["meaning"] ?? "",
+      usageNote: content["usageNotes"] ?? "",
+    } as unknown as GeneratedMaterial;
+    return ok({
+      id,
+      cardId: card.id,
+      mode,
+      material,
+      permit,
+      source: "reserve",
+      audioUrl: null,
+    });
+  };
+
   const prepare: LearningMaterial["prepare"] = async (input) => {
     const wanted = modeFor(input.card);
     if (!wanted.ok) return wanted;
     const mode = wanted.value;
+    if (input.card.stage === "word") {
+      const word = wordPresentation(input.card, mode);
+      if (!word.ok) return word;
+      return ok(await withAudio(word.value, input.signal));
+    }
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));

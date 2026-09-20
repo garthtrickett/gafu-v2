@@ -28,7 +28,11 @@ import type {
   StudyStatus,
   SubtitleVocabularyCapture,
 } from "./contracts.ts";
-import { asCardId, PRESENTATION_PERMIT_LIFETIME_MS } from "./contracts.ts";
+import {
+  asCardId,
+  GRADUATE_AFTER_CORRECT,
+  PRESENTATION_PERMIT_LIFETIME_MS,
+} from "./contracts.ts";
 import {
   canonicalizeCard,
   canonicalizeUpdatedContent,
@@ -44,7 +48,7 @@ import {
   type StoredSchedule,
   scheduleAnswer,
 } from "./scheduler.ts";
-import { isStuck, stuckRotation } from "./session-split.ts";
+import { isStuck, STUCK_AFTER_FAILURES, stuckRotation } from "./session-split.ts";
 import { localDayKey, validateTimeZone } from "./time.ts";
 
 type CardRow = {
@@ -59,6 +63,8 @@ type CardRow = {
   phase: CardSummary["schedulePhase"];
   review_count: number;
   consecutive_failures: number;
+  stage: CardSummary["stage"];
+  consecutive_correct: number;
 };
 
 type PreferenceRow = {
@@ -87,7 +93,7 @@ const safeNow = (clock: () => Date): Result<Date, StudyFailure> => {
 const readCardRow = (database: Database, cardId: string): CardRow | null =>
   database
     .query(
-      `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
+      `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.stage, p.consecutive_correct,
               c.staged_at, a.admitted_at, s.due_at, s.phase,
               count(r.id) AS review_count
        FROM card c
@@ -112,6 +118,8 @@ const toSummary = (row: CardRow): CardSummary => ({
   schedulePhase: row.phase,
   reviewCount: row.review_count,
   consecutiveFailures: row.consecutive_failures,
+  stage: row.stage,
+  consecutiveCorrect: row.consecutive_correct,
 });
 
 const readCard = (
@@ -332,7 +340,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     try {
       const rows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
+          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.stage, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count
            FROM card c
@@ -474,6 +482,31 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
                WHERE card_id = ? AND support_ready_at IS NULL`,
             )
             .run(now.value.toISOString(), command.cardId);
+          // Saying a word is known says it is past being a bare pair. A word
+          // counts as known only once it has been handled in a sentence, so
+          // leaving the stage behind would both keep drilling the word and
+          // keep it out of the bank it was just declared to be in.
+          database
+            .query(
+              "UPDATE card_progress SET stage = 'sentence', consecutive_correct = 0 WHERE card_id = ?",
+            )
+            .run(command.cardId);
+          return;
+        }
+        // Straight to sentences, without the three right answers. A learner
+        // who already has the word should not have to prove it three times,
+        // and marking it support-ready without this would leave a word the
+        // bank counts as known and the queue still shows as a bare pair.
+        if (
+          command.action === "graduate" &&
+          (state === "staged" || state === "active")
+        ) {
+          database
+            .query(
+              `UPDATE card_progress SET stage = 'sentence', consecutive_correct = 0
+               WHERE card_id = ?`,
+            )
+            .run(command.cardId);
           return;
         }
         if (command.action === "suspend" && state !== "suspended") {
@@ -937,7 +970,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       admit.immediate();
       const dueRows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures,
+          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.stage, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count
            FROM card c
@@ -1181,10 +1214,30 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           .query(
             `UPDATE card_progress
              SET consecutive_failures =
-               CASE WHEN ?1 = 1 THEN consecutive_failures + 1 ELSE 0 END
+                   CASE WHEN ?1 = 1 THEN consecutive_failures + 1 ELSE 0 END,
+                 consecutive_correct =
+                   CASE WHEN ?1 = 1 THEN 0 ELSE consecutive_correct + 1 END
              WHERE card_id = ?2`,
           )
           .run(command.grade === "again" ? 1 : 0, command.cardId);
+        // A word met right three times running is met in a sentence next,
+        // and a sentence missed until it is stuck goes back to being a word.
+        // Neither touches the schedule: FSRS keeps its own account of the
+        // memory, and this is only what the Card is shown as.
+        database
+          .query(
+            `UPDATE card_progress
+             SET stage = 'sentence', consecutive_correct = 0
+             WHERE card_id = ?1 AND stage = 'word' AND consecutive_correct >= ?2`,
+          )
+          .run(command.cardId, GRADUATE_AFTER_CORRECT);
+        database
+          .query(
+            `UPDATE card_progress
+             SET stage = 'word', consecutive_failures = 0, consecutive_correct = 0
+             WHERE card_id = ?1 AND stage = 'sentence' AND consecutive_failures >= ?2`,
+          )
+          .run(command.cardId, STUCK_AFTER_FAILURES);
         if (command.grade !== "again") {
           const progress = database
             .query(
@@ -1255,6 +1308,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           `SELECT c.id, c.content_json FROM card c
            JOIN card_progress p ON p.card_id = c.id
            WHERE c.type = 'vocabulary' AND p.support_ready_at IS NOT NULL
+             AND p.stage = 'sentence'
            ORDER BY c.id`,
         )
         .all() as { id: string; content_json: string }[];
@@ -1264,6 +1318,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
            JOIN card c ON c.id = i.card_id
            JOIN card_progress p ON p.card_id = c.id
            WHERE c.type = 'vocabulary' AND p.support_ready_at IS NOT NULL
+             AND p.stage = 'sentence'
              AND i.authority IN ('gafu-preparation-v1', 'gafu-capture-v1')
            ORDER BY i.card_id, i.authority, i.claim_key`,
         )

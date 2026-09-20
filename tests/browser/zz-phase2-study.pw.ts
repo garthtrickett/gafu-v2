@@ -54,6 +54,21 @@ test("configures a key and teaches before the first generated review", async ({
   await vocabulary.getByRole("button", { name: "Create Vocabulary Card" }).click();
   await expect(page.getByRole("status")).toContainText("Vocabulary Card created");
 
+  // A new Card is met as a bare word first, which needs no generation at
+  // all. This journey is about the generated sentence, so both Cards are put
+  // past that stage the way a learner would: by saying they already know it.
+  for (const lemma of ["鳥", "猫"]) {
+    const found = (await (
+      await page.request.get(`/api/study?search=${encodeURIComponent(lemma)}`)
+    ).json()) as { cards: { id: string; content: { lemma?: string } }[] };
+    const card = found.cards.find((item) => item.content.lemma === lemma);
+    if (card === undefined) throw new Error(`no Card for ${lemma}`);
+    await page.request.post(`/api/study/cards/${card.id}/state`, {
+      headers: { "X-Gafu-Request": "gafu-v2" },
+      data: { action: "graduate" },
+    });
+  }
+
   // The deterministic teach/review sentences use background particles the
   // learner is expected to know. A real learner marks them known first; the
   // journey does the same through the public card bank. 鳥 stays due first

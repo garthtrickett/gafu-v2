@@ -519,7 +519,11 @@ const handleApi = async (
     // reviews completely.
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    const batch = [...split.value.review, ...split.value.untaught].slice(0, size);
+    // A word Card is served from the Card itself, so a batch that included
+    // one would pay for a sentence nobody is going to be shown.
+    const batch = [...split.value.review, ...split.value.untaught]
+      .filter((item) => item.card.stage !== "word")
+      .slice(0, size);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Dispatch records the batch and returns. Generation happens one card
@@ -772,7 +776,12 @@ const handleApi = async (
     if (body instanceof Response) return body;
     if (!isRecord(body)) return invalidRequest("Missing state action.");
     const action = body["action"];
-    if (action !== "markSupportReady" && action !== "suspend" && action !== "restore") {
+    if (
+      action !== "markSupportReady" &&
+      action !== "graduate" &&
+      action !== "suspend" &&
+      action !== "restore"
+    ) {
       return invalidRequest("Unknown state action.");
     }
     const command: CardStateCommand = { cardId: asCardId(cardId), action };
