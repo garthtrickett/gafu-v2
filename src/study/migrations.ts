@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 12;
+export const STUDY_SCHEMA_VERSION = 13;
 
 const migrations: readonly Migration[] = [
   {
@@ -412,6 +412,27 @@ const migrations: readonly Migration[] = [
       -- not, so the support fades instead of switching. consecutive_correct
       -- stays: it is what the fading is read from.
       ALTER TABLE card_progress DROP COLUMN stage;
+    `,
+  },
+  {
+    version: 13,
+    sql: `
+      -- consecutive_correct was added set to zero, which was right while it
+      -- only decided when a Card graduated: every Card started as a word
+      -- either way. Now it decides how much of the target's work the rest
+      -- of the sentence does, and a deck of Cards answered right for weeks
+      -- would be handed its own words back for two rounds each. The run is
+      -- already in the review history: the answers since the last Again, or
+      -- every answer if there has never been one.
+      UPDATE card_progress SET consecutive_correct = (
+        SELECT count(*) FROM review_event r
+        WHERE r.card_id = card_progress.card_id
+          AND r.reviewed_at > coalesce(
+            (SELECT max(r2.reviewed_at) FROM review_event r2
+             WHERE r2.card_id = card_progress.card_id AND r2.grade = 'again'),
+            ''
+          )
+      );
     `,
   },
 ];
