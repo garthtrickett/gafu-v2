@@ -519,11 +519,7 @@ const handleApi = async (
     // reviews completely.
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    // A word Card is served from the Card itself, so a batch that included
-    // one would pay for a sentence nobody is going to be shown.
-    const batch = [...split.value.review, ...split.value.untaught]
-      .filter((item) => item.card.stage !== "word")
-      .slice(0, size);
+    const batch = [...split.value.review, ...split.value.untaught].slice(0, size);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Dispatch records the batch and returns. Generation happens one card

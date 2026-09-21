@@ -1171,7 +1171,15 @@ export const openLearningMaterial = (
         if (input === undefined) continue;
         const wanted = modeFor(input.card);
         if (!wanted.ok) return wanted;
-        const reserve = hasReserve(item.card_id, wanted.value);
+        // A word Card is served from the Card itself, so it is ready the
+        // moment it is asked for — there is nothing to generate and nothing
+        // that could fail. It stays in the batch rather than being kept out
+        // of it, because the batch is also how the Cards are handed to the
+        // session: excluded, a day of word Cards looked like nothing due.
+        const reserve =
+          input.card.stage === "word"
+            ? ok(true)
+            : hasReserve(item.card_id, wanted.value);
         if (!reserve.ok) return reserve;
         if (reserve.value) {
           try {
@@ -1460,7 +1468,7 @@ export const openLearningMaterial = (
       };
       const reserve = hasReserve(item.card_id, "review");
       if (!reserve.ok) return reserve;
-      if (reserve.value) return finish("ready", null);
+      if (reserve.value || input.card.stage === "word") return finish("ready", null);
       const stocked = await stockReserve(
         { card: input.card, knowledge: input.knowledge },
         "review",
