@@ -94,7 +94,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
     });
     const beforeRestart = study.listCards();
     const backup = study.exportBackup();
-    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 12 } });
+    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 13 } });
     study.close();
 
     const reopened = openStudy({ ...shared, nextId: sequentialIds() });

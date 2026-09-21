@@ -11,12 +11,14 @@ import {
   testSeed,
 } from "../../tests/support/study.ts";
 import type {
+  AnswerGrade,
   CreateCard,
   KnownWordSeed,
   Study,
   StudyDependencies,
 } from "./contracts.ts";
 import { asCardId } from "./contracts.ts";
+import { STUDY_SCHEMA_VERSION } from "./migrations.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
 
 const temporaryDirectories: string[] = [];
@@ -923,7 +925,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 12 },
+      error: { kind: "unsupportedSchema", found: 999, supported: STUDY_SCHEMA_VERSION },
     });
   });
 
@@ -976,6 +978,64 @@ describe("Study persistence and recovery", () => {
     expect(upgraded.value.studyQueue()).toMatchObject({
       ok: true,
       value: { newlyAdmitted: 1, stagedCount: 0 },
+    });
+    upgraded.value.close();
+  });
+
+  test("the run of right answers is read back out of the review history", () => {
+    // consecutive_correct arrived set to zero, which cost nothing while it
+    // only decided when a Card graduated. It now decides how much of the
+    // sentence gives the target away, and a zero on a Card answered right
+    // for a month would hand the learner their own word back twice over.
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-backfill-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "study.sqlite");
+    const clock = mutableClock("2026-09-08T10:00:00.000Z");
+    const dependencies = {
+      databasePath: path,
+      clock: clock.now,
+      nextId: sequentialIds(),
+      permitVerifier: testPermitVerifier,
+      knownWordSeed: testSeed,
+      grammarTargetSupported: () => true,
+    };
+    const opened = openStudy(dependencies);
+    if (!opened.ok) throw new Error(opened.error.kind);
+    const study = opened.value;
+    const card = create(study, vocabulary).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+    study.studyQueue();
+    // Right, wrong, right, right: the run is the last two.
+    const grades: readonly AnswerGrade[] = ["good", "again", "good", "good"];
+    grades.forEach((grade, index) => {
+      clock.set(`2026-09-${12 + index}T12:00:00.000Z`);
+      const answered = study.answer({
+        cardId: card.id,
+        grade,
+        permit: permit(`backfill-${index}`, card.id, clock.now()),
+      });
+      if (!answered.ok) throw new Error(answered.error.kind);
+    });
+    expect(study.listCards()).toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ consecutiveCorrect: 2 })],
+    });
+    study.close();
+
+    // Roll the counter back to what the column was created with and run the
+    // step again over the history that is already there.
+    const database = new Database(path, { strict: true });
+    database.exec("UPDATE card_progress SET consecutive_correct = 0");
+    database.exec(
+      `DELETE FROM schema_migration WHERE version = ${STUDY_SCHEMA_VERSION}`,
+    );
+    database.close();
+
+    const upgraded = openStudy({ ...dependencies, nextId: sequentialIds() });
+    if (!upgraded.ok) throw new Error(upgraded.error.kind);
+    expect(upgraded.value.listCards()).toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ consecutiveCorrect: 2 })],
     });
     upgraded.value.close();
   });
