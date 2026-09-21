@@ -22,6 +22,7 @@ import type {
   ReviewBatchProgress,
 } from "./generated-contracts.ts";
 import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
+import { parseBroadPartOfSpeech } from "./generated-decode.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
@@ -942,7 +943,8 @@ export const openLearningMaterial = (
       });
       permit = { token };
     }
-    const material = {
+    const meaning = content["meaning"] ?? "";
+    const shared = {
       mode,
       context: "",
       prompt: mode === "teach" ? "A new word." : "What does this word mean?",
@@ -957,10 +959,34 @@ export const openLearningMaterial = (
       // Furigana on the front: the reading is shown with the word, not held
       // back, because this stage asks for the meaning and not the reading.
       readingSegments: [{ written, reading }],
-      answer: content["meaning"] ?? "",
-      explanation: content["meaning"] ?? "",
+      answer: meaning,
+      explanation: meaning,
       usageNote: content["usageNotes"] ?? "",
-    } as unknown as GeneratedMaterial;
+    };
+    // The target travels with the material: the page reads it to show what
+    // the Card claims, and a word Card claims exactly what the Card says.
+    const material: GeneratedMaterial =
+      card.type === "grammar"
+        ? {
+            ...shared,
+            targetKind: "grammar",
+            target: {
+              canonicalForm: written,
+              meaning,
+              formationHint: content["formation"] ?? "",
+            },
+          }
+        : {
+            ...shared,
+            targetKind: "vocabulary",
+            target: {
+              lemma: written,
+              reading,
+              partOfSpeech:
+                parseBroadPartOfSpeech(content["partOfSpeech"] ?? "") ?? "noun",
+              meaning,
+            },
+          };
     return ok({
       id,
       cardId: card.id,
