@@ -414,6 +414,74 @@ describe("review batch job", () => {
     }
   });
 
+  test("a word Card is served whole, with the target the page reads", async () => {
+    // The page shows what the Card claims beside the sentence, reading
+    // material.target. A word presentation is built here rather than by a
+    // provider, and the first one left target off entirely — it type-checked
+    // only because it was cast, and the page threw on the Card it was meant
+    // to serve.
+    const { material, study } = harness(createDeterministicMaterialProvider());
+    for (const card of [
+      {
+        type: "vocabulary" as const,
+        content: {
+          lemma: "応援する",
+          reading: "おうえんする",
+          partOfSpeech: "verb",
+          meaning: "to cheer for",
+          usageNotes: "",
+        },
+      },
+      {
+        type: "grammar" as const,
+        content: {
+          canonicalForm: "〜ながら",
+          meaning: "while doing",
+          formation: "verb stem + ながら",
+          usageNotes: "",
+        },
+      },
+    ]) {
+      const created = study.createCard(card);
+      if (!created.ok) throw new Error("create");
+      study.setPreferences({ newCardsPerDay: 10 });
+      const queue = study.studyQueue();
+      if (!queue.ok) throw new Error("queue");
+      const due = queue.value.due.find(
+        (item) => item.card.id === created.value.card.id,
+      );
+      if (due === undefined) throw new Error("not due");
+      const knowledge = study.knowledgeSnapshot();
+      if (!knowledge.ok) throw new Error("knowledge");
+
+      const served = await material.prepare({
+        card: due.card,
+        knowledge: knowledge.value,
+      });
+      if (!served.ok) throw new Error(`serve: ${served.error.kind}`);
+      const shown = served.value.material;
+      expect(shown.targetKind).toBe(card.type);
+      expect(shown.target).toBeDefined();
+      if (shown.targetKind === "vocabulary") {
+        expect(shown.target).toMatchObject({
+          lemma: "応援する",
+          reading: "おうえんする",
+          meaning: "to cheer for",
+        });
+      } else {
+        expect(shown.target).toMatchObject({
+          canonicalForm: "〜ながら",
+          meaning: "while doing",
+        });
+      }
+      // The word itself, with its reading on the front, and nothing else.
+      expect(shown.readingSegments.map((segment) => segment.written).join("")).toBe(
+        shown.japanese,
+      );
+      expect(shown.japanese).toBe(shown.targetSurface);
+    }
+  });
+
   test("an unknown batch id is not found", async () => {
     const app = harness(createDeterministicMaterialProvider());
     const missing = await app.material.advanceReviewBatch("no-such-batch");
