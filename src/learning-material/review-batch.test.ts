@@ -482,6 +482,45 @@ describe("review batch job", () => {
     }
   });
 
+  test("a finished batch hands its word Cards to the session", async () => {
+    // What the page does after a batch completes: ask for the Cards it
+    // banked. That route asked only whether each Card held a reserve, and a
+    // word Card holds none, so it handed back nothing — the batch finished
+    // instantly and the page fell straight back to the button.
+    const { material, study } = harness(createDeterministicMaterialProvider());
+    const created = study.createCard({
+      type: "vocabulary",
+      content: {
+        lemma: "応援する",
+        reading: "おうえんする",
+        partOfSpeech: "verb",
+        meaning: "to cheer for",
+        usageNotes: "",
+      },
+    });
+    if (!created.ok) throw new Error("create");
+    study.setPreferences({ newCardsPerDay: 5 });
+    const queue = study.studyQueue();
+    if (!queue.ok) throw new Error("queue");
+    const due = queue.value.due.find((item) => item.card.id === created.value.card.id);
+    if (due === undefined) throw new Error("not due");
+    expect(due.card.stage).toBe("word");
+
+    // Ready without a reserve, which is the question the route now asks.
+    expect(material.hasReserve(due.card.id, "teach")).toMatchObject({
+      ok: true,
+      value: false,
+    });
+    expect(material.readyToServe(due.card, "teach")).toMatchObject({
+      ok: true,
+      value: true,
+    });
+    expect(material.readyToServe(due.card, "review")).toMatchObject({
+      ok: true,
+      value: true,
+    });
+  });
+
   test("an unknown batch id is not found", async () => {
     const app = harness(createDeterministicMaterialProvider());
     const missing = await app.material.advanceReviewBatch("no-such-batch");
