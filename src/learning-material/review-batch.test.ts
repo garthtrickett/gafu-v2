@@ -347,6 +347,73 @@ describe("review batch job", () => {
     app.material.close();
   });
 
+  test("a batch of word Cards completes without asking the provider", async () => {
+    // A word Card is served from the Card itself. Keeping such Cards out of
+    // the batch made a day of them look like nothing due — the batch is also
+    // how Cards are handed to the session, not only how they are written.
+    // Both advance paths are covered: with a whole-batch provider and without.
+    for (const whole of [false, true]) {
+      let asked = 0;
+      const refusing = {
+        identity: { provider: "refusing", model: "-", promptVersion: "-" },
+        inspectLastRequest: () => null,
+        generate: async () => {
+          asked += 1;
+          return { ok: false as const, error: { kind: "offline", detail: "asked" } };
+        },
+        ...(whole
+          ? {
+              batch: {
+                dispatch: async () => {
+                  asked += 1;
+                  return {
+                    ok: false as const,
+                    error: { kind: "offline", detail: "asked" },
+                  };
+                },
+                poll: async () => ({
+                  ok: false as const,
+                  error: { kind: "offline", detail: "asked" },
+                }),
+              },
+            }
+          : {}),
+      } as unknown as MaterialProvider;
+      const { material, study } = harness(refusing);
+      const created = study.createCard({
+        type: "vocabulary",
+        content: {
+          lemma: "応援する",
+          reading: "おうえんする",
+          partOfSpeech: "verb",
+          meaning: "to cheer for",
+          usageNotes: "",
+        },
+      });
+      if (!created.ok) throw new Error("create");
+      study.setPreferences({ newCardsPerDay: 5 });
+      const queue = study.studyQueue();
+      if (!queue.ok) throw new Error("queue");
+      const due = queue.value.due.find(
+        (item) => item.card.id === created.value.card.id,
+      );
+      if (due === undefined) throw new Error("not due");
+      expect(due.card.stage).toBe("word");
+
+      const knowledge = study.knowledgeSnapshot();
+      if (!knowledge.ok) throw new Error("knowledge");
+      const begun = material.beginReviewBatch([
+        { card: due.card, knowledge: knowledge.value },
+      ]);
+      if (!begun.ok) throw new Error("begin");
+      expect(await material.advanceReviewBatch(begun.value)).toMatchObject({
+        ok: true,
+        value: { done: true, failed: [], completed: [created.value.card.id] },
+      });
+      expect(asked).toBe(0);
+    }
+  });
+
   test("an unknown batch id is not found", async () => {
     const app = harness(createDeterministicMaterialProvider());
     const missing = await app.material.advanceReviewBatch("no-such-batch");
