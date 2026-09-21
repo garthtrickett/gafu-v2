@@ -774,21 +774,6 @@ export const openLearningMaterial = (
     }
   };
 
-  /**
-   * Whether the Card can be served now without asking the provider.
-   *
-   * A sentence Card is ready when it holds a banked reserve; a word Card is
-   * always ready, because it is served from the Card itself. Three separate
-   * places asked only about the reserve and so quietly dropped word Cards —
-   * out of the batch, and out of what a finished batch hands over — and each
-   * time a full day of study looked like nothing to do. One question now.
-   */
-  const readyToServe = (
-    card: CardSummary,
-    mode: "teach" | "review",
-  ): Result<boolean, MaterialFailure> =>
-    card.stage === "word" ? ok(true) : hasReserve(card.id, mode);
-
   const hasReserve = (
     cardId: CardId,
     mode: "teach" | "review",
@@ -882,83 +867,39 @@ export const openLearningMaterial = (
   };
 
   /**
-   * A word Card, served from the Card itself.
-   *
-   * Nothing is generated and nothing is stored: the writing, its reading and
-   * its meaning are already on the Card, and a bare pair is what the first
-   * form-meaning link wants. It costs no provider call, so it cannot fail
-   * validation and cannot be refused for a word the learner has not met —
-   * which is the whole reason a Card can be met before a sentence for it can
-   * be written at all.
+   * Whether a round failed because no sentence could be written, rather than
+   * because the provider could not be reached. Only the first is worth
+   * falling back from: the second will answer tomorrow.
    */
-  /**
-   * The row a word Card's first exposure is recorded as.
-   *
-   * Teaching is acknowledged against a presentation id, so a first exposure
-   * has to exist somewhere even though nothing was generated. Written once
-   * per Card and marked as its own provider, so it is not offered back to the
-   * model as a sentence to avoid repeating — the word is the one thing a
-   * sentence for that Card must contain.
-   */
-  const wordTeachingRow = (card: CardSummary, japanese: string, at: Date): string => {
-    const found = database
-      .query(
-        `SELECT id FROM validated_presentation
-         WHERE card_id = ? AND mode = 'teach' AND provider = ?`,
-      )
-      .get(card.id, WORD_CARD_PROVIDER) as { id: string } | null;
-    if (found !== null) return found.id;
-    const id = options.nextId();
-    database
-      .query(
-        `INSERT INTO validated_presentation(
-           id, card_id, mode, payload_json, normalized_japanese, exact_signature,
-           near_signature, generated_at, shown_at, provider, model, prompt_version,
-           validation_version
-         ) VALUES (?, ?, 'teach', '{}', ?, ?, ?, ?, ?, ?, '-', '-', ?)`,
-      )
-      .run(
-        id,
-        card.id,
-        japanese,
-        `word:${card.id}`,
-        `word:${card.id}`,
-        at.toISOString(),
-        at.toISOString(),
-        WORD_CARD_PROVIDER,
-        MATERIAL_VALIDATION_VERSION,
-      );
-    return id;
-  };
+  const unwritable = (kind: string | null): boolean =>
+    kind === "noValidCandidate" ||
+    kind === "validationRejected" ||
+    kind === "malformedResponse";
 
-  const wordPresentation = (
+  /**
+   * Banks the Card itself as a presentation, for when no sentence can be
+   * written for it.
+   *
+   * Some words cannot have an i+1 sentence yet: 頬袋 wants ハムスター, which
+   * the learner has not met, so every round refused it and the Card was
+   * admitted and then unservable for ever. The Card's own writing, reading
+   * and meaning are banked instead, as an ordinary reserve — so the batch,
+   * the session hand-over and serving all treat it like any other, with no
+   * special case anywhere. Marked as its own provider, so it is never handed
+   * back to the model as a sentence to avoid repeating: the word is the one
+   * thing a sentence for that Card must contain.
+   */
+  const bankWordPresentation = (
     card: CardSummary,
     mode: "teach" | "review",
-  ): Result<PreparedMaterial, MaterialFailure> => {
+  ): Result<void, MaterialFailure> => {
     const observedAt = safeNow(options.clock);
     if (!observedAt.ok) return observedAt;
     const content = card.content as Record<string, string>;
     const written = content["lemma"] ?? content["canonicalForm"] ?? "";
-    const reading = content["reading"] ?? "";
-    const id =
-      mode === "teach"
-        ? wordTeachingRow(card, written, observedAt.value)
-        : options.nextId();
-    let permit: PresentationPermit | null = null;
-    if (mode === "review") {
-      prunePermits(observedAt.value.getTime());
-      const token = options.nextToken();
-      issuePermit({
-        token,
-        id: options.nextId(),
-        cardId: card.id,
-        presentationId: id,
-        issuedAt: observedAt.value,
-        contractVersion: MATERIAL_VALIDATION_VERSION,
-      });
-      permit = { token };
-    }
+    if (written === "") return err({ kind: "noValidCandidate" });
     const meaning = content["meaning"] ?? "";
+    const reading = content["reading"] ?? "";
     const shared = {
       mode,
       context: "",
@@ -971,15 +912,15 @@ export const openLearningMaterial = (
         unit: "utf16-code-unit" as const,
         normalization: "nfkc-v1" as const,
       },
-      // Furigana on the front: the reading is shown with the word, not held
-      // back, because this stage asks for the meaning and not the reading.
+      // The reading is shown with the word rather than held back: what is
+      // being asked for here is the meaning, not the reading.
       readingSegments: [{ written, reading }],
       answer: meaning,
       explanation: meaning,
       usageNote: content["usageNotes"] ?? "",
     };
-    // The target travels with the material: the page reads it to show what
-    // the Card claims, and a word Card claims exactly what the Card says.
+    // The target travels with the material, because the page reads it to show
+    // what the Card claims.
     const material: GeneratedMaterial =
       card.type === "grammar"
         ? {
@@ -1002,26 +943,38 @@ export const openLearningMaterial = (
               meaning,
             },
           };
-    return ok({
-      id,
-      cardId: card.id,
-      mode,
-      material,
-      permit,
-      source: "reserve",
-      audioUrl: null,
-    });
+    const id = options.nextId();
+    try {
+      database
+        .query(
+          `INSERT INTO validated_presentation(
+             id, card_id, mode, payload_json, normalized_japanese, exact_signature,
+             near_signature, generated_at, shown_at, provider, model, prompt_version,
+             validation_version
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, '-', '-', ?)`,
+        )
+        .run(
+          id,
+          card.id,
+          mode,
+          JSON.stringify(material),
+          written,
+          `word:${id}`,
+          `word:${id}`,
+          observedAt.value.toISOString(),
+          WORD_CARD_PROVIDER,
+          MATERIAL_VALIDATION_VERSION,
+        );
+      return ok(undefined);
+    } catch (cause) {
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
   };
 
   const prepare: LearningMaterial["prepare"] = async (input) => {
     const wanted = modeFor(input.card);
     if (!wanted.ok) return wanted;
     const mode = wanted.value;
-    if (input.card.stage === "word") {
-      const word = wordPresentation(input.card, mode);
-      if (!word.ok) return word;
-      return ok(await withAudio(word.value, input.signal));
-    }
     const reserve = takeReserve(input.card.id, mode, "reserve");
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
@@ -1029,14 +982,25 @@ export const openLearningMaterial = (
       const shown = latestShownTeaching(input.card.id);
       if (!shown.ok) return shown;
       if (shown.value !== null) return ok(await withAudio(shown.value, input.signal));
-      return err({ kind: "teachingNotPrepared" });
+    } else {
+      const stocked = await stockReserve(input, mode);
+      if (stocked.ok) {
+        const prepared = takeReserve(input.card.id, mode, "generated");
+        if (!prepared.ok) return prepared;
+        if (prepared.value !== null)
+          return ok(await withAudio(prepared.value, input.signal));
+      }
     }
-    const stocked = await stockReserve(input, mode);
-    if (!stocked.ok) return stocked;
-    const prepared = takeReserve(input.card.id, mode, "generated");
-    if (!prepared.ok) return prepared;
-    if (prepared.value !== null)
-      return ok(await withAudio(prepared.value, input.signal));
+    // No sentence could be written for this Card. Some words cannot have one
+    // yet — 頬袋 wants ハムスター, which the learner has not met — and those
+    // Cards used to be admitted and then refused every round for ever. The
+    // Card itself is shown instead: its writing, its reading, its meaning.
+    const word = bankWordPresentation(input.card, mode);
+    if (!word.ok) return word;
+    const fallback = takeReserve(input.card.id, mode, "reserve");
+    if (!fallback.ok) return fallback;
+    if (fallback.value !== null)
+      return ok(await withAudio(fallback.value, input.signal));
     return err({ kind: "noValidCandidate" });
   };
 
@@ -1212,12 +1176,11 @@ export const openLearningMaterial = (
         if (input === undefined) continue;
         const wanted = modeFor(input.card);
         if (!wanted.ok) return wanted;
-        // A word Card is served from the Card itself, so it is ready the
-        // moment it is asked for — there is nothing to generate and nothing
-        // that could fail. It stays in the batch rather than being kept out
-        // of it, because the batch is also how the Cards are handed to the
-        // session: excluded, a day of word Cards looked like nothing due.
-        const reserve = readyToServe(input.card, wanted.value);
+        // A Card that already holds one is ready without being asked for,
+        // and stays in the batch rather than being kept out of it: the batch
+        // is also how Cards are handed to the session, and a day of Cards
+        // left out of it looked like nothing due.
+        const reserve = hasReserve(item.card_id, wanted.value);
         if (!reserve.ok) return reserve;
         if (reserve.value) {
           try {
@@ -1324,8 +1287,19 @@ export const openLearningMaterial = (
               item.seq,
             );
         } else {
-          // The last round's reasons are kept with the failure, so the
-          // learner can see why a Card could not be served.
+          // Out of rounds. If the reason is that no sentence could be
+          // written — every candidate leaned on a word the learner has not
+          // met — the Card is served as itself rather than left due and
+          // unservable for ever. A provider that is down does not come
+          // through here; it fails the whole batch above, and a Card the
+          // learner could have had a sentence for tomorrow should wait for
+          // it. The reasons stay on the row either way.
+          if (status === "failed" && input !== undefined && unwritable(failureKind)) {
+            const word = bankWordPresentation(input.card, itemMode);
+            if (!word.ok) return word;
+            status = "ready";
+            failureKind = null;
+          }
           database
             .query(
               `UPDATE review_batch_item
@@ -1359,7 +1333,6 @@ export const openLearningMaterial = (
     prepare,
     hasTeaching,
     hasReserve,
-    readyToServe,
     beginReviewBatch: (cards) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
@@ -1505,14 +1478,21 @@ export const openLearningMaterial = (
         }
         return progress();
       };
-      const reserve = readyToServe(input.card, "review");
+      const reserve = hasReserve(item.card_id, "review");
       if (!reserve.ok) return reserve;
       if (reserve.value) return finish("ready", null);
       const stocked = await stockReserve(
         { card: input.card, knowledge: input.knowledge },
         "review",
       );
-      if (!stocked.ok) return finish("failed", stocked.error.kind);
+      if (!stocked.ok) {
+        // Same fallback as the whole-batch path: a Card no sentence can be
+        // written for is served as itself rather than staying due for ever.
+        if (!unwritable(stocked.error.kind))
+          return finish("failed", stocked.error.kind);
+        const word = bankWordPresentation(input.card, "review");
+        if (!word.ok) return finish("failed", stocked.error.kind);
+      }
       return finish("ready", null);
     },
     acknowledgeTeaching: (cardId, presentationId) => {
@@ -1529,6 +1509,26 @@ export const openLearningMaterial = (
           VALUES (?, ?, ?) ON CONFLICT(card_id) DO NOTHING`)
           .run(cardId, presentationId, observedAt.value.toISOString());
         return ok(undefined);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    },
+    discardReserves: (cardId) => {
+      try {
+        let discarded = 0;
+        const discard = database.transaction(() => {
+          database
+            .query(`DELETE FROM presentation_audio WHERE presentation_id IN (
+              SELECT id FROM validated_presentation
+              WHERE card_id = ? AND mode = 'review' AND shown_at IS NULL)`)
+            .run(cardId);
+          discarded = database
+            .query(`DELETE FROM validated_presentation
+            WHERE card_id = ? AND mode = 'review' AND shown_at IS NULL`)
+            .run(cardId).changes;
+        });
+        discard.immediate();
+        return ok(discarded);
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
       }

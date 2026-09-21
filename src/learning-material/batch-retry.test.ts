@@ -71,14 +71,7 @@ const harness = (refuseRounds: Record<string, number>) => {
       content: { lemma, reading, partOfSpeech: "noun", meaning, usageNotes: "" },
     });
     if (!created.ok) throw new Error(created.error.kind);
-    // Past the word stage: these tests are about generated sentences, and a
-    // word Card is served from the Card itself without asking the provider.
-    const graduated = study.value.setCardState({
-      cardId: created.value.card.id,
-      action: "graduate",
-    });
-    if (!graduated.ok) throw new Error("graduate");
-    return graduated.value;
+    return created.value.card;
   };
   const bird = make("鳥", "とり", "bird");
   const cat = make("猫", "ねこ", "cat");
@@ -179,7 +172,7 @@ describe("whole-batch retry rounds", () => {
     });
   });
 
-  test("a Card refused in every round is dropped after the third with its reason", async () => {
+  test("a Card refused in every round is served as itself after the third", async () => {
     const app = harness({ cat: 99 });
     await teach(app, app.cat);
     const begun = app.material.beginReviewBatch([
@@ -194,19 +187,21 @@ describe("whole-batch retry rounds", () => {
     }
     // Three rounds, each a dispatch and a completion: six advances.
     expect(advances).toBe(6);
+    // Then it stops asking. Three rounds of refusals is a word no sentence
+    // can be written for yet, not a round of bad luck, and a Card that is
+    // only ever reported failed is a Card the learner never meets. It is
+    // served as itself: the writing, the reading, the meaning.
     expect(progress).toMatchObject({
       ok: true,
-      value: {
-        done: true,
-        completed: [],
-        failed: [
-          {
-            cardId: app.cat.id,
-            kind: "validationRejected",
-            reasons: ["unknownVocabulary: 難語3"],
-          },
-        ],
-      },
+      value: { done: true, completed: [app.cat.id], failed: [] },
     });
+    const served = await app.material.prepare({
+      card: app.cat,
+      knowledge: app.knowledge,
+    });
+    if (!served.ok) throw new Error(served.error.kind);
+    expect(served.value.material.japanese).toBe(
+      (app.cat.content as { lemma: string }).lemma,
+    );
   });
 });

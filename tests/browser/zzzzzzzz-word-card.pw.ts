@@ -3,16 +3,21 @@ import { expect, test } from "@playwright/test";
 const MUTATION = { "X-Gafu-Request": "gafu-v2" };
 
 /**
- * A word Card, all the way through: into the batch, out of it, onto the page.
+ * A Card served as itself, all the way through: into the batch, out of it,
+ * onto the page.
  *
- * Three faults in a row lived in this path and none was caught, because the
- * journeys that exercise generated material graduate their Cards first and
- * so never render one. A word Card was filtered out of the batch and a day of
- * them read as nothing due; it was then left out of what a finished batch
- * hands over, so the page flashed and fell back to the button; and the
- * material it is served with carried no target, so opening it threw.
+ * A first exposure is never generated on demand, so a Card made through the
+ * API with no authored teaching is met as the word — and that path carried
+ * three faults in a row, none of them caught, because every other journey
+ * here goes through generated material. The Card was filtered out of the
+ * batch and a day of them read as nothing due; it was then left out of what
+ * a finished batch hands over, so the page flashed and fell back to the
+ * button; and the material it is served with carried no target, so opening
+ * it threw.
  */
-test("a word Card is prepared, handed over, and rendered", async ({ page }) => {
+test("a Card with no sentence is prepared, handed over, and rendered", async ({
+  page,
+}) => {
   await page.goto("/");
 
   const made = await page.request.post("/api/study/cards", {

@@ -95,9 +95,6 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!created.ok) throw new Error(created.error.kind);
-    // A word Card is served from the Card itself; this test is about
-    // generated material, so the Card is put past that stage.
-    app.study.setCardState({ cardId: created.value.card.id, action: "graduate" });
     const queue = app.study.studyQueue();
     if (!queue.ok || queue.value.due[0] === undefined) throw new Error("missing queue");
     // The deterministic provider's sentences use background particles the
@@ -292,9 +289,6 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!grammar.ok) throw new Error(grammar.error.kind);
-    // A word Card is served from the Card itself; this test is about
-    // generated material, so the Card is put past that stage.
-    app.study.setCardState({ cardId: grammar.value.card.id, action: "graduate" });
     // The deterministic かもしれない sentence ends in かな, contains も,
     // ない, and もし, and also fires the verbatim twin かもしれない
     // alongside the 〜-prefixed target. Alias unification (knowing either
@@ -372,12 +366,6 @@ describe("Phase 2 generated study lifecycle", () => {
       },
     });
     if (!card.ok) throw new Error(card.error.kind);
-    // A word Card is served from the Card itself; this test is about
-    // generated material, so the Card is put past that stage.
-    app.study.setCardState({ cardId: card.value.card.id, action: "graduate" });
-    // A word Card is served from the Card itself; this test is about
-    // generated material, so the Card is put past that stage.
-    app.study.setCardState({ cardId: card.value.card.id, action: "graduate" });
     const invalidQueue = app.study.studyQueue();
     const invalidKnowledge = app.study.knowledgeSnapshot();
     if (
@@ -386,11 +374,17 @@ describe("Phase 2 generated study lifecycle", () => {
       !invalidKnowledge.ok
     )
       throw new Error("setup");
-    const failed = await app.material.prepare({
+    // A first exposure is never generated on demand, so the provider is not
+    // asked — and rather than refusing, the Card itself is shown: its
+    // writing, its reading, its meaning. A Card that cannot be taught is a
+    // Card that can be admitted and then never studied.
+    const taught = await app.material.prepare({
       card: invalidQueue.value.due[0].card,
       knowledge: invalidKnowledge.value,
     });
-    expect(failed).toMatchObject({ ok: false, error: { kind: "teachingNotPrepared" } });
+    if (!taught.ok) throw new Error(taught.error.kind);
+    expect(taught.value.mode).toBe("teach");
+    expect(taught.value.material.japanese).toBe("鳥");
     expect(provider.inspectLastRequest()).toBeNull();
     expect(app.study.listCards()).toMatchObject({
       ok: true,

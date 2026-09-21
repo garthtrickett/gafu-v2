@@ -776,27 +776,8 @@ describe("Study admission and review", () => {
       ok: true,
       value: { card: { reviewCount: 2, supportReadyAt: expect.any(String) } },
     });
-    // Support-ready but still a word Card, so it is not yet in the bank: a
-    // sentence may only lean on words the learner has handled in a sentence.
-    expect(study.knowledgeSnapshot()).toMatchObject({
-      ok: true,
-      value: { vocabulary: { length: 2 } },
-    });
-
-    // The third right answer in a row graduates it, and that is what puts it
-    // in the bank.
-    clock.set("2026-09-20T12:00:00.000Z");
-    expect(
-      study.answer({
-        cardId: card.id,
-        grade: "good",
-        permit: permit("permit-3", card.id, clock.now()),
-      }),
-    ).toMatchObject({ ok: true });
-    expect(study.listCards()).toMatchObject({
-      ok: true,
-      value: [expect.objectContaining({ id: card.id, stage: "sentence" })],
-    });
+    // Two answers on different days, twenty hours apart: the word is now a
+    // word a sentence may lean on.
     expect(study.knowledgeSnapshot()).toMatchObject({
       ok: true,
       value: { vocabulary: { length: 3 } },
@@ -942,7 +923,7 @@ describe("Study persistence and recovery", () => {
       }),
     ).toEqual({
       ok: false,
-      error: { kind: "unsupportedSchema", found: 999, supported: 11 },
+      error: { kind: "unsupportedSchema", found: 999, supported: 12 },
     });
   });
 

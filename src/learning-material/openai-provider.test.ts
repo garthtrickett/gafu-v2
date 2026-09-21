@@ -28,7 +28,6 @@ const request: MaterialProviderRequest = {
     schedulePhase: "new",
     reviewCount: 0,
     consecutiveFailures: 0,
-    stage: "sentence",
     consecutiveCorrect: 0,
   },
   knowledge: {
@@ -106,9 +105,16 @@ describe("OpenAI Learning Material adapter", () => {
     // The media cue stays out of the prompt: the model copies it into its
     // candidates together with whatever unknown language it leans on.
     const sent = JSON.parse(String(body["input"])) as {
-      target: { content: Record<string, unknown> };
+      target: { content: Record<string, unknown>; consecutiveCorrect: number };
     };
     expect("usageNotes" in sent.target.content).toBe(false);
+    // The run of right answers is what the support level is read from, so
+    // the instruction that names target.consecutiveCorrect is only worth
+    // anything if the field travels with the target.
+    expect(sent.target.consecutiveCorrect).toBe(0);
+    expect(String(body["instructions"])).toContain(
+      "depends on target.consecutiveCorrect",
+    );
   });
 
   test.each([
@@ -341,6 +347,11 @@ describe("whole-batch generation", () => {
     expect(String(body["instructions"])).toContain(
       "answer is what the whole Japanese sentence means",
     );
+    expect(
+      (input["targets"] as { target: { consecutiveCorrect: number } }[]).map(
+        (target) => target.target.consecutiveCorrect,
+      ),
+    ).toEqual([0, 0]);
     expect(input["allowedSupportingVocabulary"]).toEqual([]);
     const schema = (body["text"] as { format: { schema: Record<string, unknown> } })
       .format.schema;

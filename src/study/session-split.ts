@@ -67,9 +67,7 @@ export const countSessionModes = <Failure>(
     const mode = wantsTeaching(card, taught.value) ? "teach" : "review";
     if (mode === "teach") learnCount += 1;
     else reviewCount += 1;
-    // A word Card is served from the Card itself, so there is nothing to
-    // prepare and nothing preparing it would buy.
-    if (card.stage !== "word" && !hasReserve(card.id, mode)) unpreparedCount += 1;
+    if (!hasReserve(card.id, mode)) unpreparedCount += 1;
   }
   return ok({ learnCount, reviewCount, laterCount, unpreparedCount });
 };

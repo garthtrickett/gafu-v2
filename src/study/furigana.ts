@@ -65,8 +65,6 @@ export type FuriganaPiece = Readonly<{ text: string; reading: string | null }>;
 
 const kanjiRun = /[一-鿿々〆]+/gu;
 const kanjiOnly = /^[一-鿿々〆]+$/u;
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 // Katakana and hiragana are the same syllables; a written カ must match a reading か.
 const toHiragana = (value: string): string =>
   value.replace(/[ァ-ヶ]/gu, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60));
@@ -75,12 +73,6 @@ const toHiragana = (value: string): string =>
 // particles: 私は is わたしは or わたしわ depending on whether the writer
 // spelled the sound or the word. Both are the same reading, so both match.
 const spokenAs: Readonly<Record<string, string>> = { は: "わ", へ: "え", を: "お" };
-const literalRun = (text: string): string =>
-  Array.from(toHiragana(text), (character) => {
-    const spoken = spokenAs[character];
-    return spoken === undefined ? escapeRegExp(character) : `[${character}${spoken}]`;
-  }).join("");
-
 const edgeTrimmed = (written: string, reading: string): readonly FuriganaPiece[] => {
   const { before, body, over, after } = splitFurigana(written, reading);
   if (body === "") return [{ text: written, reading: null }];

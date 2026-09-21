@@ -45,7 +45,6 @@ const vocabularyCard = (
   schedulePhase: "new",
   reviewCount: 0,
   consecutiveFailures: 0,
-  stage: "sentence",
   consecutiveCorrect: 0,
 });
 

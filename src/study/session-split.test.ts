@@ -16,12 +16,7 @@ const card = (
   overrides: Partial<
     Pick<
       CardSummary,
-      | "state"
-      | "dueAt"
-      | "schedulePhase"
-      | "consecutiveFailures"
-      | "stage"
-      | "consecutiveCorrect"
+      "state" | "dueAt" | "schedulePhase" | "consecutiveFailures" | "consecutiveCorrect"
     >
   > = {},
 ): CardSummary => ({
@@ -42,7 +37,6 @@ const card = (
   schedulePhase: "new",
   reviewCount: 0,
   consecutiveFailures: 0,
-  stage: "sentence",
   consecutiveCorrect: 0,
   ...overrides,
 });
@@ -212,7 +206,6 @@ describe("only so many stuck Cards are worked at once", () => {
     card(id, {
       dueAt,
       consecutiveFailures: 4,
-      stage: "sentence",
       consecutiveCorrect: 0,
       schedulePhase: "review",
     });
@@ -236,7 +229,6 @@ describe("only so many stuck Cards are worked at once", () => {
     const later = card("later", {
       dueAt: "2099-01-01T00:00:00.000Z",
       consecutiveFailures: 9,
-      stage: "sentence",
       consecutiveCorrect: 0,
     });
     expect(stuckRotation([later], NOW).size).toBe(0);
