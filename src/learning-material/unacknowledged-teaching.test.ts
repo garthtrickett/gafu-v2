@@ -54,13 +54,6 @@ const harness = () => {
     },
   });
   if (!created.ok) throw new Error(created.error.kind);
-  // Past the word stage: this test is about generated material, and a word
-  // Card is served from the Card itself without reaching the provider.
-  if (
-    !study.value.setCardState({ cardId: created.value.card.id, action: "graduate" }).ok
-  ) {
-    throw new Error("graduate");
-  }
   const queue = study.value.studyQueue();
   if (!queue.ok || queue.value.due[0] === undefined) throw new Error("no due card");
   const knowledge = study.value.knowledgeSnapshot();
@@ -134,12 +127,19 @@ describe("teaching stays servable until it is seen", () => {
     expect(review.value.mode).toBe("review");
   });
 
-  test("a Card with no teach presentation at all still fails fast", async () => {
+  test("a Card with no teach presentation is taught from the Card itself", async () => {
+    // This used to refuse, which left a Card admitted and then never
+    // studyable — the word most in need of being met was the one no
+    // sentence could be written for. The Card is shown instead.
     const app = harness();
-    const failed = await app.material.prepare({
+    const taught = await app.material.prepare({
       card: app.card,
       knowledge: app.knowledge,
     });
-    expect(failed).toMatchObject({ ok: false, error: { kind: "teachingNotPrepared" } });
+    if (!taught.ok) throw new Error(taught.error.kind);
+    expect(taught.value.mode).toBe("teach");
+    expect(taught.value.material.japanese).toBe(
+      (app.card.content as { lemma: string }).lemma,
+    );
   });
 });

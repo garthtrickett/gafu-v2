@@ -37,7 +37,6 @@ const card: CardSummary = {
   schedulePhase: "new",
   reviewCount: 0,
   consecutiveFailures: 0,
-  stage: "sentence",
   consecutiveCorrect: 0,
 };
 
@@ -226,7 +225,6 @@ describe("an inflected target is still the target", () => {
     schedulePhase: "review",
     reviewCount: 1,
     consecutiveFailures: 0,
-    stage: "sentence",
     consecutiveCorrect: 0,
   };
   const known = (

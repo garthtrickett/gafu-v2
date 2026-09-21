@@ -94,7 +94,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
     });
     const beforeRestart = study.listCards();
     const backup = study.exportBackup();
-    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 11 } });
+    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 12 } });
     study.close();
 
     const reopened = openStudy({ ...shared, nextId: sequentialIds() });
@@ -110,12 +110,10 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
         prepareInBackground: true,
       },
     });
-    // Two right answers earn support readiness; a third graduates the Card
-    // to sentences, and only then does the word join the bank a sentence may
-    // lean on. Two baseline words, and this one still a word Card.
+    // Two baseline words plus the one just answered into support readiness.
     expect(reopened.value.knowledgeSnapshot()).toMatchObject({
       ok: true,
-      value: { vocabulary: { length: 2 } },
+      value: { vocabulary: { length: 3 } },
     });
     reopened.value.close();
   } finally {

@@ -218,19 +218,6 @@ export type LearningMaterial = Readonly<{
    * offer learn and review as separate queues without preparing anything.
    */
   hasTeaching: (cardId: CardSummary["id"]) => Result<boolean, MaterialFailure>;
-  /**
-   * Whether the Card can be served right now without asking the provider.
-   *
-   * A sentence Card is ready when it holds a banked reserve; a word Card is
-   * always ready, because it is served from the Card itself. Everywhere that
-   * asked only about the reserve quietly excluded word Cards — from the
-   * batch, from the Cards a finished batch hands over — and each time the
-   * symptom was a day of study that looked like nothing to do.
-   */
-  readyToServe: (
-    card: CardSummary,
-    mode: "teach" | "review",
-  ) => Result<boolean, MaterialFailure>;
   hasReserve: (
     cardId: CardSummary["id"],
     mode: MaterialMode,
@@ -285,6 +272,13 @@ export type LearningMaterial = Readonly<{
     cardId: CardSummary["id"],
     presentationId: string,
   ) => Result<void, MaterialFailure>;
+  /**
+   * Throws away the Card's banked, unshown review sentences. A wrong answer
+   * means the support level has just dropped back to obvious, and a reserve
+   * written while the Card was doing well would hold the learner at the old
+   * level for as many rounds as there are reserves. Returns how many went.
+   */
+  discardReserves: (cardId: CardSummary["id"]) => Result<number, MaterialFailure>;
   providerStatus: () => ProviderStatus;
   /**
    * Stores a teaching presentation written when the Card was made, so first

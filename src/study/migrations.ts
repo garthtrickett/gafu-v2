@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 11;
+export const STUDY_SCHEMA_VERSION = 12;
 
 const migrations: readonly Migration[] = [
   {
@@ -400,6 +400,18 @@ const migrations: readonly Migration[] = [
       -- mark of a word handled twice a day apart, and demoting those would
       -- take words out of the bank that sentences already lean on.
       UPDATE card_progress SET stage = 'sentence' WHERE support_ready_at IS NOT NULL;
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      -- The stage is gone. A word met as a bare word was met without any
+      -- context to hang it on, and the sentence it graduated into arrived
+      -- as a step change. One kind of Card now, whose sentence hands the
+      -- word over while consecutive_correct is low and stops once it is
+      -- not, so the support fades instead of switching. consecutive_correct
+      -- stays: it is what the fading is read from.
+      ALTER TABLE card_progress DROP COLUMN stage;
     `,
   },
 ];

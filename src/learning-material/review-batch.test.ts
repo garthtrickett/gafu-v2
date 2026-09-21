@@ -98,14 +98,7 @@ const createWord = (
     content: { lemma, reading, partOfSpeech: "noun", meaning, usageNotes: "" },
   });
   if (!created.ok || created.value.outcome !== "created") throw new Error("create");
-  // Past the word stage: these tests are about generated sentences, and a
-  // word Card is served from the Card itself without asking the provider.
-  const graduated = study.setCardState({
-    cardId: created.value.card.id,
-    action: "graduate",
-  });
-  if (!graduated.ok) throw new Error("graduate");
-  return graduated.value;
+  return created.value.card;
 };
 
 const markBackgroundKnown = (study: ReturnType<typeof harness>["study"]) => {
@@ -220,7 +213,61 @@ describe("review batch job", () => {
     app.material.close();
   });
 
-  test("a failing card is recorded and stays out of the way", async () => {
+  test("a wrong answer throws away the sentences banked while it was going well", async () => {
+    // How much the sentence hands the target over is read from the Card's
+    // run of right answers, and a wrong answer takes that run to zero. A
+    // sentence banked at the plain level would then be served anyway, and
+    // the Card would stay plain for as many rounds as there are reserves —
+    // which is the whole run again. The unshown ones go; what the learner
+    // has already seen stays, because the permits are issued against it.
+    const app = harness(createDeterministicMaterialProvider());
+    const created = createWord(app.study, "鳥", "とり", "bird");
+    markBackgroundKnown(app.study);
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const card = admitted.value.due.find((item) => item.card.id === created.id)?.card;
+    if (card === undefined) throw new Error("card not due");
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, card);
+
+    const begun = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    await app.material.advanceReviewBatch(begun.value);
+    await app.material.advanceReviewBatch(begun.value);
+    const shown = await app.material.prepare({ card, knowledge: knowledge.value });
+    if (!shown.ok) throw new Error(shown.error.kind);
+
+    const rows = new Database(app.databasePath);
+    const unshown = () =>
+      (
+        rows
+          .query(`SELECT count(*) AS count FROM validated_presentation
+            WHERE card_id = ? AND mode = 'review' AND shown_at IS NULL`)
+          .get(card.id) as { count: number }
+      ).count;
+    const kept = () =>
+      (
+        rows
+          .query(`SELECT count(*) AS count FROM validated_presentation
+            WHERE card_id = ? AND shown_at IS NOT NULL`)
+          .get(card.id) as { count: number }
+      ).count;
+    const before = unshown();
+    expect(before).toBeGreaterThan(0);
+    const alreadySeen = kept();
+
+    expect(app.material.discardReserves(card.id)).toEqual({ ok: true, value: before });
+    expect(unshown()).toBe(0);
+    expect(kept()).toBe(alreadySeen);
+    // Discarding twice is not an error; there is simply nothing left.
+    expect(app.material.discardReserves(card.id)).toEqual({ ok: true, value: 0 });
+    rows.close();
+    app.study.close();
+    app.material.close();
+  });
+
+  test("a card the provider never answers for is served as itself", async () => {
     const app = harness(
       createScriptedMaterialProvider([
         (request) =>
@@ -252,7 +299,9 @@ describe("review batch job", () => {
     ]);
     if (!begun.ok) throw new Error(begun.error.kind);
     // The provider answers for one card only. The other is retried for two
-    // more rounds and then dropped alone; the first is ready from round one.
+    // more rounds and then, rather than being dropped, banked as itself —
+    // the batch is what hands Cards to the session, so a Card it reports
+    // only as failed is a Card the learner never sees.
     let done = await app.material.advanceReviewBatch(begun.value);
     let advances = 1;
     while (done.ok && !done.value.done && advances < 12) {
@@ -265,12 +314,58 @@ describe("review batch job", () => {
       value: {
         done: true,
         pending: 0,
-        completed: [first.id],
-        failed: [{ kind: "noValidCandidate" }],
+        completed: [first.id, bad.id],
+        failed: [],
       },
     });
-    if (done.ok)
-      expect(done.value.failed[0]?.cardId).toBe("bad-card" as CardSummary["id"]);
+    const served = await app.material.prepare({
+      card: bad,
+      knowledge: knowledge.value,
+    });
+    if (!served.ok) throw new Error(served.error.kind);
+    expect(served.value.material.japanese).toBe("鳥");
+    app.study.close();
+    app.material.close();
+  });
+
+  test("a provider that cannot be reached fails the whole batch instead", async () => {
+    // The fallback above is for a word no sentence can be written for. A
+    // provider that is down is a different thing: every Card would be
+    // banked as a bare word and the learner would lose a day of sentences
+    // to an outage that ends in a minute. Those Cards stay due.
+    const inner = createDeterministicMaterialProvider();
+    const app = harness({
+      ...inner,
+      batch: {
+        dispatch: async () => err({ kind: "offline", detail: "no network" }),
+        poll: async () => err({ kind: "offline", detail: "no network" }),
+      },
+    } as MaterialProvider);
+    const created = createWord(app.study, "鳥", "とり", "bird");
+    markBackgroundKnown(app.study);
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const card = admitted.value.due.find((item) => item.card.id === created.id)?.card;
+    if (card === undefined) throw new Error("card not due");
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, card);
+
+    const begun = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    const done = await app.material.advanceReviewBatch(begun.value);
+    expect(done).toMatchObject({
+      ok: true,
+      value: {
+        done: true,
+        completed: [],
+        failed: [{ cardId: card.id, kind: "offline" }],
+      },
+    });
+    expect(app.material.hasReserve(card.id, "review")).toEqual({
+      ok: true,
+      value: false,
+    });
     app.study.close();
     app.material.close();
   });
@@ -347,154 +442,29 @@ describe("review batch job", () => {
     app.material.close();
   });
 
-  test("a batch of word Cards completes without asking the provider", async () => {
-    // A word Card is served from the Card itself. Keeping such Cards out of
-    // the batch made a day of them look like nothing due — the batch is also
-    // how Cards are handed to the session, not only how they are written.
-    // Both advance paths are covered: with a whole-batch provider and without.
-    for (const whole of [false, true]) {
-      let asked = 0;
-      const refusing = {
-        identity: { provider: "refusing", model: "-", promptVersion: "-" },
-        inspectLastRequest: () => null,
-        generate: async () => {
-          asked += 1;
-          return { ok: false as const, error: { kind: "offline", detail: "asked" } };
-        },
-        ...(whole
-          ? {
-              batch: {
-                dispatch: async () => {
-                  asked += 1;
-                  return {
-                    ok: false as const,
-                    error: { kind: "offline", detail: "asked" },
-                  };
-                },
-                poll: async () => ({
-                  ok: false as const,
-                  error: { kind: "offline", detail: "asked" },
-                }),
-              },
-            }
-          : {}),
-      } as unknown as MaterialProvider;
-      const { material, study } = harness(refusing);
-      const created = study.createCard({
-        type: "vocabulary",
-        content: {
-          lemma: "応援する",
-          reading: "おうえんする",
-          partOfSpeech: "verb",
-          meaning: "to cheer for",
-          usageNotes: "",
-        },
-      });
-      if (!created.ok) throw new Error("create");
-      study.setPreferences({ newCardsPerDay: 5 });
-      const queue = study.studyQueue();
-      if (!queue.ok) throw new Error("queue");
-      const due = queue.value.due.find(
-        (item) => item.card.id === created.value.card.id,
-      );
-      if (due === undefined) throw new Error("not due");
-      expect(due.card.stage).toBe("word");
-
-      const knowledge = study.knowledgeSnapshot();
-      if (!knowledge.ok) throw new Error("knowledge");
-      const begun = material.beginReviewBatch([
-        { card: due.card, knowledge: knowledge.value },
-      ]);
-      if (!begun.ok) throw new Error("begin");
-      expect(await material.advanceReviewBatch(begun.value)).toMatchObject({
-        ok: true,
-        value: { done: true, failed: [], completed: [created.value.card.id] },
-      });
-      expect(asked).toBe(0);
-    }
-  });
-
-  test("a word Card is served whole, with the target the page reads", async () => {
-    // The page shows what the Card claims beside the sentence, reading
-    // material.target. A word presentation is built here rather than by a
-    // provider, and the first one left target off entirely — it type-checked
-    // only because it was cast, and the page threw on the Card it was meant
-    // to serve.
-    const { material, study } = harness(createDeterministicMaterialProvider());
-    for (const card of [
-      {
-        type: "vocabulary" as const,
-        content: {
-          lemma: "応援する",
-          reading: "おうえんする",
-          partOfSpeech: "verb",
-          meaning: "to cheer for",
-          usageNotes: "",
-        },
+  test("a Card no sentence can be written for is served as the Card itself", async () => {
+    // Some words cannot have an i+1 sentence yet — 頬袋 wants ハムスター,
+    // which the learner has not met — and those Cards used to be admitted
+    // and then refused every round for ever. The Card's own writing, reading
+    // and meaning are banked instead, as an ordinary reserve, so the batch
+    // and the session hand-over need no special case for it.
+    let asked = 0;
+    const refusing = {
+      identity: { provider: "refusing", model: "-", promptVersion: "-" },
+      inspectLastRequest: () => null,
+      generate: async () => {
+        asked += 1;
+        return { ok: false as const, error: { kind: "noValidCandidate", detail: "" } };
       },
-      {
-        type: "grammar" as const,
-        content: {
-          canonicalForm: "〜ながら",
-          meaning: "while doing",
-          formation: "verb stem + ながら",
-          usageNotes: "",
-        },
-      },
-    ]) {
-      const created = study.createCard(card);
-      if (!created.ok) throw new Error("create");
-      study.setPreferences({ newCardsPerDay: 10 });
-      const queue = study.studyQueue();
-      if (!queue.ok) throw new Error("queue");
-      const due = queue.value.due.find(
-        (item) => item.card.id === created.value.card.id,
-      );
-      if (due === undefined) throw new Error("not due");
-      const knowledge = study.knowledgeSnapshot();
-      if (!knowledge.ok) throw new Error("knowledge");
-
-      const served = await material.prepare({
-        card: due.card,
-        knowledge: knowledge.value,
-      });
-      if (!served.ok) throw new Error(`serve: ${served.error.kind}`);
-      const shown = served.value.material;
-      expect(shown.targetKind).toBe(card.type);
-      expect(shown.target).toBeDefined();
-      if (shown.targetKind === "vocabulary") {
-        expect(shown.target).toMatchObject({
-          lemma: "応援する",
-          reading: "おうえんする",
-          meaning: "to cheer for",
-        });
-      } else {
-        expect(shown.target).toMatchObject({
-          canonicalForm: "〜ながら",
-          meaning: "while doing",
-        });
-      }
-      // The word itself, with its reading on the front, and nothing else.
-      expect(shown.readingSegments.map((segment) => segment.written).join("")).toBe(
-        shown.japanese,
-      );
-      expect(shown.japanese).toBe(shown.targetSurface);
-    }
-  });
-
-  test("a finished batch hands its word Cards to the session", async () => {
-    // What the page does after a batch completes: ask for the Cards it
-    // banked. That route asked only whether each Card held a reserve, and a
-    // word Card holds none, so it handed back nothing — the batch finished
-    // instantly and the page fell straight back to the button.
-    const { material, study } = harness(createDeterministicMaterialProvider());
+    } as unknown as MaterialProvider;
+    const { material, study } = harness(refusing);
     const created = study.createCard({
       type: "vocabulary",
       content: {
-        lemma: "応援する",
-        reading: "おうえんする",
-        partOfSpeech: "verb",
-        meaning: "to cheer for",
+        lemma: "頬袋",
+        reading: "ほおぶくろ",
+        partOfSpeech: "noun",
+        meaning: "a cheek pouch",
         usageNotes: "",
       },
     });
@@ -504,21 +474,41 @@ describe("review batch job", () => {
     if (!queue.ok) throw new Error("queue");
     const due = queue.value.due.find((item) => item.card.id === created.value.card.id);
     if (due === undefined) throw new Error("not due");
-    expect(due.card.stage).toBe("word");
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error("knowledge");
 
-    // Ready without a reserve, which is the question the route now asks.
-    expect(material.hasReserve(due.card.id, "teach")).toMatchObject({
-      ok: true,
-      value: false,
+    // A first exposure is never generated on demand, so nothing is asked of
+    // the provider; the Card itself is what the learner meets.
+    const taught = await material.prepare({
+      card: due.card,
+      knowledge: knowledge.value,
     });
-    expect(material.readyToServe(due.card, "teach")).toMatchObject({
-      ok: true,
-      value: true,
+    if (!taught.ok) throw new Error(`teach: ${taught.error.kind}`);
+    expect(asked).toBe(0);
+    expect(taught.value.mode).toBe("teach");
+    expect(taught.value.material.japanese).toBe("頬袋");
+    const acknowledged = material.acknowledgeTeaching(due.card.id, taught.value.id);
+    if (!acknowledged.ok) throw new Error("ack");
+
+    // The review is where the provider is asked and cannot answer. The Card
+    // is served all the same, with its own writing, reading and meaning.
+    const served = await material.prepare({
+      card: due.card,
+      knowledge: knowledge.value,
     });
-    expect(material.readyToServe(due.card, "review")).toMatchObject({
-      ok: true,
-      value: true,
+    if (!served.ok) throw new Error(`serve: ${served.error.kind}`);
+    expect(asked).toBeGreaterThan(0);
+    expect(served.value.mode).toBe("review");
+    expect(served.value.material.japanese).toBe("頬袋");
+    expect(served.value.material.targetKind).toBe("vocabulary");
+    expect(served.value.material.target).toMatchObject({
+      lemma: "頬袋",
+      reading: "ほおぶくろ",
+      meaning: "a cheek pouch",
     });
+    expect(
+      served.value.material.readingSegments.map((segment) => segment.written).join(""),
+    ).toBe("頬袋");
   });
 
   test("an unknown batch id is not found", async () => {

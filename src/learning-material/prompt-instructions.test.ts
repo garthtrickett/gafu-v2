@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { PLAIN_AFTER_CORRECT } from "../study/contracts.ts";
 
 /**
  * The single-Card and whole-batch prompts are separate strings that must say
@@ -22,9 +23,12 @@ const SHARED = [
   "never empty where the writing has kanji",
   "including the sentence-final 。",
   "Do not pad",
-  // A sentence that hands over the target is not a review.
-  "more than one word should still fit the gap",
-  "Where mode is teach",
+  // How much of the target's work the rest of the sentence does is the one
+  // thing that changes with the learner, and it changes in both prompts.
+  "depends on target.consecutiveCorrect",
+  "the sentence must give the target away",
+  "several different words should still fit the gap",
+  "either hands the word over or it does not",
   // Rules that predate this and must survive it.
   "must not be able to guess the target",
   "are English prose",
@@ -41,11 +45,27 @@ test("both prompts carry every shared rule, once each", () => {
   }
 });
 
+test("both prompts turn the support off at the number the code holds", () => {
+  // The boundary is written into the prompt as a numeral and nowhere else,
+  // so moving the constant without moving the prose would leave the code
+  // saying one thing and the model doing another.
+  for (const phrase of [
+    `under ${PLAIN_AFTER_CORRECT}`,
+    `Under ${PLAIN_AFTER_CORRECT},`,
+    `At ${PLAIN_AFTER_CORRECT} or more`,
+  ]) {
+    expect({ phrase, count: source.split(phrase).length - 1 }).toEqual({
+      phrase,
+      count: 2,
+    });
+  }
+});
+
 test("the prompt version moves when the ask changes", () => {
   // A generation completed under an older ask is not re-checked, so banked
   // sentences only make way for the new instruction if the version differs.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v11"');
+  expect(server).toContain('promptVersion: "study-v12"');
 });
 
 /**

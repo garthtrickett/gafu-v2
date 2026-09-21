@@ -477,10 +477,7 @@ const handleApi = async (
       const taught = material.hasTeaching(card.id);
       if (!taught.ok) return materialResponse(taught);
       const teaching = wantsTeaching(card, taught.value);
-      // A word Card holds no reserve and needs none; asking only about the
-      // reserve left every one of them out of the session the batch had just
-      // finished, so the page opened nothing and fell back to the button.
-      const reserve = material.readyToServe(card, teaching ? "teach" : "review");
+      const reserve = material.hasReserve(card.id, teaching ? "teach" : "review");
       if (!reserve.ok) return materialResponse(reserve);
       if (!reserve.value) continue;
       (teaching ? first : banked).push(card);
@@ -628,13 +625,20 @@ const handleApi = async (
       !grades.includes(body["grade"] as AnswerGrade)
     )
       return invalidRequest("Review answer is invalid.");
-    return jsonResult(
-      study.answer({
-        cardId: asCardId(body["cardId"]),
-        grade: body["grade"] as AnswerGrade,
-        permit: { token: body["permit"] },
-      }),
-    );
+    const cardId = asCardId(body["cardId"]);
+    const grade = body["grade"] as AnswerGrade;
+    const answered = study.answer({
+      cardId,
+      grade,
+      permit: { token: body["permit"] },
+    });
+    // A wrong answer drops the Card's support back to obvious, and sentences
+    // banked while it was going well would keep it plain for as many rounds
+    // as there are reserves. They go; the next round writes new ones. A
+    // failure to discard is not a failure to answer — the review is already
+    // recorded — so it only costs the snap-back this once.
+    if (answered.ok && grade === "again") material.discardReserves(cardId);
+    return jsonResult(answered);
   }
   if (request.method === "GET" && url.pathname === "/api/study") {
     const search = url.searchParams.get("search");
@@ -775,12 +779,7 @@ const handleApi = async (
     if (body instanceof Response) return body;
     if (!isRecord(body)) return invalidRequest("Missing state action.");
     const action = body["action"];
-    if (
-      action !== "markSupportReady" &&
-      action !== "graduate" &&
-      action !== "suspend" &&
-      action !== "restore"
-    ) {
+    if (action !== "markSupportReady" && action !== "suspend" && action !== "restore") {
       return invalidRequest("Unknown state action.");
     }
     const command: CardStateCommand = { cardId: asCardId(cardId), action };
@@ -953,7 +952,7 @@ const materialProvider = fakeAi
       // are English: a scene and explanation written in Japanese reached the
       // learner. v5 says what answer is for, after v3's no-translation rule
       // was read as covering it and the Japanese sentence came back verbatim.
-      promptVersion: "study-v11",
+      promptVersion: "study-v12",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
