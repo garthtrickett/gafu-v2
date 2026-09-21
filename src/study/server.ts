@@ -477,7 +477,10 @@ const handleApi = async (
       const taught = material.hasTeaching(card.id);
       if (!taught.ok) return materialResponse(taught);
       const teaching = wantsTeaching(card, taught.value);
-      const reserve = material.hasReserve(card.id, teaching ? "teach" : "review");
+      // A word Card holds no reserve and needs none; asking only about the
+      // reserve left every one of them out of the session the batch had just
+      // finished, so the page opened nothing and fell back to the button.
+      const reserve = material.readyToServe(card, teaching ? "teach" : "review");
       if (!reserve.ok) return materialResponse(reserve);
       if (!reserve.value) continue;
       (teaching ? first : banked).push(card);

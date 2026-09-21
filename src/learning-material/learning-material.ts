@@ -774,6 +774,21 @@ export const openLearningMaterial = (
     }
   };
 
+  /**
+   * Whether the Card can be served now without asking the provider.
+   *
+   * A sentence Card is ready when it holds a banked reserve; a word Card is
+   * always ready, because it is served from the Card itself. Three separate
+   * places asked only about the reserve and so quietly dropped word Cards —
+   * out of the batch, and out of what a finished batch hands over — and each
+   * time a full day of study looked like nothing to do. One question now.
+   */
+  const readyToServe = (
+    card: CardSummary,
+    mode: "teach" | "review",
+  ): Result<boolean, MaterialFailure> =>
+    card.stage === "word" ? ok(true) : hasReserve(card.id, mode);
+
   const hasReserve = (
     cardId: CardId,
     mode: "teach" | "review",
@@ -1202,10 +1217,7 @@ export const openLearningMaterial = (
         // that could fail. It stays in the batch rather than being kept out
         // of it, because the batch is also how the Cards are handed to the
         // session: excluded, a day of word Cards looked like nothing due.
-        const reserve =
-          input.card.stage === "word"
-            ? ok(true)
-            : hasReserve(item.card_id, wanted.value);
+        const reserve = readyToServe(input.card, wanted.value);
         if (!reserve.ok) return reserve;
         if (reserve.value) {
           try {
@@ -1347,6 +1359,7 @@ export const openLearningMaterial = (
     prepare,
     hasTeaching,
     hasReserve,
+    readyToServe,
     beginReviewBatch: (cards) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
@@ -1492,9 +1505,9 @@ export const openLearningMaterial = (
         }
         return progress();
       };
-      const reserve = hasReserve(item.card_id, "review");
+      const reserve = readyToServe(input.card, "review");
       if (!reserve.ok) return reserve;
-      if (reserve.value || input.card.stage === "word") return finish("ready", null);
+      if (reserve.value) return finish("ready", null);
       const stocked = await stockReserve(
         { card: input.card, knowledge: input.knowledge },
         "review",
