@@ -787,6 +787,92 @@ describe("Study admission and review", () => {
     study.close();
   });
 
+  test("an ordering decides which staged Cards are admitted first", () => {
+    // The deck is staged in the order its source happened to supply, which
+    // is a frequency list for conversation, not for whatever the learner is
+    // actually trying to read or watch. An ordering lifts the Cards that
+    // material is waiting on without disturbing where they came from.
+    const { study, clock } = openTestStudy();
+    const word = (lemma: string, reading: string): CreateCard => ({
+      type: "vocabulary",
+      content: {
+        lemma,
+        reading,
+        partOfSpeech: "noun",
+        meaning: `${lemma} meaning`,
+        usageNotes: "",
+      },
+    });
+    const first = create(study, word("犬", "いぬ")).card;
+    const second = create(study, word("猫", "ねこ")).card;
+    const third = create(study, word("鳥", "とり")).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+
+    // Last staged, but first in the ordering.
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "shows/detective-conan",
+        cardIds: [third.id, first.id, second.id],
+      }),
+    ).toEqual({ ok: true, value: { ordered: 3, skipped: 0 } });
+
+    const admitted: string[] = [];
+    for (const day of ["2026-09-08", "2026-09-09", "2026-09-10"]) {
+      clock.set(`${day}T10:00:00.000Z`);
+      const queue = study.studyQueue();
+      if (!queue.ok) throw new Error(queue.error.kind);
+      for (const item of queue.value.due) {
+        if (!admitted.includes(item.card.id)) admitted.push(item.card.id);
+      }
+    }
+    expect(admitted).toEqual([third.id, first.id, second.id]);
+    study.close();
+  });
+
+  test("an ordering replaces the one before it, and skips what is not staged", () => {
+    const { study } = openTestStudy();
+    const word = (lemma: string, reading: string): CreateCard => ({
+      type: "vocabulary",
+      content: {
+        lemma,
+        reading,
+        partOfSpeech: "noun",
+        meaning: `${lemma} meaning`,
+        usageNotes: "",
+      },
+    });
+    const first = create(study, word("犬", "いぬ")).card;
+    const second = create(study, word("猫", "ねこ")).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+    study.prioritizeStaging({ sourceKey: "first-pass", cardIds: [first.id] });
+
+    // Suspended Cards are counted and passed over: an ordering is computed
+    // from what is worth studying and does not know what state each Card is
+    // in. Re-running under the same key replaces it rather than layering on
+    // top, so a Card dropped from the ordering stops being lifted by it.
+    expect(study.setCardState({ cardId: second.id, action: "suspend" }).ok).toBe(true);
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "first-pass",
+        cardIds: [second.id],
+      }),
+    ).toEqual({ ok: true, value: { ordered: 0, skipped: 1 } });
+
+    const queue = study.studyQueue();
+    if (!queue.ok) throw new Error(queue.error.kind);
+    expect(queue.value.due.map((item) => item.card.id)).toEqual([first.id]);
+
+    // An ordering named after a Card would delete the staging source that
+    // Card was created with, so the name is refused.
+    expect(
+      study.prioritizeStaging({ sourceKey: first.id, cardIds: [first.id] }),
+    ).toMatchObject({ ok: false, error: { kind: "invalidCard", field: "sourceKey" } });
+    expect(
+      study.prioritizeStaging({ sourceKey: "  ", cardIds: [first.id] }),
+    ).toMatchObject({ ok: false, error: { kind: "invalidCard", field: "sourceKey" } });
+    study.close();
+  });
+
   test("rejects wrong-card and expired permits without a review", () => {
     const { study, clock } = openTestStudy();
     const card = create(study, vocabulary).card;

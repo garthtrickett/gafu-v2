@@ -785,6 +785,24 @@ const handleApi = async (
     const command: CardStateCommand = { cardId: asCardId(cardId), action };
     return jsonResult(study.setCardState(command));
   }
+  if (request.method === "POST" && url.pathname === "/api/study/staging-order") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      typeof body["sourceKey"] !== "string" ||
+      !Array.isArray(body["cardIds"]) ||
+      body["cardIds"].some((cardId) => typeof cardId !== "string")
+    ) {
+      return invalidRequest("Staging order needs a sourceKey and cardIds.");
+    }
+    return jsonResult(
+      study.prioritizeStaging({
+        sourceKey: body["sourceKey"],
+        cardIds: (body["cardIds"] as string[]).map(asCardId),
+      }),
+    );
+  }
   if (request.method === "PUT" && url.pathname === "/api/study/preferences") {
     const body = await readJson(request);
     if (body instanceof Response) return body;
