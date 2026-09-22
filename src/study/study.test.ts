@@ -858,6 +858,16 @@ describe("Study admission and review", () => {
       }),
     ).toEqual({ ok: true, value: { ordered: 0, skipped: 1 } });
 
+    // A Card named twice keeps the better position rather than failing the
+    // batch: an ordering built from a word list cannot know that two forms
+    // are one Card.
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "repeats",
+        cardIds: [first.id, first.id, first.id],
+      }),
+    ).toEqual({ ok: true, value: { ordered: 1, skipped: 2 } });
+
     const queue = study.studyQueue();
     if (!queue.ok) throw new Error(queue.error.kind);
     expect(queue.value.due.map((item) => item.card.id)).toEqual([first.id]);

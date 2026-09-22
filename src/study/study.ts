@@ -510,8 +510,17 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           `INSERT INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
            VALUES (?, 'manual', ?, ?, 1, ?)`,
         );
+        // Two surface forms can be one Card -- 分かる and わかる resolve to
+        // the same row -- so an ordering built from a word list repeats
+        // Cards it cannot know are the same. The first mention is the best
+        // position it was given, and a later one is the same Card asking
+        // for a worse one; failing the batch over it would lose the whole
+        // ordering to a detail the caller could not have seen.
+        const placed = new Set<string>();
         for (const [index, cardId] of command.cardIds.entries()) {
+          if (placed.has(cardId)) continue;
           if (staged.get(cardId) === null) continue;
+          placed.add(cardId);
           insert.run(
             cardId,
             sourceKey,
