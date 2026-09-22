@@ -118,6 +118,27 @@ export type CardStateCommand = Readonly<{
   action: "markSupportReady" | "suspend" | "restore";
 }>;
 
+/**
+ * An ordering imposed on staged Cards: the Cards to lift, best first.
+ *
+ * `sourceKey` names the ordering rather than a Card, so re-running one
+ * replaces it instead of layering a second opinion on top, and so two
+ * orderings from different sources can coexist with the higher winning.
+ */
+export type StagingOrder = Readonly<{
+  sourceKey: string;
+  cardIds: readonly CardId[];
+}>;
+
+/**
+ * Where an ordering's priorities start, counting down from there.
+ *
+ * Far above anything a Card carries from its own staging — a CEJC import
+ * writes 10,000 minus the rank — so an ordering lifts its Cards clear of
+ * the deck rather than interleaving with it.
+ */
+export const STAGING_ORDER_CEILING = 1_000_000;
+
 export type StudyPreferences = Readonly<{
   newCardsPerDay: number;
   timeZone: string;
@@ -349,6 +370,15 @@ export type Study = Readonly<{
     content: CardContent,
   ) => Result<CardSummary, StudyFailure>;
   setCardState: (command: CardStateCommand) => Result<CardSummary, StudyFailure>;
+  /**
+   * Lifts staged Cards to the front of the admission queue, in the given
+   * order. Cards that are not staged are counted and skipped rather than
+   * refused: an ordering is computed from what is worth studying, which
+   * does not know or care what state each Card happens to be in.
+   */
+  prioritizeStaging: (
+    command: StagingOrder,
+  ) => Result<Readonly<{ ordered: number; skipped: number }>, StudyFailure>;
   studyQueue: () => Result<StudyQueue, StudyFailure>;
   status: () => Result<StudyStatus, StudyFailure>;
   answer: (command: AnswerCard) => Result<AnswerOutcome, StudyFailure>;

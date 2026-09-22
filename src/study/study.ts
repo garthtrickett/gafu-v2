@@ -18,6 +18,7 @@ import type {
   KnowledgeSnapshot,
   KnownWordSeed,
   PreferenceChange,
+  StagingOrder,
   Study,
   StudyBackup,
   StudyDependencies,
@@ -28,7 +29,11 @@ import type {
   StudyStatus,
   SubtitleVocabularyCapture,
 } from "./contracts.ts";
-import { asCardId, PRESENTATION_PERMIT_LIFETIME_MS } from "./contracts.ts";
+import {
+  asCardId,
+  PRESENTATION_PERMIT_LIFETIME_MS,
+  STAGING_ORDER_CEILING,
+} from "./contracts.ts";
 import {
   canonicalizeCard,
   canonicalizeUpdatedContent,
@@ -446,6 +451,79 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           existingCardId: cause.existingCardId,
         });
       }
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
+  /**
+   * Writes an ordering over staged Cards as a staging source of its own.
+   *
+   * Admission reads `max(priority)` across a Card's active sources, so an
+   * ordering is added beside whatever staged the Card rather than replacing
+   * it: the Card keeps its origin, and the ordering only ever lifts it. The
+   * source is deleted and rewritten each time, so re-running a changed
+   * ordering replaces it instead of leaving Cards stranded at a priority
+   * nothing intends any more.
+   */
+  const prioritizeStaging = (
+    command: StagingOrder,
+  ): Result<Readonly<{ ordered: number; skipped: number }>, StudyFailure> => {
+    const now = safeNow(dependencies.clock);
+    if (!now.ok) return now;
+    const sourceKey = command.sourceKey.trim();
+    if (sourceKey === "") {
+      return err({
+        kind: "invalidCard",
+        field: "sourceKey",
+        detail: "must name the ordering",
+      });
+    }
+    if (command.cardIds.length > STAGING_ORDER_CEILING) {
+      return err({
+        kind: "invalidCard",
+        field: "cardIds",
+        detail: `must not exceed ${STAGING_ORDER_CEILING} Cards`,
+      });
+    }
+    try {
+      // createCard writes each staged Card a source keyed by its own id, so
+      // an ordering named after a Card would delete that Card's origin.
+      const collides = database.query("SELECT 1 FROM card WHERE id = ?").get(sourceKey);
+      if (collides !== null) {
+        return err({
+          kind: "invalidCard",
+          field: "sourceKey",
+          detail: "must not be a Card ID",
+        });
+      }
+      let ordered = 0;
+      const apply = database.transaction(() => {
+        database
+          .query(
+            "DELETE FROM staging_source WHERE source_kind = 'manual' AND source_key = ?",
+          )
+          .run(sourceKey);
+        const staged = database.query(
+          "SELECT 1 FROM card_progress WHERE card_id = ? AND state = 'staged'",
+        );
+        const insert = database.query(
+          `INSERT INTO staging_source(card_id, source_kind, source_key, priority, active, created_at)
+           VALUES (?, 'manual', ?, ?, 1, ?)`,
+        );
+        for (const [index, cardId] of command.cardIds.entries()) {
+          if (staged.get(cardId) === null) continue;
+          insert.run(
+            cardId,
+            sourceKey,
+            STAGING_ORDER_CEILING - index,
+            now.value.toISOString(),
+          );
+          ordered += 1;
+        }
+      });
+      apply.immediate();
+      return ok({ ordered, skipped: command.cardIds.length - ordered });
+    } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
   };
@@ -1558,6 +1636,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     countSupportReadySince,
     updateCard,
     setCardState,
+    prioritizeStaging,
     studyQueue,
     status,
     answer,
