@@ -51,6 +51,7 @@ test("manages durable typed Cards and settings through the local Study server", 
 
   await page.getByLabel("New Cards per Day").fill("7");
   await page.getByLabel("Time zone").fill("Australia/Sydney");
+  await page.getByLabel("Speak study sentences").uncheck();
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Study settings saved");
   await expect(staged).toHaveText("0");
@@ -59,6 +60,7 @@ test("manages durable typed Cards and settings through the local Study server", 
   await expect(page.getByText("2 durable Cards")).toBeVisible();
   await expect(page.getByLabel("New Cards per Day")).toHaveValue("7");
   await expect(page.getByLabel("Time zone")).toHaveValue("Australia/Sydney");
+  await expect(page.getByLabel("Speak study sentences")).not.toBeChecked();
   await expect(page.locator(".bank-card", { hasText: "開く" })).toContainText(
     "support-ready",
   );
@@ -126,4 +128,9 @@ test("manages durable typed Cards and settings through the local Study server", 
   expect(bytes).toBeGreaterThan(0);
 
   await expect(page.getByRole("button", { name: "Again" })).toHaveCount(0);
+
+  // This suite shares one server; leave the next study journey's voice on.
+  await page.getByLabel("Speak study sentences").check();
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByRole("status")).toContainText("Study settings saved");
 });

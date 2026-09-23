@@ -454,9 +454,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
           firstReviewAfterMinutes: Number(value(fields, "firstReviewAfterMinutes")),
           dayStartsAtHour: Number(value(fields, "dayStartsAtHour")),
           prepareInBackground: fields.get("prepareInBackground") !== null,
+          speechEnabled: fields.get("speechEnabled") !== null,
           timeZone: value(fields, "timeZone"),
         }),
       });
+      if (fields.get("speechEnabled") === null) audio?.pause();
       return "Study settings saved. Earlier admissions and reviews were not changed.";
     });
   };
@@ -559,6 +561,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     audio.play().catch(() => undefined);
   };
   const replayAudio = (): void => {
+    if (model.snapshot?.preferences.speechEnabled === false) return;
     const url = model.presentation?.audioUrl;
     if (url) playAudio(url);
   };
@@ -567,10 +570,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const present = (prepared: PreparedMaterial): void => {
     model.presentation = prepared;
     model.revealed = false;
-    if (prepared.audioUrl !== null) playAudio(prepared.audioUrl);
+    if (
+      model.snapshot?.preferences.speechEnabled !== false &&
+      prepared.audioUrl !== null
+    )
+      playAudio(prepared.audioUrl);
     // The clip after this one is fetched now, so the next Card speaks at once.
     const next = model.session?.items[model.session.index + 1];
-    if (next?.audioUrl) {
+    if (model.snapshot?.preferences.speechEnabled !== false && next?.audioUrl) {
       const ahead = new Audio(next.audioUrl);
       ahead.preload = "auto";
       ahead.load();
@@ -1157,6 +1164,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         <p class="japanese" lang="ja" data-japanese-sentence>${rubyText(presentation.material, presentation.material.targetSpan)}</p>
                         <div class="sentence-tools">
                           ${
+                            model.snapshot?.preferences.speechEnabled !== false &&
                             presentation.audioUrl !== null
                               ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
                               : ""
@@ -1356,7 +1364,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
                             : model.batch.round > 1
                               ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Round ${model.batch.round} of 3: the ${model.batch.pending} Cards whose sentences were refused are requested again with the reasons attached.`
-                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked and spoken, and studying starts as soon as any are ready. Refused sentences get up to two more rounds.`
+                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked${snapshot.preferences.speechEnabled ? " and spoken" : ""}, and studying starts as soon as any are ready. Refused sentences get up to two more rounds.`
                         }
                       </p>`
                     : ""
@@ -1456,15 +1464,26 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         nothing.</small
                       >
                     </label>
+                    <label class="check-setting">
+                      <input
+                        name="speechEnabled"
+                        type="checkbox"
+                        .checked=${snapshot.preferences.speechEnabled}
+                      />
+                      Speak study sentences
+                      <small>Turn off to go from generated sentences straight to reviews without waiting for voice audio.</small>
+                    </label>
                     <button type="submit" ?disabled=${model.busy}>Save settings</button>
                   </form>
                   <div class="provider-settings">
                     <h3>AI provider</h3>
                     <p>${model.provider?.provider ?? "OpenAI"} · ${model.provider?.model ?? "gpt-5.6-luna"}</p>
                     <p data-testid="speech-voice">Speech: ${
-                      model.provider?.speech
-                        ? `${model.provider.speech.provider} · ${model.provider.speech.voice}`
-                        : "off"
+                      !snapshot.preferences.speechEnabled
+                        ? "off in Study settings"
+                        : model.provider?.speech
+                          ? `${model.provider.speech.provider} · ${model.provider.speech.voice}`
+                          : "off"
                     }</p>
                     <p>${
                       model.provider?.configured

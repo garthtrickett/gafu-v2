@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 13;
+export const STUDY_SCHEMA_VERSION = 14;
 
 const migrations: readonly Migration[] = [
   {
@@ -433,6 +433,13 @@ const migrations: readonly Migration[] = [
             ''
           )
       );
+    `,
+  },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE study_preferences ADD COLUMN speech_enabled INTEGER NOT NULL DEFAULT 1
+        CHECK (speech_enabled IN (0, 1));
     `,
   },
 ];

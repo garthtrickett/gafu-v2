@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mutableClock, sequentialIds, testSeed } from "../../tests/support/study.ts";
 import { err, ok } from "../result.ts";
-import type { CardSummary } from "../study/contracts.ts";
+import type { CardSummary, Study } from "../study/contracts.ts";
 import { openStudy } from "../study/study.ts";
 import { createProviderKeyCustody } from "../topology/provider-key-custody.ts";
 import type { GeneratedMaterial } from "./generated-contracts.ts";
@@ -33,6 +33,7 @@ const harness = (speech: SpeechProvider | undefined, speechDailyLimit?: number) 
   directories.push(directory);
   const databasePath = join(directory, "gafu.sqlite");
   const clock = mutableClock("2026-09-12T09:00:00.000Z");
+  let studyForSpeech: Study | undefined;
   const material = openLearningMaterial({
     databasePath,
     clock: clock.now,
@@ -46,6 +47,10 @@ const harness = (speech: SpeechProvider | undefined, speechDailyLimit?: number) 
     validate: async ({ value }) => ok(value as GeneratedMaterial),
     inspectionEnabled: false,
     speech,
+    speechEnabled: () => {
+      const preferences = studyForSpeech?.preferences();
+      return preferences?.ok === true && preferences.value.speechEnabled;
+    },
     ...(speechDailyLimit === undefined ? {} : { speechDailyLimit }),
   });
   if (!material.ok) throw new Error(material.error.kind);
@@ -58,6 +63,7 @@ const harness = (speech: SpeechProvider | undefined, speechDailyLimit?: number) 
     grammarTargetSupported: () => true,
   });
   if (!study.ok) throw new Error(study.error.kind);
+  studyForSpeech = study.value;
   const created = study.value.createCard({
     type: "vocabulary",
     content: {
@@ -88,6 +94,7 @@ const harness = (speech: SpeechProvider | undefined, speechDailyLimit?: number) 
   };
   return {
     material: material.value,
+    study: study.value,
     card,
     knowledge: knowledge.value,
     teaching,
@@ -105,6 +112,66 @@ const scripted = (steps: readonly ScriptedSpeechStep[]) => {
 };
 
 describe("spoken sentences", () => {
+  test("speech off banks generated reviews without synthesis or serving cached audio", async () => {
+    const { provider, spoken } = scripted(Array.from({ length: 10 }, () => clip));
+    const app = harness(provider);
+    const saved = app.study.setPreferences({ speechEnabled: false });
+    expect(saved).toMatchObject({ ok: true, value: { speechEnabled: false } });
+    const stored = await app.material.storeAuthoredTeaching({
+      card: app.card,
+      knowledge: app.knowledge,
+      value: app.teaching,
+    });
+    if (!stored.ok) throw new Error(stored.error.kind);
+    const taught = await app.material.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!taught.ok) throw new Error(taught.error.kind);
+    expect(taught.value.audioUrl).toBeNull();
+    const acknowledged = app.material.acknowledgeTeaching(app.card.id, taught.value.id);
+    if (!acknowledged.ok) throw new Error(acknowledged.error.kind);
+
+    const batch = app.material.beginReviewBatch([
+      { card: app.card, knowledge: app.knowledge },
+    ]);
+    if (!batch.ok) throw new Error(batch.error.kind);
+    let completed = false;
+    for (let attempt = 0; attempt < 20 && !completed; attempt += 1) {
+      const progress = await app.material.advanceReviewBatch(batch.value);
+      if (!progress.ok) throw new Error(progress.error.kind);
+      completed = progress.value.done;
+    }
+    expect(completed).toBe(true);
+    expect(spoken).toEqual([]);
+    const review = await app.material.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!review.ok) throw new Error(review.error.kind);
+    expect(review.value.mode).toBe("review");
+    expect(review.value.audioUrl).toBeNull();
+
+    app.study.setPreferences({ speechEnabled: true });
+    const spokenReview = await app.material.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!spokenReview.ok) throw new Error(spokenReview.error.kind);
+    expect(spokenReview.value.audioUrl).not.toBeNull();
+    expect(spoken.length).toBeGreaterThan(0);
+
+    app.study.setPreferences({ speechEnabled: false });
+    const count = spoken.length;
+    const silentAgain = await app.material.prepare({
+      card: app.card,
+      knowledge: app.knowledge,
+    });
+    if (!silentAgain.ok) throw new Error(silentAgain.error.kind);
+    expect(silentAgain.value.audioUrl).toBeNull();
+    expect(spoken).toHaveLength(count);
+  });
+
   test("an authored teach sentence is spoken on first serve and the clip is stored once", async () => {
     const { provider, spoken } = scripted([clip]);
     const app = harness(provider);

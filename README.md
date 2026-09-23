@@ -54,6 +54,10 @@ Gafu after installation; it automatically reads
 `data/kaishi-1.5k.local.json`. Set `GAFU_KAISHI_SEED_PATH` to use a different
 private manifest, or to an empty value to disable local seed loading.
 
+In Study settings, **Speak study sentences** is on by default. Turning it off
+skips speech synthesis and playback, so validated generated sentences go
+straight to review. The setting is saved with the learner's Study data.
+
 Build the browser and serve the production-style local app with:
 
 ```bash
@@ -89,3 +93,8 @@ bun run health -- <gafu.sqlite>
 
 Use the exact safety and rollback sequence in the cutover runbook. V1 and
 `jp-player` remain unarchived until owner acceptance is recorded.
+
+Study schema 14 adds the saved speech setting and leaves it on for existing
+databases. The upgrade runs when Gafu starts. Keep a backup made before
+upgrading if you may need to return to an older build; that build cannot open
+the upgraded database, so restore the earlier backup with the server stopped.

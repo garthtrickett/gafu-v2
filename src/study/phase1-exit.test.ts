@@ -94,7 +94,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
     });
     const beforeRestart = study.listCards();
     const backup = study.exportBackup();
-    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 13 } });
+    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 14 } });
     study.close();
 
     const reopened = openStudy({ ...shared, nextId: sequentialIds() });
@@ -108,6 +108,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
         firstReviewAfterMinutes: 30,
         dayStartsAtHour: 4,
         prepareInBackground: true,
+        speechEnabled: true,
       },
     });
     // Two baseline words plus the one just answered into support readiness.
