@@ -374,10 +374,10 @@ describe("Phase 2 generated study lifecycle", () => {
       !invalidKnowledge.ok
     )
       throw new Error("setup");
-    // A first exposure is never generated on demand, so the provider is not
-    // asked — and rather than refusing, the Card itself is shown: its
-    // writing, its reading, its meaning. A Card that cannot be taught is a
-    // Card that can be admitted and then never studied.
+    // The provider is asked and cannot answer for this Card, so rather than
+    // refusing, the Card itself is shown: its writing, its reading, its
+    // meaning. A Card that cannot be taught is otherwise a Card that can be
+    // admitted and then never studied.
     const taught = await app.material.prepare({
       card: invalidQueue.value.due[0].card,
       knowledge: invalidKnowledge.value,
@@ -385,7 +385,6 @@ describe("Phase 2 generated study lifecycle", () => {
     if (!taught.ok) throw new Error(taught.error.kind);
     expect(taught.value.mode).toBe("teach");
     expect(taught.value.material.japanese).toBe("鳥");
-    expect(provider.inspectLastRequest()).toBeNull();
     expect(app.study.listCards()).toMatchObject({
       ok: true,
       value: [{ reviewCount: 0 }],

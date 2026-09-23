@@ -477,14 +477,14 @@ describe("review batch job", () => {
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) throw new Error("knowledge");
 
-    // A first exposure is never generated on demand, so nothing is asked of
-    // the provider; the Card itself is what the learner meets.
+    // The provider is asked for a first exposure too, and refuses; the Card
+    // itself is what the learner meets.
     const taught = await material.prepare({
       card: due.card,
       knowledge: knowledge.value,
     });
     if (!taught.ok) throw new Error(`teach: ${taught.error.kind}`);
-    expect(asked).toBe(0);
+    expect(asked).toBeGreaterThan(0);
     expect(taught.value.mode).toBe("teach");
     expect(taught.value.material.japanese).toBe("頬袋");
     const acknowledged = material.acknowledgeTeaching(due.card.id, taught.value.id);

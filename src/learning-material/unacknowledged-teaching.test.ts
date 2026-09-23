@@ -127,10 +127,12 @@ describe("teaching stays servable until it is seen", () => {
     expect(review.value.mode).toBe("review");
   });
 
-  test("a Card with no teach presentation is taught from the Card itself", async () => {
-    // This used to refuse, which left a Card admitted and then never
-    // studyable — the word most in need of being met was the one no
-    // sentence could be written for. The Card is shown instead.
+  test("a Card with no teach presentation has one written on demand", async () => {
+    // This refused once, which left a Card admitted and never studyable.
+    // Then it showed the bare word, which is what the learner met for every
+    // Card made through the API — those carry no authored teaching, so at
+    // fifty new Cards a day against twenty a batch press the learner gets
+    // there first. A first exposure is now generated like any other.
     const app = harness();
     const taught = await app.material.prepare({
       card: app.card,
@@ -138,8 +140,8 @@ describe("teaching stays servable until it is seen", () => {
     });
     if (!taught.ok) throw new Error(taught.error.kind);
     expect(taught.value.mode).toBe("teach");
-    expect(taught.value.material.japanese).toBe(
-      (app.card.content as { lemma: string }).lemma,
-    );
+    const lemma = (app.card.content as { lemma: string }).lemma;
+    expect(taught.value.material.japanese).toContain(lemma);
+    expect(taught.value.material.japanese).not.toBe(lemma);
   });
 });
