@@ -360,6 +360,28 @@ describe("whole-batch generation", () => {
     expect(JSON.stringify(input)).not.toContain("usageNotes");
   });
 
+  test("puts twenty Cards in one LLM request", async () => {
+    const posts: RequestInit[] = [];
+    const material = provider(async (_url, init) => {
+      if (init?.method === "POST") posts.push(init);
+      return Response.json(batchResponse("queued", []));
+    });
+    const twentyTargets = Array.from({ length: 20 }, (_, index) => ({
+      mode: "review" as const,
+      card: { ...request.card, id: asCardId(`card-${index + 1}`) },
+      recentJapanese: [],
+      previousRejections: [],
+    }));
+    const dispatched = await material.batch?.dispatch(twentyTargets, request.knowledge);
+    expect(dispatched?.ok).toBe(true);
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(String(posts[0]?.body)) as { input: string };
+    const input = JSON.parse(body.input) as { targets: { cardId: string }[] };
+    expect(input.targets.map((target) => target.cardId)).toEqual(
+      twentyTargets.map((target) => target.card.id),
+    );
+  });
+
   test("a poll reports pending until terminal, then drops malformed items alone", async () => {
     let polls = 0;
     const material = provider(async (_url, init) => {

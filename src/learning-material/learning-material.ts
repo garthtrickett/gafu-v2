@@ -1439,6 +1439,11 @@ export const openLearningMaterial = (
             completed,
             failed,
             round,
+            requestInFlight:
+              pending > 0 &&
+              database
+                .query("SELECT 1 FROM review_batch_job WHERE batch_id = ?")
+                .get(batchId) !== null,
           };
           return ok(snapshot);
         } catch (cause) {
