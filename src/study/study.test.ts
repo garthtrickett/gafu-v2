@@ -950,6 +950,7 @@ describe("Study persistence and recovery", () => {
         firstReviewAfterMinutes: 30,
         dayStartsAtHour: 4,
         prepareInBackground: true,
+        speechEnabled: true,
       },
     });
     expect(reopened.value.listCards()).toMatchObject({
@@ -1119,12 +1120,12 @@ describe("Study persistence and recovery", () => {
     study.close();
 
     // Roll the counter back to what the column was created with and run the
-    // step again over the history that is already there.
+    // step again over the history that is already there. Remove the later
+    // speech preference column so its migration can replay too.
     const database = new Database(path, { strict: true });
     database.exec("UPDATE card_progress SET consecutive_correct = 0");
-    database.exec(
-      `DELETE FROM schema_migration WHERE version = ${STUDY_SCHEMA_VERSION}`,
-    );
+    database.exec("ALTER TABLE study_preferences DROP COLUMN speech_enabled");
+    database.exec("DELETE FROM schema_migration WHERE version IN (13, 14)");
     database.close();
 
     const upgraded = openStudy({ ...dependencies, nextId: sequentialIds() });

@@ -31,4 +31,5 @@ const REQUIRED: Record<keyof BrowserSnapshot, true> = {
 export const isDrawableSnapshot = (value: unknown): value is BrowserSnapshot =>
   typeof value === "object" &&
   value !== null &&
-  Object.keys(REQUIRED).every((key) => key in value);
+  Object.keys(REQUIRED).every((key) => key in value) &&
+  typeof (value as BrowserSnapshot).preferences?.speechEnabled === "boolean";

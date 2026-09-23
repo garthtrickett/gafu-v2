@@ -834,6 +834,12 @@ const handleApi = async (
       }
       Object.assign(change, { prepareInBackground: body["prepareInBackground"] });
     }
+    if (body["speechEnabled"] !== undefined) {
+      if (typeof body["speechEnabled"] !== "boolean") {
+        return invalidRequest("speechEnabled must be a boolean.");
+      }
+      Object.assign(change, { speechEnabled: body["speechEnabled"] });
+    }
     if (body["timeZone"] !== undefined) {
       if (typeof body["timeZone"] !== "string") {
         return invalidRequest("timeZone must be a string.");
@@ -1004,6 +1010,7 @@ const speechProvider = speechDisabled
           timeoutMs: 30_000,
         });
 const speechDailyLimit = Number(process.env["GAFU_SPEECH_DAILY_LIMIT"] ?? "200");
+let studyForSpeech: Study | undefined;
 const analyzer = createKuromojiAnalyzer(() =>
   loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
 );
@@ -1048,6 +1055,10 @@ const openedMaterial = openLearningMaterial({
   validate: validator,
   inspectionEnabled: process.env["GAFU_DEVELOPER_INSPECTION"] === "1",
   speech: speechProvider,
+  speechEnabled: () => {
+    const preferences = studyForSpeech?.preferences();
+    return preferences?.ok === true && preferences.value.speechEnabled;
+  },
   speechDailyLimit: Number.isFinite(speechDailyLimit) ? speechDailyLimit : 200,
 });
 if (!openedMaterial.ok) {
@@ -1066,6 +1077,7 @@ const opened = openStudy({
 if (!opened.ok) {
   throw new Error(`Study failed to open: ${opened.error.kind}`);
 }
+studyForSpeech = opened.value;
 
 const watch = createWatch({
   analyzer,

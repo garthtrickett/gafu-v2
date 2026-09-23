@@ -164,6 +164,8 @@ export type StudyPreferences = Readonly<{
    * tab left open the day a hundred Cards come due is not.
    */
   prepareInBackground: boolean;
+  /** Whether generated sentences should be spoken during study. */
+  speechEnabled: boolean;
 }>;
 
 export type PreferenceChange = Readonly<{
@@ -172,6 +174,7 @@ export type PreferenceChange = Readonly<{
   firstReviewAfterMinutes?: number;
   dayStartsAtHour?: number;
   prepareInBackground?: boolean;
+  speechEnabled?: boolean;
 }>;
 
 export type QueueCard = Readonly<{

@@ -64,6 +64,8 @@ export type OpenLearningMaterialOptions = Readonly<{
    * made and every presentation serves with `audioUrl: null`.
    */
   speech?: SpeechProvider | undefined;
+  /** Learner setting, checked again when a banked presentation is served. */
+  speechEnabled?: () => boolean;
   /** Synthesis attempts per UTC day before new clips stop; default 200. */
   speechDailyLimit?: number;
 }>;
@@ -520,6 +522,7 @@ export const openLearningMaterial = (
     japanese: string,
     signal?: AbortSignal,
   ): Promise<void> => {
+    if (options.speechEnabled?.() === false) return;
     const speech = options.speech;
     if (speech === undefined) return;
     try {
@@ -561,6 +564,7 @@ export const openLearningMaterial = (
     prepared: PreparedMaterial,
     signal?: AbortSignal,
   ): Promise<PreparedMaterial> => {
+    if (options.speechEnabled?.() === false) return { ...prepared, audioUrl: null };
     await synthesizeAudio(prepared.id, prepared.material.japanese, signal);
     let present = false;
     try {
@@ -1107,6 +1111,7 @@ export const openLearningMaterial = (
     banked: readonly { id: string; japanese: string }[],
     concurrency = 3,
   ): Promise<void> => {
+    if (options.speechEnabled?.() === false) return;
     for (let index = 0; index < banked.length; index += concurrency) {
       await Promise.all(
         banked

@@ -11,7 +11,7 @@ const complete = {
   cards: [],
   cardTotal: 0,
   cardOffset: 0,
-  preferences: {},
+  preferences: { speechEnabled: true },
   status: {},
   session: {},
   baseline: {},
@@ -25,6 +25,10 @@ test("a snapshot carrying every field the page draws is used", () => {
 test("a snapshot cached before a field was added is discarded", () => {
   const { known: _dropped, ...stale } = complete;
   expect(isDrawableSnapshot(stale)).toBe(false);
+});
+
+test("a snapshot from before the voice setting is discarded", () => {
+  expect(isDrawableSnapshot({ ...complete, preferences: {} })).toBe(false);
 });
 
 test("the old two-key guard is not enough on its own", () => {
