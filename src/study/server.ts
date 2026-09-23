@@ -522,8 +522,9 @@ const handleApi = async (
     const batch = [...split.value.review, ...split.value.untaught].slice(0, size);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-    // Dispatch records the batch and returns. Generation happens one card
-    // per status poll, so no single request waits on the whole batch.
+    // Beginning records the batch and returns. The first status poll sends
+    // every Card without a stored sentence in one provider request; later
+    // polls wait for that request and bank its results.
     const begun = material.beginReviewBatch(
       batch.map((item) => ({ card: item.card, knowledge: knowledge.value })),
     );

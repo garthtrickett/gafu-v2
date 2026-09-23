@@ -188,7 +188,10 @@ describe("review batch job", () => {
 
     // The first advance dispatches the whole batch; nothing is ready yet.
     const one = await app.material.advanceReviewBatch(begun.value);
-    expect(one).toMatchObject({ ok: true, value: { done: false, pending: 2 } });
+    expect(one).toMatchObject({
+      ok: true,
+      value: { done: false, pending: 2, requestInFlight: true },
+    });
     expect(provider.inspectLastRequest()?.endpoint).toBe(
       "scripted://learning-material/batch",
     );
@@ -196,7 +199,13 @@ describe("review batch job", () => {
     const two = await app.material.advanceReviewBatch(begun.value);
     expect(two).toMatchObject({
       ok: true,
-      value: { done: true, pending: 0, completed: [first.id, second.id], failed: [] },
+      value: {
+        done: true,
+        pending: 0,
+        completed: [first.id, second.id],
+        failed: [],
+        requestInFlight: false,
+      },
     });
     // A third advance reports the finished batch instead of working.
     const three = await app.material.advanceReviewBatch(begun.value);
@@ -209,6 +218,53 @@ describe("review batch job", () => {
       expect(prepared).toMatchObject({ ok: true, value: { mode: "review" } });
     }
     expect(calls).toBe(banked);
+    app.study.close();
+    app.material.close();
+  });
+
+  test("reports stored Cards ready while one request generates the rest", async () => {
+    const provider = createDeterministicMaterialProvider();
+    const app = harness(provider);
+    const firstCreated = createWord(app.study, "鳥", "とり", "bird");
+    const secondCreated = createWord(app.study, "猫", "ねこ", "cat");
+    markBackgroundKnown(app.study);
+    const admitted = app.study.studyQueue();
+    if (!admitted.ok) throw new Error("queue");
+    const first = admitted.value.due.find(
+      (item) => item.card.id === firstCreated.id,
+    )?.card;
+    const second = admitted.value.due.find(
+      (item) => item.card.id === secondCreated.id,
+    )?.card;
+    if (first === undefined || second === undefined) throw new Error("cards not due");
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error(knowledge.error.kind);
+    await teachCard(app, first);
+    await teachCard(app, second);
+    const shown = await app.material.prepare({
+      card: first,
+      knowledge: knowledge.value,
+    });
+    if (!shown.ok) throw new Error(shown.error.kind);
+    expect(app.material.hasReserve(first.id, "review")).toEqual({
+      ok: true,
+      value: true,
+    });
+
+    const begun = app.material.beginReviewBatch([
+      { card: first, knowledge: knowledge.value },
+      { card: second, knowledge: knowledge.value },
+    ]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    const progress = await app.material.advanceReviewBatch(begun.value);
+    expect(progress).toMatchObject({
+      ok: true,
+      value: { completed: [first.id], pending: 1, requestInFlight: true },
+    });
+    expect(provider.inspectLastRequest()).toMatchObject({
+      endpoint: "scripted://learning-material/batch",
+      body: { targets: [{ card: { id: second.id } }] },
+    });
     app.study.close();
     app.material.close();
   });

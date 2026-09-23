@@ -203,6 +203,8 @@ export type ReviewBatchProgress = Readonly<{
   failed: readonly ReviewBatchFailure[];
   /** Which whole-batch request the pending Cards are on, from 1. */
   round: number;
+  /** Pending Cards are together in one dispatched provider request. */
+  requestInFlight: boolean;
 }>;
 
 /** Whole-batch requests a Card may take before it is dropped. */

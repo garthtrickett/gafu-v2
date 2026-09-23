@@ -78,6 +78,7 @@ type BrowserModel = {
     pending: number;
     done: boolean;
     round: number;
+    requestInFlight: boolean;
     /** Cards already fetched into the session, so a poll never serves one twice. */
     handedIds: string[];
   } | null;
@@ -828,6 +829,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           pending: progress.pending,
           done: progress.done,
           round: progress.round,
+          requestInFlight: progress.requestInFlight,
           handedIds,
         };
         if (progress.done) {
@@ -862,6 +864,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           pending: dispatched.total,
           done: false,
           round: 1,
+          requestInFlight: false,
           handedIds: [],
         };
         draw();
@@ -1362,9 +1365,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         ${
                           model.batch.done
                             ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
-                            : model.batch.round > 1
-                              ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Round ${model.batch.round} of 3: the ${model.batch.pending} Cards whose sentences were refused are requested again with the reasons attached.`
-                              : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Sentences for all ${model.batch.total} Cards are requested in one go, usually within a minute or two; each is checked${snapshot.preferences.speechEnabled ? " and spoken" : ""}, and studying starts as soon as any are ready. Refused sentences get up to two more rounds.`
+                            : model.batch.requestInFlight
+                              ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… ${model.batch.pending} remaining Cards are in one LLM request (round ${model.batch.round} of 3). Ready Cards can be studied while it runs.`
+                              : model.batch.round > 1
+                                ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Preparing one retry request for the ${model.batch.pending} Cards whose sentences were refused (round ${model.batch.round} of 3).`
+                                : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready… Checking stored sentences before requesting the remaining Cards together from the LLM.`
                         }
                       </p>`
                     : ""
