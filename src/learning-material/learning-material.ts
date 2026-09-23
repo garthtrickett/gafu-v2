@@ -979,17 +979,25 @@ export const openLearningMaterial = (
     if (!reserve.ok) return reserve;
     if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
     if (mode === "teach") {
+      // A first exposure already shown is shown again rather than rewritten:
+      // the Card is met once, and meeting it twice in different words is a
+      // different Card as far as the learner is concerned.
       const shown = latestShownTeaching(input.card.id);
       if (!shown.ok) return shown;
       if (shown.value !== null) return ok(await withAudio(shown.value, input.signal));
-    } else {
-      const stocked = await stockReserve(input, mode);
-      if (stocked.ok) {
-        const prepared = takeReserve(input.card.id, mode, "generated");
-        if (!prepared.ok) return prepared;
-        if (prepared.value !== null)
-          return ok(await withAudio(prepared.value, input.signal));
-      }
+    }
+    // Both modes generate rather than give up. First exposures used not to:
+    // they were expected to come from teaching authored when the Card was
+    // made, or from the batch. A Card made through the API has no authored
+    // teaching, so at fifty new Cards a day against twenty a batch press the
+    // learner reaches them first and meets a bare word — which is the thing
+    // the fallback exists to avoid, not a first exposure it should produce.
+    const stocked = await stockReserve(input, mode);
+    if (stocked.ok) {
+      const prepared = takeReserve(input.card.id, mode, "generated");
+      if (!prepared.ok) return prepared;
+      if (prepared.value !== null)
+        return ok(await withAudio(prepared.value, input.signal));
     }
     // No sentence could be written for this Card. Some words cannot have one
     // yet — 頬袋 wants ハムスター, which the learner has not met — and those
