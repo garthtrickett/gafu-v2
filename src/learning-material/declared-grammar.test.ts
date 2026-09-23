@@ -20,6 +20,25 @@ test("the declared detector covers every frozen grammar construction", () => {
   }
 });
 
+test("a construction ending in だ is still found in its polite form", () => {
+  // The prompt asks for です・ます unless the scene is plainly between close
+  // friends, so the sentences these Cards get written into say つもりです.
+  // A detector matching only the plain form never fires, every candidate is
+  // refused, and the Card is served as a bare construction with no example
+  // -- which for grammar is close to useless. つもりだ had generated nothing
+  // at all across a hundred and fifteen grammar presentations.
+  const detected = (text: string) =>
+    declaredGrammarDetector.detect(text).map((evidence) => evidence.canonicalForm);
+  expect(detected("明日は行くつもりです。")).toContain("つもりだ");
+  expect(detected("明日は行くつもりでした。")).toContain("つもりだ");
+  expect(detected("今着いたばかりです。")).toContain("〜たばかりだ");
+  expect(detected("よく行ったものです。")).toContain("たものだ");
+  expect(detected("よく遊んだものです。")).toContain("たものだ");
+  // The plain forms keep working.
+  expect(detected("行くつもりだ。")).toContain("つもりだ");
+  expect(detected("着いたばかりだ。")).toContain("〜たばかりだ");
+});
+
 test("morphologically ambiguous spans retain both distinct grammar identities", () => {
   const detected = declaredGrammarDetector.detect("これはされる。");
   expect(detected.map((evidence) => evidence.canonicalForm)).toContain("受身形");

@@ -22,8 +22,8 @@ const patterns: readonly GrammarPattern[] = [
   },
   { canonicalForm: "〜ようになる", expression: /ようにな(?:る|っ)/g },
   { canonicalForm: "〜ことにする", expression: /ことにし(?:た|て|ます|よう)/g },
-  { canonicalForm: "〜つもりだ", expression: /つもりだ/g },
-  { canonicalForm: "〜たばかりだ", expression: /たばかりだ/g },
+  { canonicalForm: "〜つもりだ", expression: /つもりだ|つもりで(?:す|し)/g },
+  { canonicalForm: "〜たばかりだ", expression: /たばかりだ|たばかりで(?:す|し)/g },
   { canonicalForm: "〜てしまう（縮約）", expression: /(?:ちゃ|じゃ)(?:う|っ)/g },
   { canonicalForm: "可能形", expression: /(?:[えけげせてねべめれ]る|できる)/g },
   { canonicalForm: "受身形", expression: /(?:れ|られ)(?:る|た|て)/g },
@@ -460,7 +460,12 @@ const patterns: readonly GrammarPattern[] = [
     expression: /て初めて|ではじめて|てはじめて|で初めて/g,
   },
   { canonicalForm: "さえ / さえ〜ば", expression: /さえ/g },
-  { canonicalForm: "たものだ", expression: /たものだ|だものだ/g },
+  {
+    canonicalForm: "たものだ",
+    // The past tense it attaches to is た or だ by verb class -- 行った
+    // against 遊んだ -- and the copula is plain or polite.
+    expression: /[ただ](?:もの|もん)(?:だ|で(?:す|し))/g,
+  },
   { canonicalForm: "さて", expression: /さて/g },
   { canonicalForm: "むしろ", expression: /むしろ/g },
   { canonicalForm: "つまり", expression: /つまり/g },
@@ -552,7 +557,7 @@ const patterns: readonly GrammarPattern[] = [
   // counterparts. Verbatim entries couple with the originals under keep-all,
   // exactly like の / の ( nominalizer ) / の (省略).
   { canonicalForm: "わけにはいかない", expression: /わけにはいかない/g },
-  { canonicalForm: "つもりだ", expression: /つもりだ/g },
+  { canonicalForm: "つもりだ", expression: /つもりだ|つもりで(?:す|し)/g },
   { canonicalForm: "のに", expression: /のに/g },
   { canonicalForm: "かもしれない", expression: /かもしれない/g },
   { canonicalForm: "ようになる", expression: /ようにな(?:る|っ)/g },
