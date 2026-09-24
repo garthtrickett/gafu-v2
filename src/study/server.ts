@@ -499,6 +499,7 @@ const handleApi = async (
     if (body instanceof Response) return body;
     let size = 20;
     let unpreparedOnly = false;
+    let excludeCardIds: string[] = [];
     if (isRecord(body) && body["size"] !== undefined) {
       if (typeof body["size"] !== "number" || !Number.isInteger(body["size"])) {
         return invalidRequest("Batch size must be an integer.");
@@ -510,6 +511,19 @@ const handleApi = async (
         return invalidRequest("unpreparedOnly must be a boolean.");
       }
       unpreparedOnly = body["unpreparedOnly"];
+    }
+    if (isRecord(body) && body["excludeCardIds"] !== undefined) {
+      const excluded = body["excludeCardIds"];
+      if (
+        !unpreparedOnly ||
+        !Array.isArray(excluded) ||
+        !excluded.every((id): id is string => typeof id === "string")
+      ) {
+        return invalidRequest(
+          "excludeCardIds must be an array of Card IDs for background preparation.",
+        );
+      }
+      excludeCardIds = excluded;
     }
     if (size < 1 || size > 20) {
       return invalidRequest("Batch size must be between 1 and 20.");
@@ -532,7 +546,12 @@ const handleApi = async (
     // strand the unprepared Cards behind them.
     const reserved = unpreparedOnly ? material.reserveFlags() : ok(undefined);
     if (!reserved.ok) return materialResponse(reserved);
-    const batch = selectDueBatch(split.value, size, reserved.value);
+    const batch = selectDueBatch(
+      split.value,
+      size,
+      reserved.value,
+      new Set(excludeCardIds),
+    );
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Beginning records the batch and returns. The first status poll sends

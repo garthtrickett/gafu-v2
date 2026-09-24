@@ -132,7 +132,10 @@ test("a tab left in the background writes the sentences that are due", async ({
 
   // Nothing was pressed, no session was opened, and the sentence gets written.
   await expect.poll(() => preparedMonkey(page), { timeout: 60_000 }).toBe(true);
-  expect(backgroundRequests).toContainEqual({ unpreparedOnly: true });
+  expect(backgroundRequests).toContainEqual({
+    unpreparedOnly: true,
+    excludeCardIds: [],
+  });
   expect((await counts(page)).unpreparedCount).toBeLessThan(unprepared);
 
   await page.evaluate(() => {
@@ -150,6 +153,212 @@ test("a tab left in the background writes the sentences that are due", async ({
   // the provider for anything, because the sentences are already banked.
   await page.getByRole("button", { name: "Prepare batch" }).click();
   await expect(page.locator(".presentation")).toBeVisible({ timeout: 30_000 });
+});
+
+test("an open session does not stop background preparation of other due Cards", async ({
+  page,
+}) => {
+  const dueId = await ensureCard(page, "vocabulary", "鯨", {
+    lemma: "鯨",
+    reading: "くじら",
+    partOfSpeech: "noun",
+    meaning: "whale",
+    usageNotes: "",
+  });
+  await page.request.post(`/api/study/cards/${dueId}/state`, {
+    headers: MUTATION,
+    data: { action: "graduate" },
+  });
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const opened = indexedDB.open("gafu-v2-study", 1);
+      opened.onsuccess = () => resolve(opened.result);
+      opened.onerror = () => reject(opened.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("kv", "readwrite");
+      transaction.objectStore("kv").put(
+        {
+          items: [
+            {
+              id: "held-presentation",
+              cardId: "already-open",
+              mode: "review",
+              source: "reserve",
+              audioUrl: null,
+              permit: { token: "held", expiresAt: "2099-01-01T00:00:00.000Z" },
+              material: {
+                targetKind: "vocabulary",
+                target: {
+                  lemma: "猿",
+                  reading: "さる",
+                  partOfSpeech: "noun",
+                  meaning: "monkey",
+                },
+                japanese: "猿。",
+                targetSurface: "猿",
+                targetSpan: {
+                  start: 0,
+                  end: 1,
+                  unit: "utf16-code-unit",
+                  normalization: "nfkc-v1",
+                },
+                readingSegments: [
+                  { written: "猿", reading: "さる" },
+                  { written: "。", reading: "。" },
+                ],
+                context: "",
+                prompt: "What does the target express?",
+                answer: "monkey",
+                explanation: "monkey",
+                usageNote: "",
+              },
+            },
+          ],
+          index: 0,
+        },
+        "session",
+      );
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  });
+  await page.reload();
+  await expect(page.locator(".presentation")).toBeVisible();
+  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
+
+  const posts: unknown[] = [];
+  let releasePoll = () => {};
+  const pollGate = new Promise<void>((resolve) => {
+    releasePoll = resolve;
+  });
+  let backgroundPollStarted = false;
+  await page.route("**/api/study/review-batch", async (route) => {
+    posts.push(route.request().postDataJSON());
+    const batchId = posts.length === 1 ? "held-background" : "interactive";
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ batchId, total: 1 }),
+    });
+  });
+  await page.route("**/api/study/review-batch/held-background", async (route) => {
+    backgroundPollStarted = true;
+    await pollGate;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "held-background",
+        done: true,
+        pending: 0,
+        completed: [],
+        failed: [],
+        round: 1,
+      }),
+    });
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
+  expect(posts[0]).toMatchObject({
+    unpreparedOnly: true,
+    excludeCardIds: ["already-open"],
+  });
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  releasePoll();
+  expect(posts).toHaveLength(1);
+});
+
+test("Prepare batch waits for a request already sent in the background", async ({
+  page,
+}) => {
+  const dueId = await ensureCard(page, "vocabulary", "鹿", {
+    lemma: "鹿",
+    reading: "しか",
+    partOfSpeech: "noun",
+    meaning: "deer",
+    usageNotes: "",
+  });
+  await page.request.post(`/api/study/cards/${dueId}/state`, {
+    headers: MUTATION,
+    data: { action: "graduate" },
+  });
+  await page.goto("/");
+  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
+
+  const posts: unknown[] = [];
+  let releasePoll = () => {};
+  const pollGate = new Promise<void>((resolve) => {
+    releasePoll = resolve;
+  });
+  let backgroundPollStarted = false;
+  await page.route("**/api/study/review-batch", async (route) => {
+    posts.push(route.request().postDataJSON());
+    const batchId = posts.length === 1 ? "held-background" : "interactive";
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ batchId, total: 1 }),
+    });
+  });
+  await page.route("**/api/study/review-batch/held-background", async (route) => {
+    backgroundPollStarted = true;
+    await pollGate;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "held-background",
+        done: true,
+        pending: 0,
+        completed: [],
+        failed: [],
+        round: 1,
+      }),
+    });
+  });
+  await page.route("**/api/study/review-batch/interactive", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "interactive",
+        done: true,
+        pending: 0,
+        completed: [],
+        failed: [],
+        round: 1,
+      }),
+    });
+  });
+  const setVisibility = (state: "hidden" | "visible") =>
+    page.evaluate((value) => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => value,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, state);
+  await setVisibility("hidden");
+  await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
+  await setVisibility("visible");
+  await page.getByRole("button", { name: "Prepare batch" }).click();
+  await page.waitForTimeout(500);
+  expect(posts).toHaveLength(1);
+  releasePoll();
+  await expect.poll(() => posts.length).toBe(2);
 });
 
 /**

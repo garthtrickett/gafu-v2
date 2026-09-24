@@ -28,6 +28,7 @@ export const selectDueBatch = (
     review: ReadonlySet<CardSummary["id"]>;
     teach: ReadonlySet<CardSummary["id"]>;
   }>,
+  excluded: ReadonlySet<string> = new Set(),
 ): StudyQueue["due"] =>
   [
     ...(reserved === undefined
@@ -36,7 +37,9 @@ export const selectDueBatch = (
     ...(reserved === undefined
       ? due.untaught
       : due.untaught.filter((item) => !reserved.teach.has(item.card.id))),
-  ].slice(0, size);
+  ]
+    .filter((item) => !excluded.has(item.card.id))
+    .slice(0, size);
 
 /**
  * Every active Card lands in exactly one bucket: due and awaiting its first
