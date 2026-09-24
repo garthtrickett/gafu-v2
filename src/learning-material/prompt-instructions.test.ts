@@ -27,6 +27,8 @@ const SHARED = [
   // thing that changes with the learner, and it changes in both prompts.
   "depends on target.consecutiveCorrect",
   "the sentence must give the target away",
+  "targetという plus a near-synonym",
+  "if a faithful translation sounds awkward",
   "several different words should still fit the gap",
   "either hands the word over or it does not",
   // Rules that predate this and must survive it.
@@ -62,10 +64,10 @@ test("both prompts turn the support off at the number the code holds", () => {
 });
 
 test("the prompt version moves when the ask changes", () => {
-  // A generation completed under an older ask is not re-checked, so banked
-  // sentences only make way for the new instruction if the version differs.
+  // The stored version records which instructions produced each candidate.
+  // Existing reserves remain until served; this only changes new generations.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v12"');
+  expect(server).toContain('promptVersion: "study-v13"');
 });
 
 /**

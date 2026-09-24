@@ -97,7 +97,11 @@ describe("OpenAI Learning Material adapter", () => {
     );
     expect(String(body["instructions"])).toContain("are English prose");
     expect(String(body["instructions"])).toContain(
-      "answer is what the whole Japanese sentence means",
+      "answer is a close, complete English translation",
+    );
+    expect(String(body["instructions"])).toContain("targetという plus a near-synonym");
+    expect(String(body["instructions"])).toContain(
+      "if a faithful translation sounds awkward",
     );
     expect(JSON.stringify(body)).toContain('"type":"json_schema"');
     expect(JSON.stringify(body)).not.toContain("sk-private");
@@ -345,7 +349,11 @@ describe("whole-batch generation", () => {
     );
     expect(String(body["instructions"])).toContain("are English prose");
     expect(String(body["instructions"])).toContain(
-      "answer is what the whole Japanese sentence means",
+      "answer is a close, complete English translation",
+    );
+    expect(String(body["instructions"])).toContain("targetという plus a near-synonym");
+    expect(String(body["instructions"])).toContain(
+      "if a faithful translation sounds awkward",
     );
     expect(
       (input["targets"] as { target: { consecutiveCorrect: number } }[]).map(

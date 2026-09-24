@@ -121,6 +121,20 @@ export const createGeneratedMaterialValidator = (
     if (!metadataMatches(decoded.value, card, broadPartOfSpeech)) {
       return err({ kind: "validationRejected", reasons: ["targetMetadataMismatch"] });
     }
+    // A vocabulary Card should use its word, not name it and immediately
+    // explain it. This construction produced 捜査という調査, which passed the
+    // language checks but made the Japanese awkward and the answer a gist.
+    if (
+      decoded.value.targetKind === "vocabulary" &&
+      normalizeJapanese(decoded.value.japanese).includes(
+        `${normalizeJapanese(decoded.value.targetSurface)}という`,
+      )
+    ) {
+      return err({
+        kind: "validationRejected",
+        reasons: ["target named with という instead of used naturally"],
+      });
+    }
 
     const knownVocabulary: KnownVocabularyEntry[] = knowledge.vocabulary.flatMap(
       (word): readonly KnownVocabularyEntry[] => {
