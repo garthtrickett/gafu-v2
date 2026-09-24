@@ -567,6 +567,71 @@ describe("review batch job", () => {
     ).toBe("頬袋");
   });
 
+  test("a grammar Card with no valid sentence stays due in direct and whole-batch preparation", async () => {
+    const refusing = createScriptedMaterialProvider([
+      () =>
+        ok({
+          requestId: "no-sentence",
+          candidates: [],
+          provider: "scripted",
+          model: "deterministic",
+          promptVersion: "test-v1",
+        }),
+    ]);
+    const app = harness(refusing);
+    const created = app.study.createCard({
+      type: "grammar",
+      content: {
+        canonicalForm: "〜かというと",
+        meaning: "if asked whether",
+        formation: "plain form + かというと",
+        usageNotes: "",
+      },
+    });
+    if (!created.ok) throw new Error("create");
+    const queue = app.study.studyQueue();
+    if (!queue.ok) throw new Error("queue");
+    const card = queue.value.due.find(
+      (item) => item.card.id === created.value.card.id,
+    )?.card;
+    if (card === undefined) throw new Error("not due");
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!knowledge.ok) throw new Error("knowledge");
+
+    expect(
+      await app.material.prepare({ card, knowledge: knowledge.value }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "noValidCandidate" },
+    });
+    const begun = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!begun.ok) throw new Error("begin");
+    let progress = await app.material.advanceReviewBatch(begun.value);
+    for (
+      let advance = 0;
+      progress.ok && !progress.value.done && advance < 10;
+      advance += 1
+    )
+      progress = await app.material.advanceReviewBatch(begun.value);
+    expect(progress).toMatchObject({
+      ok: true,
+      value: {
+        done: true,
+        completed: [],
+        failed: [{ cardId: card.id, kind: "noValidCandidate" }],
+      },
+    });
+    const raw = new Database(app.databasePath, { readonly: true });
+    expect(
+      raw
+        .query("SELECT count(*) AS count FROM validated_presentation WHERE card_id = ?")
+        .get(card.id),
+    ).toEqual({ count: 0 });
+    raw.close();
+    app.study.close();
+    app.material.close();
+  });
+
   test("an unknown batch id is not found", async () => {
     const app = harness(createDeterministicMaterialProvider());
     const missing = await app.material.advanceReviewBatch("no-such-batch");

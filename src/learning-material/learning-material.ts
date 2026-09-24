@@ -26,7 +26,7 @@ import { parseBroadPartOfSpeech } from "./generated-decode.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 8;
+export const MATERIAL_SCHEMA_VERSION = 9;
 
 /** Marks a row written for a word Card rather than generated as a sentence. */
 const WORD_CARD_PROVIDER = "word-card";
@@ -312,6 +312,34 @@ const migrate = (
           )
           .run(appliedAt);
       }
+      if (current.version < 9) {
+        // A word-only fallback was also banked for Grammar Cards. It cannot
+        // demonstrate the construction, so let unshown Cards be generated
+        // again. Already shown presentations remain part of review history.
+        for (const row of database
+          .query(
+            "SELECT id, payload_json FROM validated_presentation WHERE shown_at IS NULL AND provider = 'word-card'",
+          )
+          .all() as { id: string; payload_json: string }[]) {
+          let grammar = false;
+          try {
+            grammar =
+              (JSON.parse(row.payload_json) as { targetKind?: string }).targetKind ===
+              "grammar";
+          } catch {
+            grammar = true;
+          }
+          if (grammar)
+            database
+              .query("DELETE FROM validated_presentation WHERE id = ?")
+              .run(row.id);
+        }
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (9, ?)",
+          )
+          .run(appliedAt);
+      }
     });
     apply.immediate();
     return ok(undefined);
@@ -581,19 +609,20 @@ export const openLearningMaterial = (
    * the acknowledgement must not strand the Card with nothing to show.
    */
   const latestShownTeaching = (
-    cardId: CardId,
+    card: CardSummary,
   ): Result<PreparedMaterial | null, MaterialFailure> => {
     try {
       const row = database
         .query(`SELECT id, card_id, mode, payload_json
         FROM validated_presentation
         WHERE card_id = ? AND mode = 'teach' AND shown_at IS NOT NULL
+          AND (? <> 'grammar' OR provider <> 'word-card')
         ORDER BY shown_at DESC, id DESC LIMIT 1`)
-        .get(cardId) as MaterialRow | null;
+        .get(card.id, card.type) as MaterialRow | null;
       if (row === null) return ok(null);
       return ok({
         id: row.id,
-        cardId,
+        cardId: card.id,
         mode: "teach",
         material: JSON.parse(row.payload_json) as GeneratedMaterial,
         permit: null,
@@ -610,9 +639,11 @@ export const openLearningMaterial = (
       return ok(
         database
           .query(
-            "SELECT 1 FROM validated_presentation WHERE card_id = ? AND mode = 'teach'",
+            `SELECT 1 FROM validated_presentation
+             WHERE card_id = ? AND mode = 'teach'
+               AND (provider <> ? OR json_extract(payload_json, '$.targetKind') <> 'grammar')`,
           )
-          .get(cardId) !== null,
+          .get(cardId, WORD_CARD_PROVIDER) !== null,
       );
     } catch (cause) {
       return err({ kind: "readFailed", detail: detail(cause) });
@@ -632,9 +663,11 @@ export const openLearningMaterial = (
         (
           database
             .query(
-              "SELECT DISTINCT card_id FROM validated_presentation WHERE mode = 'teach'",
+              `SELECT DISTINCT card_id FROM validated_presentation
+               WHERE mode = 'teach'
+                 AND (provider <> ? OR json_extract(payload_json, '$.targetKind') <> 'grammar')`,
             )
-            .all() as { card_id: CardId }[]
+            .all(WORD_CARD_PROVIDER) as { card_id: CardId }[]
         ).map((row) => row.card_id),
       );
       return ok({ taught, teachable });
@@ -902,10 +935,11 @@ export const openLearningMaterial = (
     card: CardSummary,
     mode: "teach" | "review",
   ): Result<void, MaterialFailure> => {
+    if (card.type !== "vocabulary") return err({ kind: "noValidCandidate" });
     const observedAt = safeNow(options.clock);
     if (!observedAt.ok) return observedAt;
     const content = card.content as Record<string, string>;
-    const written = content["lemma"] ?? content["canonicalForm"] ?? "";
+    const written = content["lemma"] ?? "";
     if (written === "") return err({ kind: "noValidCandidate" });
     const meaning = content["meaning"] ?? "";
     const reading = content["reading"] ?? "";
@@ -930,28 +964,16 @@ export const openLearningMaterial = (
     };
     // The target travels with the material, because the page reads it to show
     // what the Card claims.
-    const material: GeneratedMaterial =
-      card.type === "grammar"
-        ? {
-            ...shared,
-            targetKind: "grammar",
-            target: {
-              canonicalForm: written,
-              meaning,
-              formationHint: content["formation"] ?? "",
-            },
-          }
-        : {
-            ...shared,
-            targetKind: "vocabulary",
-            target: {
-              lemma: written,
-              reading,
-              partOfSpeech:
-                parseBroadPartOfSpeech(content["partOfSpeech"] ?? "") ?? "noun",
-              meaning,
-            },
-          };
+    const material: GeneratedMaterial = {
+      ...shared,
+      targetKind: "vocabulary",
+      target: {
+        lemma: written,
+        reading,
+        partOfSpeech: parseBroadPartOfSpeech(content["partOfSpeech"] ?? "") ?? "noun",
+        meaning,
+      },
+    };
     const id = options.nextId();
     try {
       database
@@ -991,7 +1013,7 @@ export const openLearningMaterial = (
       // A first exposure already shown is shown again rather than rewritten:
       // the Card is met once, and meeting it twice in different words is a
       // different Card as far as the learner is concerned.
-      const shown = latestShownTeaching(input.card.id);
+      const shown = latestShownTeaching(input.card);
       if (!shown.ok) return shown;
       if (shown.value !== null) return ok(await withAudio(shown.value, input.signal));
     }
@@ -1012,6 +1034,8 @@ export const openLearningMaterial = (
     // yet — 頬袋 wants ハムスター, which the learner has not met — and those
     // Cards used to be admitted and then refused every round for ever. The
     // Card itself is shown instead: its writing, its reading, its meaning.
+    if (input.card.type === "grammar")
+      return stocked.ok ? err({ kind: "noValidCandidate" }) : stocked;
     const word = bankWordPresentation(input.card, mode);
     if (!word.ok) return word;
     const fallback = takeReserve(input.card.id, mode, "reserve");
@@ -1312,7 +1336,11 @@ export const openLearningMaterial = (
           // through here; it fails the whole batch above, and a Card the
           // learner could have had a sentence for tomorrow should wait for
           // it. The reasons stay on the row either way.
-          if (status === "failed" && input !== undefined && unwritable(failureKind)) {
+          if (
+            status === "failed" &&
+            input?.card.type === "vocabulary" &&
+            unwritable(failureKind)
+          ) {
             const word = bankWordPresentation(input.card, itemMode);
             if (!word.ok) return word;
             status = "ready";
@@ -1511,7 +1539,7 @@ export const openLearningMaterial = (
       if (!stocked.ok) {
         // Same fallback as the whole-batch path: a Card no sentence can be
         // written for is served as itself rather than staying due for ever.
-        if (!unwritable(stocked.error.kind))
+        if (input.card.type !== "vocabulary" || !unwritable(stocked.error.kind))
           return finish("failed", stocked.error.kind);
         const word = bankWordPresentation(input.card, "review");
         if (!word.ok) return finish("failed", stocked.error.kind);
