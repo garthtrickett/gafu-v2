@@ -115,6 +115,12 @@ test("a tab left in the background writes the sentences that are due", async ({
   expect(unprepared).toBeGreaterThan(0);
   expect(await preparedMonkey(page)).toBe(false);
 
+  const backgroundRequests: unknown[] = [];
+  await page.route("**/api/study/review-batch", async (route) => {
+    backgroundRequests.push(route.request().postDataJSON());
+    await route.continue();
+  });
+
   // Chrome will not hide a tab under test, so the page is told it is hidden.
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", {
@@ -126,6 +132,7 @@ test("a tab left in the background writes the sentences that are due", async ({
 
   // Nothing was pressed, no session was opened, and the sentence gets written.
   await expect.poll(() => preparedMonkey(page), { timeout: 60_000 }).toBe(true);
+  expect(backgroundRequests).toContainEqual({ unpreparedOnly: true });
   expect((await counts(page)).unpreparedCount).toBeLessThan(unprepared);
 
   await page.evaluate(() => {

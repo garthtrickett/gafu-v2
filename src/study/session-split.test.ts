@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Result } from "../result.ts";
 import { err, ok } from "../result.ts";
-import type { CardId, CardSummary } from "./contracts.ts";
+import type { CardId, CardSummary, StudyQueue } from "./contracts.ts";
 import {
   countSessionModes,
   STUCK_ROTATION_LIMIT,
+  selectDueBatch,
   stuckRotation,
   wantsTeaching,
 } from "./session-split.ts";
@@ -53,6 +54,26 @@ const bankedFor =
   (banked: readonly string[]) =>
   (cardId: CardId): boolean =>
     banked.includes(cardId);
+
+test("background batches choose twenty unprepared Cards past already banked ones", () => {
+  const review: StudyQueue["due"] = Array.from({ length: 40 }, (_, index) => ({
+    card: card(`review-${index}`),
+    dueAt: NOW,
+    phase: "new",
+  }));
+  const due = { review, untaught: [] };
+  const reserved = {
+    review: new Set(review.slice(0, 20).map((item) => item.card.id)),
+    teach: new Set<CardId>(),
+  };
+
+  expect(selectDueBatch(due, 20).map((item) => item.card.id)).toEqual(
+    review.slice(0, 20).map((item) => item.card.id),
+  );
+  expect(selectDueBatch(due, 20, reserved).map((item) => item.card.id)).toEqual(
+    review.slice(20).map((item) => item.card.id),
+  );
+});
 
 describe("which session mode a due Card belongs to", () => {
   test("a new Card nobody has been shown yet is for Learn", () => {

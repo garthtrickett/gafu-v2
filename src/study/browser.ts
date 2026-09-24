@@ -1038,7 +1038,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
         try {
           const dispatched = await requestJson<{ batchId: string; total: number }>(
             "/api/study/review-batch",
-            { method: "POST", body: JSON.stringify({}) },
+            {
+              method: "POST",
+              body: JSON.stringify({ unpreparedOnly: true }),
+            },
           );
           await drainBatch(
             dispatched.batchId,
@@ -1536,9 +1539,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
                       Prepare while this tab is in the background
                       <small
                         >A tab left open writes the sentences for whatever is due, so
-                        coming back to it finds them ready. Each Card costs one
-                        generation once; a tab with nothing left to prepare spends
-                        nothing.</small
+                        coming back to it finds them ready. Up to twenty Cards
+                        needing sentences share each request. Cards already
+                        prepared are skipped; an idle tab spends nothing.</small
                       >
                     </label>
                     <label class="check-setting">

@@ -1,6 +1,6 @@
 import type { Result } from "../result.ts";
 import { ok } from "../result.ts";
-import type { CardSummary } from "./contracts.ts";
+import type { CardSummary, StudyQueue } from "./contracts.ts";
 
 /**
  * The one rule that separates the two session modes: a due Card belongs to
@@ -12,6 +12,31 @@ export const wantsTeaching = (
   card: Pick<CardSummary, "schedulePhase">,
   taught: boolean,
 ): boolean => card.schedulePhase === "new" && !taught;
+
+/**
+ * Interactive batches open the next due Cards, including banked ones.
+ * Background batches spend their twenty places on Cards still needing a
+ * sentence, while preserving the same review-before-first-exposure order.
+ */
+export const selectDueBatch = (
+  due: Readonly<{
+    review: StudyQueue["due"];
+    untaught: StudyQueue["due"];
+  }>,
+  size: number,
+  reserved?: Readonly<{
+    review: ReadonlySet<CardSummary["id"]>;
+    teach: ReadonlySet<CardSummary["id"]>;
+  }>,
+): StudyQueue["due"] =>
+  [
+    ...(reserved === undefined
+      ? due.review
+      : due.review.filter((item) => !reserved.review.has(item.card.id))),
+    ...(reserved === undefined
+      ? due.untaught
+      : due.untaught.filter((item) => !reserved.teach.has(item.card.id))),
+  ].slice(0, size);
 
 /**
  * Every active Card lands in exactly one bucket: due and awaiting its first
