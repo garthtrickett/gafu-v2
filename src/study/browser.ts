@@ -602,6 +602,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // and the queued request to arrive; an older saved session must not invite
   // the learner to grade Cards whose answers the server cannot record.
   const answerable = (item: PreparedMaterial): boolean => {
+    // Sessions saved before the grammar fallback fix can still hold a bare
+    // construction after the server has discarded its unshown reserve.
+    if (
+      item.material?.targetKind === "grammar" &&
+      item.material.japanese === item.material.target.canonicalForm &&
+      (item.material.prompt === "A new word." ||
+        item.material.prompt === "What does this word mean?")
+    )
+      return false;
     if (item.mode !== "review") return true;
     const expiry = Date.parse(item.permit?.expiresAt ?? "");
     return Number.isFinite(expiry) && expiry > Date.now() + 60_000;

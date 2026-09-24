@@ -125,9 +125,7 @@ test("a banked sentence with no reading over its kanji is dropped, once", () => 
 
   // Force the step to run again over the rows just inserted.
   const reset = new Database(databasePath);
-  reset
-    .query("DELETE FROM learning_material_migration WHERE version = ?")
-    .run(MATERIAL_SCHEMA_VERSION);
+  reset.query("DELETE FROM learning_material_migration WHERE version >= 8").run();
   reset.close();
   open(databasePath).close();
 
@@ -141,4 +139,37 @@ test("a banked sentence with no reading over its kanji is dropped, once", () => 
   expect(left.sort()).toEqual(
     ["already-shown", "has-its-reading", "kana-needs-none"].sort(),
   );
+});
+
+test("unshown bare grammar fallbacks are removed while history and words remain", () => {
+  const directory = mkdtempSync(join(tmpdir(), "gafu-grammar-fallback-"));
+  directories.push(directory);
+  const databasePath = join(directory, "material.sqlite");
+  open(databasePath).close();
+  const raw = new Database(databasePath);
+  const banked = (id: string, targetKind: string, shownAt: string | null) => {
+    raw
+      .query(
+        `INSERT INTO validated_presentation(
+         id, card_id, mode, payload_json, normalized_japanese, exact_signature,
+         near_signature, generated_at, shown_at, provider, model, prompt_version,
+         validation_version
+       ) VALUES (?, ?, 'review', ?, ?, ?, ?, '2026-09-19T00:00:00.000Z', ?,
+         'word-card', '-', '-', 'v')`,
+      )
+      .run(id, id, JSON.stringify({ targetKind }), id, id, id, shownAt);
+  };
+  banked("grammar-reserve", "grammar", null);
+  banked("grammar-history", "grammar", "2026-09-19T01:00:00.000Z");
+  banked("vocabulary-reserve", "vocabulary", null);
+  raw.query("DELETE FROM learning_material_migration WHERE version = 9").run();
+  raw.close();
+
+  open(databasePath).close();
+  const check = new Database(databasePath, { readonly: true });
+  const left = (
+    check.query("SELECT id FROM validated_presentation").all() as { id: string }[]
+  ).map((row) => row.id);
+  check.close();
+  expect(left.sort()).toEqual(["grammar-history", "vocabulary-reserve"].sort());
 });
