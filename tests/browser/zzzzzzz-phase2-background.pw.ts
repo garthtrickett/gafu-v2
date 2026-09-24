@@ -17,17 +17,19 @@ const counts = async (page: Page): Promise<{ unpreparedCount: number }> => {
 
 /** Keep the browser's background trigger independent of other journeys' Cards. */
 const reportDueWork = async (page: Page): Promise<void> => {
+  const response = await page.request.get("/api/study/status");
+  const body = (await response.json()) as {
+    session: { unpreparedCount: number };
+  };
+  const prepared = {
+    ...body,
+    session: { ...body.session, unpreparedCount: 1 },
+  };
   await page.route("**/api/study/status", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.json()) as {
-      session: { unpreparedCount: number };
-    };
     await route.fulfill({
-      response,
-      json: {
-        ...body,
-        session: { ...body.session, unpreparedCount: 1 },
-      },
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(prepared),
     });
   });
 };
@@ -175,6 +177,7 @@ test("a tab left in the background writes the sentences that are due", async ({
 test("an open session does not stop background preparation of other due Cards", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto("/");
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -272,6 +275,7 @@ test("an open session does not stop background preparation of other due Cards", 
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
+  await page.clock.fastForward(6_000);
   await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
   expect(posts[0]).toMatchObject({
     unpreparedOnly: true,
@@ -292,6 +296,7 @@ test("an open session does not stop background preparation of other due Cards", 
 test("Prepare batch waits for a request already sent in the background", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto("/");
   await reportDueWork(page);
 
@@ -347,6 +352,7 @@ test("Prepare batch waits for a request already sent in the background", async (
       document.dispatchEvent(new Event("visibilitychange"));
     }, state);
   await setVisibility("hidden");
+  await page.clock.fastForward(6_000);
   await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
   await setVisibility("visible");
   await page.getByRole("button", { name: "Prepare batch" }).click();
@@ -415,6 +421,7 @@ test("polls that settle nothing are paced, not chained", async ({ page }) => {
  * left behind; whether it is even attempted does not.
  */
 test("a tab looked at and left again still prepares", async ({ page }) => {
+  await page.clock.install();
   let dispatches = 0;
   await page.route("**/api/study/review-batch", async (route) => {
     dispatches += 1;
@@ -459,6 +466,7 @@ test("a tab looked at and left again still prepares", async ({ page }) => {
   await setVisibility("visible");
   await page.waitForTimeout(1_000);
   await setVisibility("hidden");
+  await page.clock.fastForward(6_000);
 
   await expect.poll(() => dispatches, { timeout: 30_000 }).toBeGreaterThan(0);
 });
