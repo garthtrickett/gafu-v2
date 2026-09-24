@@ -101,6 +101,46 @@ describe("generated material validation boundary", () => {
     ).toMatchObject({ ok: true });
   });
 
+  test("refuses vocabulary named with という instead of used", async () => {
+    const japanese = "今、捜査という調査を始めます。";
+    const investigation: CardSummary = {
+      ...card,
+      content: {
+        lemma: "捜査",
+        reading: "そうさ",
+        partOfSpeech: "noun",
+        meaning: "investigation",
+        usageNotes: "",
+      },
+    };
+    expect(
+      await validate({
+        value: {
+          ...valid,
+          japanese,
+          target: {
+            lemma: "捜査",
+            reading: "そうさ",
+            partOfSpeech: "noun",
+            meaning: "investigation",
+          },
+          targetSurface: "捜査",
+          targetSpan: { ...valid.targetSpan, start: 2, end: 4 },
+          readingSegments: [{ written: japanese, reading: "" }],
+        },
+        mode: "teach",
+        card: investigation,
+        knowledge,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "validationRejected",
+        reasons: ["target named with という instead of used naturally"],
+      },
+    });
+  });
+
   test("does not widen one known Card sense into every homograph sense", async () => {
     const senseAware = createGeneratedMaterialValidator({
       analyzer,
