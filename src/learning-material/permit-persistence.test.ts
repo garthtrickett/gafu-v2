@@ -92,6 +92,7 @@ test("a review permit survives a restart and expires after twelve hours", async 
   const review = await material.prepare({ card, knowledge: knowledge.value });
   if (!review.ok || review.value.permit === null) throw new Error("no permit");
   const permit = review.value.permit;
+  expect(permit.expiresAt).toBe("2026-09-12T21:00:00.000Z");
 
   // The process restarts; the permit is still good.
   study.value.close();

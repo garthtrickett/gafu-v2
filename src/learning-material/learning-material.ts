@@ -699,7 +699,12 @@ export const openLearningMaterial = (
           issuedAt: observedAt.value,
           contractVersion: MATERIAL_VALIDATION_VERSION,
         });
-        permit = { token };
+        permit = {
+          token,
+          expiresAt: new Date(
+            observedAt.value.getTime() + PRESENTATION_PERMIT_LIFETIME_MS,
+          ).toISOString(),
+        };
       }
       return ok({ id: row.id, cardId, mode, material, permit, source, audioUrl: null });
     } catch (cause) {

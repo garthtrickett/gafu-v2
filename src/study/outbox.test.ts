@@ -12,7 +12,11 @@ const job = (id: string, label = id): OutboxJob => ({
 
 const harness = (
   transport: (job: OutboxJob) => Promise<unknown>,
-  extra: { isRetryable?: (error: unknown) => boolean; store?: KeyValueStore } = {},
+  extra: {
+    isRetryable?: (error: unknown) => boolean;
+    needsAuthentication?: (error: unknown) => boolean;
+    store?: KeyValueStore;
+  } = {},
 ) => {
   const states: OutboxState[] = [];
   const slept: number[] = [];
@@ -22,6 +26,9 @@ const harness = (
     onChange: (state) => states.push(state),
     onSent: (sentJob, result) => sent.push({ job: sentJob, result }),
     ...(extra.isRetryable === undefined ? {} : { isRetryable: extra.isRetryable }),
+    ...(extra.needsAuthentication === undefined
+      ? {}
+      : { needsAuthentication: extra.needsAuthentication }),
     ...(extra.store === undefined ? {} : { store: extra.store }),
     retryDelaysMs: [10, 20],
     sleep: async (ms) => {
@@ -47,7 +54,12 @@ describe("the session outbox", () => {
       { echoed: "second" },
     ]);
     expect(states.map((state) => state.pending)).toEqual([1, 2, 1, 0]);
-    expect(outbox.state()).toEqual({ pending: 0, failed: [], stalled: false });
+    expect(outbox.state()).toEqual({
+      pending: 0,
+      failed: [],
+      stalled: false,
+      stalledFor: null,
+    });
   });
 
   test("retries a transport failure with the configured waits, then succeeds", async () => {
@@ -63,7 +75,12 @@ describe("the session outbox", () => {
     await outbox.flush();
     expect(calls).toBe(3);
     expect(slept).toEqual([10, 20]);
-    expect(outbox.state()).toEqual({ pending: 0, failed: [], stalled: false });
+    expect(outbox.state()).toEqual({
+      pending: 0,
+      failed: [],
+      stalled: false,
+      stalledFor: null,
+    });
   });
 
   test("a failure that keeps looking transient stalls the queue, and resume picks it up", async () => {
@@ -79,11 +96,21 @@ describe("the session outbox", () => {
     await outbox.flush();
     // Nothing is dropped: both jobs are still queued behind the stall.
     expect(slept).toEqual([10, 20]);
-    expect(outbox.state()).toEqual({ pending: 2, failed: [], stalled: true });
+    expect(outbox.state()).toEqual({
+      pending: 2,
+      failed: [],
+      stalled: true,
+      stalledFor: "connection",
+    });
     offline = false;
     outbox.resume();
     await outbox.flush();
-    expect(outbox.state()).toEqual({ pending: 0, failed: [], stalled: false });
+    expect(outbox.state()).toEqual({
+      pending: 0,
+      failed: [],
+      stalled: false,
+      stalledFor: null,
+    });
   });
 
   test("a refused write is recorded at once, not retried, and the queue moves on", async () => {
@@ -102,9 +129,44 @@ describe("the session outbox", () => {
     expect(slept).toEqual([]);
     expect(outbox.state()).toEqual({
       pending: 0,
-      failed: ["Grade: 猫"],
+      failed: ["Grade: 猫 (presentationInvalid)"],
       stalled: false,
+      stalledFor: null,
     });
+  });
+
+  test("an expired login keeps every grade until sign-in and resume", async () => {
+    const store = createMemoryStore();
+    let signedIn = false;
+    const { outbox, sent } = harness(
+      async (sentJob) => {
+        if (!signedIn) throw new Error("authenticationRequired");
+        return { id: sentJob.id };
+      },
+      {
+        needsAuthentication: (error) =>
+          error instanceof Error && error.message === "authenticationRequired",
+        store,
+      },
+    );
+    outbox.enqueue(job("first"));
+    outbox.enqueue(job("second"));
+    await outbox.flush();
+    expect(outbox.state()).toEqual({
+      pending: 2,
+      failed: [],
+      stalled: true,
+      stalledFor: "authentication",
+    });
+    expect((await store.get<OutboxJob[]>("outbox"))?.map((item) => item.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    signedIn = true;
+    outbox.resume();
+    await outbox.flush();
+    expect(sent.map(({ job: sentJob }) => sentJob.id)).toEqual(["first", "second"]);
+    expect(await store.get<OutboxJob[]>("outbox")).toEqual([]);
   });
 
   test("queued jobs survive in the store until sent, and a later outbox restores them", async () => {
