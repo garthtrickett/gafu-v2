@@ -279,6 +279,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const store = openIndexedDbStore();
   const SESSION_KEY = "session";
   const SNAPSHOT_KEY = "snapshot";
+  /** Foreground preparation waits for requests a hidden tab already paid for. */
+  const backgroundRounds = new Set<Promise<boolean>>();
 
   /** Matches the server's page size; the pager counts pages in it. */
   const BANK_PAGE = 50;
@@ -902,6 +904,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (model.batch !== null && !model.batch.done) return;
     void run(
       async () => {
+        // A hidden run may have dispatched the same due Cards just before
+        // the learner returned. Let it bank its answers before selecting the
+        // interactive twenty, so they are served rather than bought twice.
+        await Promise.allSettled([...backgroundRounds]);
         const dispatched = await requestJson<{ batchId: string; total: number }>(
           "/api/study/review-batch",
           { method: "POST", body: JSON.stringify({}) },
@@ -923,7 +929,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
         pollReviewBatch(dispatched.batchId);
         return `Batch started for ${dispatched.total} Cards.`;
       },
-      { label: "Starting a batch…" },
+      {
+        label:
+          backgroundRounds.size > 0
+            ? "Finishing background preparation…"
+            : "Starting a batch…",
+      },
       "status",
     );
   };
@@ -939,7 +950,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const BACKGROUND_SETTLE_MS = 5_000;
 
   /** How long to wait before looking again when there is nothing to prepare. */
-  const BACKGROUND_IDLE_MS = 5 * 60_000;
+  const BACKGROUND_IDLE_MS = 60_000;
 
   const tabIsHidden = (): boolean => document.visibilityState === "hidden";
 
@@ -951,6 +962,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   /** Cards banked since the learner last looked, to tell them on return. */
   let backgroundPrepared = 0;
+
+  const reportBackgroundPrepared = (): void => {
+    if (backgroundPrepared === 0) return;
+    model.message = `Prepared ${backgroundPrepared} Card${
+      backgroundPrepared === 1 ? "" : "s"
+    } while this tab was in the background. ${
+      backgroundRounds.size > 0
+        ? "The request already in flight is still finishing."
+        : "Prepare batch will open them without waiting."
+    }`;
+    model.messageKind = "success";
+    backgroundPrepared = 0;
+    draw();
+  };
 
   /**
    * Runs one round of preparation, if no other tab is running one.
@@ -1006,27 +1031,23 @@ export const mountStudyApp = (root: HTMLElement): void => {
    * back to the tab and it looks as it did, except that pressing Prepare
    * batch no longer waits on the provider.
    *
-   * What it will not do: prepare over a session left open, because the
-   * learner is mid-something and their Cards are already in hand; prepare
-   * when the counts say every due Card holds a reserve, because that is what
-   * makes an idle tab free; or keep going when a round banks nothing, which
-   * means the Cards left cannot be written at all and trying again would
-   * only spend the same money to fail the same way.
+   * Session Cards are excluded because their presentations are already in
+   * hand. Failed Cards are excluded for this hidden run, so they cannot
+   * monopolize the first twenty slots or be charged for repeatedly. The
+   * remaining due Cards are sent in full groups of twenty until none remain.
    */
   const prepareWhileHidden = async (token: number): Promise<void> => {
     const running = (): boolean => token === backgroundRun && tabIsHidden();
     // Flicking past a tab is not leaving it open. Settle first, so switching
     // windows for a moment never starts a generation.
     await pause(BACKGROUND_SETTLE_MS);
-    let stalled = false;
+    const ignored = new Set<string>();
     while (running()) {
       if (model.snapshot?.preferences.prepareInBackground !== true) return;
-      if (
-        model.session !== null ||
-        model.presentation !== null ||
-        (model.batch !== null && !model.batch.done)
-      ) {
-        await pause(BACKGROUND_IDLE_MS);
+      if (model.batch !== null && !model.batch.done) {
+        // The foreground batch is already making the next request. Once it
+        // finishes, fill the Cards beyond its twenty even if a session opened.
+        await pause(BATCH_IDLE_POLL_MS);
         continue;
       }
       try {
@@ -1036,20 +1057,27 @@ export const mountStudyApp = (root: HTMLElement): void => {
       }
       if (!running()) return;
       draw();
-      const before = model.snapshot?.session.unpreparedCount ?? 0;
-      if (before === 0) {
+      if ((model.snapshot?.session.unpreparedCount ?? 0) === 0) {
         await pause(BACKGROUND_IDLE_MS);
         continue;
       }
       let banked = 0;
       let failed = false;
-      const ran = await asTheOnlyTab(async () => {
+      let nothingEligible = false;
+      let completed = false;
+      const excluded = new Set(ignored);
+      for (const item of model.session?.items ?? []) excluded.add(item.cardId);
+      if (model.presentation !== null) excluded.add(model.presentation.cardId);
+      const round = asTheOnlyTab(async () => {
         try {
           const dispatched = await requestJson<{ batchId: string; total: number }>(
             "/api/study/review-batch",
             {
               method: "POST",
-              body: JSON.stringify({ unpreparedOnly: true }),
+              body: JSON.stringify({
+                unpreparedOnly: true,
+                excludeCardIds: [...excluded],
+              }),
             },
           );
           await drainBatch(
@@ -1060,18 +1088,43 @@ export const mountStudyApp = (root: HTMLElement): void => {
               // they are told about.
               backgroundPrepared += progress.completed.length - banked;
               banked = progress.completed.length;
+              if (progress.done) {
+                completed = true;
+                for (const item of progress.failed) ignored.add(item.cardId);
+              }
             },
-            running,
+            // Once sent, finish the job even if the tab becomes visible.
+            // Abandoning its poll used to make the next press send it again.
+            () => true,
           );
-        } catch {
+        } catch (cause) {
+          if (cause instanceof RequestFailure && cause.kind === "nothingDue") {
+            nothingEligible = true;
+            return;
+          }
           failed = true;
         }
       });
-      if (failed) return;
+      backgroundRounds.add(round);
+      let ran: boolean;
+      try {
+        ran = await round;
+      } finally {
+        backgroundRounds.delete(round);
+      }
+      if (!tabIsHidden() && backgroundPrepared > 0) {
+        if (model.busy) backgroundPrepared = 0;
+        else reportBackgroundPrepared();
+      }
+      if (failed || (ran && !completed && !nothingEligible)) return;
       if (!ran) {
         // Another tab has this round. Wait and ask again rather than stop:
         // that tab may be closed or looked at a moment from now, and a tab
         // that stopped asking has nothing left to wake it.
+        await pause(BATCH_IDLE_POLL_MS);
+        continue;
+      }
+      if (nothingEligible) {
         await pause(BACKGROUND_IDLE_MS);
         continue;
       }
@@ -1080,18 +1133,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
         await refreshStatus();
       } catch {
         return;
-      }
-      // A round that left as much unprepared as it found is a round that
-      // cannot succeed: no provider, or Cards that fail validation however
-      // often they are asked for. One such round is forgiven, because Cards
-      // falling due while it ran mask a round that did work; two in a row
-      // means what is left cannot be written, and asking again would spend
-      // the same money to fail the same way.
-      if ((model.snapshot?.session.unpreparedCount ?? 0) >= before) {
-        if (stalled) return;
-        stalled = true;
-      } else {
-        stalled = false;
       }
     }
   };
@@ -1103,14 +1144,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       void prepareWhileHidden(token).catch(() => {});
       return;
     }
-    if (backgroundPrepared > 0) {
-      model.message = `Prepared ${backgroundPrepared} Card${
-        backgroundPrepared === 1 ? "" : "s"
-      } while this tab was in the background. Prepare batch will open them without waiting.`;
-      model.messageKind = "success";
-      backgroundPrepared = 0;
-      draw();
-    }
+    reportBackgroundPrepared();
   });
 
   // Running out of Cards ends the session, however its last Card was

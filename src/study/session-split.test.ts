@@ -73,6 +73,16 @@ test("background batches choose twenty unprepared Cards past already banked ones
   expect(selectDueBatch(due, 20, reserved).map((item) => item.card.id)).toEqual(
     review.slice(20).map((item) => item.card.id),
   );
+  const alreadyOpen = review[20];
+  if (alreadyOpen === undefined) throw new Error("fixture is too short");
+  expect(
+    selectDueBatch(due, 20, reserved, new Set([alreadyOpen.card.id])).map(
+      (item) => item.card.id,
+    ),
+  ).toEqual(review.slice(21).map((item) => item.card.id));
+  expect(selectDueBatch({ review: review.slice(0, 7), untaught: [] }, 20)).toHaveLength(
+    7,
+  );
 });
 
 describe("which session mode a due Card belongs to", () => {
