@@ -4,8 +4,8 @@ import type { KeyValueStore } from "./local-store.ts";
  * A background queue for the writes a study session produces: teaching
  * acknowledgements, grades, and suspensions. The browser advances the moment the learner
  * clicks; each write is sent in order behind the scenes and retried on
- * transport failure. A write the server refuses is recorded rather than
- * retried, because sending it again would be refused again. Jobs are plain
+ * transport failure. An expired login pauses the queue until sign-in. A write
+ * the server permanently refuses is recorded rather than retried. Jobs are plain
  * data so the queue can be persisted and picked up by a later page load.
  */
 export type OutboxJob = Readonly<{
@@ -19,8 +19,9 @@ export type OutboxJob = Readonly<{
 export type OutboxState = Readonly<{
   pending: number;
   failed: readonly string[];
-  /** Retries are exhausted but the failure looked transient: waiting to resume. */
+  /** Delivery is paused for sign-in or a connection that may recover. */
   stalled: boolean;
+  stalledFor: "authentication" | "connection" | null;
 }>;
 
 type Options = Readonly<{
@@ -30,6 +31,8 @@ type Options = Readonly<{
   onSent?: (job: OutboxJob, result: unknown) => void;
   /** Whether a failure is worth another try; default: never. */
   isRetryable?: (error: unknown) => boolean;
+  /** A blocked login needs user action, so keep the job without retrying it. */
+  needsAuthentication?: (error: unknown) => boolean;
   /** Waits before each retry; one entry per retry. */
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
@@ -58,6 +61,7 @@ export const createOutbox = (options: Options): Outbox => {
   const queue: OutboxJob[] = [];
   const failed: string[] = [];
   let stalled = false;
+  let stalledFor: OutboxState["stalledFor"] = null;
   let draining: Promise<void> | null = null;
   const isRetryable = options.isRetryable ?? (() => false);
   const delays = options.retryDelaysMs ?? [1_000, 2_000, 4_000, 8_000];
@@ -68,6 +72,7 @@ export const createOutbox = (options: Options): Outbox => {
     pending: queue.length,
     failed: [...failed],
     stalled,
+    stalledFor,
   });
   const notify = (): void => options.onChange(state());
   const persist = async (): Promise<void> => {
@@ -75,17 +80,26 @@ export const createOutbox = (options: Options): Outbox => {
   };
 
   /** Sends one job: sent, refused, or (after every retry) stalled. */
-  const attempt = async (job: OutboxJob): Promise<"sent" | "refused" | "stalled"> => {
+  const attempt = async (
+    job: OutboxJob,
+  ): Promise<
+    | { kind: "sent" | "stalled"; reason?: OutboxState["stalledFor"] }
+    | { kind: "refused"; error: unknown }
+  > => {
     for (let retry = 0; ; retry += 1) {
-      if (options.shouldWait?.() === true) return "stalled";
+      if (options.shouldWait?.() === true)
+        return { kind: "stalled", reason: "connection" };
       try {
         const result = await options.transport(job);
         options.onSent?.(job, result);
-        return "sent";
+        return { kind: "sent" };
       } catch (error) {
-        if (!isRetryable(error)) return "refused";
+        if (options.needsAuthentication?.(error)) {
+          return { kind: "stalled", reason: "authentication" };
+        }
+        if (!isRetryable(error)) return { kind: "refused", error };
         const delay = delays[retry];
-        if (delay === undefined) return "stalled";
+        if (delay === undefined) return { kind: "stalled", reason: "connection" };
         await sleep(delay);
       }
     }
@@ -96,12 +110,19 @@ export const createOutbox = (options: Options): Outbox => {
       const job = queue[0];
       if (job === undefined) break;
       const outcome = await attempt(job);
-      if (outcome === "stalled") {
+      if (outcome.kind === "stalled") {
         stalled = true;
+        stalledFor = outcome.reason ?? "connection";
         notify();
         break;
       }
-      if (outcome === "refused") failed.push(job.label);
+      if (outcome.kind === "refused") {
+        const reason =
+          outcome.error instanceof Error
+            ? outcome.error.message
+            : String(outcome.error);
+        failed.push(`${job.label} (${reason})`);
+      }
       queue.shift();
       await persist();
       notify();
@@ -133,6 +154,7 @@ export const createOutbox = (options: Options): Outbox => {
     resume: () => {
       if (!stalled) return;
       stalled = false;
+      stalledFor = null;
       notify();
       start();
     },

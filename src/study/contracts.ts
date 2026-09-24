@@ -200,7 +200,11 @@ export type StudyStatus = Readonly<{
   suspendedCount: number;
 }>;
 
-export type PresentationPermit = Readonly<{ token: string }>;
+export type PresentationPermit = Readonly<{
+  token: string;
+  /** Sent with a presentation so a resumed browser can avoid grading an expired one. */
+  expiresAt?: string;
+}>;
 
 /**
  * How long a presentation permit stays answerable. A session is handed to

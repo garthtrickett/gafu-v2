@@ -107,6 +107,21 @@ type BrowserModel = {
   offline: boolean;
 };
 
+class RequestFailure extends Error {
+  constructor(
+    readonly status: number,
+    readonly kind: string,
+  ) {
+    super(
+      kind === "presentationInvalid" || kind === "presentationExpired"
+        ? "review expired or unavailable; prepare a new batch"
+        : kind === "cardNotAnswerable"
+          ? "Card is no longer due"
+          : kind,
+    );
+  }
+}
+
 const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Value> => {
   const response = await fetch(url, {
     ...init,
@@ -115,13 +130,19 @@ const requestJson = async <Value>(url: string, init?: RequestInit): Promise<Valu
       ...Object.fromEntries(mutationHeaders(init?.headers)),
     },
   });
-  const body = (await response.json()) as Value | { error?: { kind?: string } };
+  const body = (await response.json().catch(() => null)) as
+    | Value
+    | { error?: { kind?: string } }
+    | null;
   if (!response.ok) {
     const kind =
       typeof body === "object" && body !== null && "error" in body
         ? body.error?.kind
         : undefined;
-    throw new Error(kind ?? `requestFailed:${response.status}`);
+    throw new RequestFailure(
+      response.status,
+      kind ?? `requestFailed:${response.status}`,
+    );
   }
   return body as Value;
 };
@@ -252,7 +273,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     bankOffset: 0,
     pending: null,
     session: null,
-    sync: { pending: 0, failed: [], stalled: false },
+    sync: { pending: 0, failed: [], stalled: false, stalledFor: null },
     offline: typeof navigator !== "undefined" && navigator.onLine === false,
   };
   const store = openIndexedDbStore();
@@ -518,7 +539,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
     store,
     transport: (job) =>
       requestJson<unknown>(job.url, { method: "POST", body: JSON.stringify(job.body) }),
-    isRetryable: (error) => error instanceof TypeError,
+    isRetryable: (error) =>
+      error instanceof TypeError ||
+      (error instanceof RequestFailure &&
+        (error.status === 429 || error.status >= 500)),
+    needsAuthentication: (error) =>
+      error instanceof RequestFailure && error.kind === "authenticationRequired",
     shouldWait: () => navigator.onLine === false,
     onSent: applySent,
     onChange: (state) => {
@@ -530,7 +556,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   });
   window.addEventListener("online", () => {
     model.offline = false;
-    outbox.resume();
+    if (model.sync.stalledFor !== "authentication") outbox.resume();
     draw();
   });
   window.addEventListener("offline", () => {
@@ -538,7 +564,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
     draw();
   });
   window.setInterval(() => {
-    if (model.sync.stalled && navigator.onLine !== false) outbox.resume();
+    if (
+      model.sync.stalled &&
+      model.sync.stalledFor !== "authentication" &&
+      navigator.onLine !== false
+    )
+      outbox.resume();
   }, 30_000);
   window.addEventListener("beforeunload", (event) => {
     if (model.sync.pending > 0 && !model.sync.stalled) {
@@ -565,6 +596,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (model.snapshot?.preferences.speechEnabled === false) return;
     const url = model.presentation?.audioUrl;
     if (url) playAudio(url);
+  };
+
+  // Permits last twelve hours on the server. Leave a minute for clock skew
+  // and the queued request to arrive; an older saved session must not invite
+  // the learner to grade Cards whose answers the server cannot record.
+  const answerable = (item: PreparedMaterial): boolean => {
+    if (item.mode !== "review") return true;
+    const expiry = Date.parse(item.permit?.expiresAt ?? "");
+    return Number.isFinite(expiry) && expiry > Date.now() + 60_000;
   };
 
   /** Shows a presentation and, when it has audio, says the sentence once. */
@@ -597,7 +637,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const advanceSession = (): boolean => {
     const session = model.session;
     if (session === null) return false;
-    const next = session.items[session.index + 1];
+    const nextIndex = session.items.findIndex(
+      (item, index) => index > session.index && answerable(item),
+    );
+    const next = nextIndex < 0 ? undefined : session.items[nextIndex];
     if (next === undefined) {
       model.session = null;
       model.presentation = null;
@@ -605,7 +648,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       void store.delete(SESSION_KEY);
       return false;
     }
-    model.session = { ...session, index: session.index + 1 };
+    model.session = { ...session, index: nextIndex };
     void store.set(SESSION_KEY, model.session);
     present(next);
     return true;
@@ -1078,6 +1121,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const finishTeaching = (): void => {
     const current = model.presentation;
     if (current === null) return;
+    if (model.sync.stalledFor === "authentication") {
+      model.message = "Sign in again before continuing this session.";
+      model.messageKind = "error";
+      draw();
+      return;
+    }
     enqueue(
       "teach",
       `Seen it: ${current.material.targetSurface}`,
@@ -1109,6 +1158,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const suspendCurrent = (): void => {
     const current = model.presentation;
     if (current === null) return;
+    if (model.sync.stalledFor === "authentication") {
+      model.message = "Sign in again before continuing this session.";
+      model.messageKind = "error";
+      draw();
+      return;
+    }
     const name = current.material.targetSurface;
     enqueue(
       "suspend",
@@ -1129,6 +1184,21 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const answer = (correct: boolean): void => {
     const current = model.presentation;
     if (current?.permit === null || current?.permit === undefined) return;
+    if (model.sync.stalledFor === "authentication") {
+      model.message = "Sign in again before continuing this session.";
+      model.messageKind = "error";
+      draw();
+      return;
+    }
+    if (!answerable(current)) {
+      const more = advanceSession();
+      model.message =
+        "This review expired while the session was open. It stays due; prepare a new batch to review it.";
+      model.messageKind = "error";
+      draw();
+      if (!more) void refreshStatus().then(draw, draw);
+      return;
+    }
     const permit = current.permit.token;
     enqueue(
       "answer",
@@ -1288,9 +1358,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
             : ""
         }
         ${
-          model.offline || model.sync.stalled
-            ? html`<p class="notice notice--neutral" data-testid="offline">Offline. ${model.sync.pending === 1 ? "1 update" : `${model.sync.pending} updates`} will sync when you're back.</p>`
-            : ""
+          model.sync.stalledFor === "authentication"
+            ? html`<p class="notice notice--error" data-testid="sync-auth">Your sign-in expired. ${model.sync.pending === 1 ? "1 update is" : `${model.sync.pending} updates are`} saved on this device and will sync after you <a href="/login">sign in again</a>.</p>`
+            : model.offline || model.sync.stalled
+              ? html`<p class="notice notice--neutral" data-testid="offline">Connection unavailable. ${model.sync.pending === 1 ? "1 update" : `${model.sync.pending} updates`} will sync when it returns.</p>`
+              : ""
         }
         ${
           model.sync.failed.length > 0
@@ -1692,11 +1764,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const saved = await store.get<unknown>(SNAPSHOT_KEY);
     if (isDrawableSnapshot(saved)) model.snapshot = saved;
     const session = await store.get<NonNullable<BrowserModel["session"]>>(SESSION_KEY);
-    const current = session?.items[session.index];
-    if (session !== undefined && current !== undefined) {
-      model.session = session;
+    const remaining = session?.items.slice(session.index).filter(answerable) ?? [];
+    const current = remaining[0];
+    if (current !== undefined) {
+      model.session = { items: remaining, index: 0 };
       model.presentation = current;
       model.revealed = false;
+      void store.set(SESSION_KEY, model.session);
+    } else if (session !== undefined) {
+      void store.delete(SESSION_KEY);
     }
     model.busy = false;
     draw();
@@ -1705,7 +1781,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
       await refresh();
       return model.session !== null
         ? "Picking up where you left off."
-        : "Card bank ready. No Cards are admitted until study asks for a queue.";
+        : session !== undefined
+          ? "Your saved review session expired. Those Cards remain due; prepare a new batch."
+          : "Card bank ready. No Cards are admitted until study asks for a queue.";
     });
     // Opened into a background tab: there is no visibility change to wait
     // for, so the run starts here.
