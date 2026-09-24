@@ -78,6 +78,7 @@ import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.
 import {
   countSessionModes,
   type SessionCounts,
+  selectDueBatch,
   wantsTeaching,
 } from "./session-split.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
@@ -497,11 +498,18 @@ const handleApi = async (
     const body = await readJson(request);
     if (body instanceof Response) return body;
     let size = 20;
+    let unpreparedOnly = false;
     if (isRecord(body) && body["size"] !== undefined) {
       if (typeof body["size"] !== "number" || !Number.isInteger(body["size"])) {
         return invalidRequest("Batch size must be an integer.");
       }
       size = body["size"];
+    }
+    if (isRecord(body) && body["unpreparedOnly"] !== undefined) {
+      if (typeof body["unpreparedOnly"] !== "boolean") {
+        return invalidRequest("unpreparedOnly must be a boolean.");
+      }
+      unpreparedOnly = body["unpreparedOnly"];
     }
     if (size < 1 || size > 20) {
       return invalidRequest("Batch size must be between 1 and 20.");
@@ -519,7 +527,12 @@ const handleApi = async (
     // reviews completely.
     const split = splitDue(queue.value.due, material);
     if (!split.ok) return materialResponse(split);
-    const batch = [...split.value.review, ...split.value.untaught].slice(0, size);
+    // Background preparation is filling the gaps, not opening a session.
+    // Prepared Cards near the front must not consume twenty slots and
+    // strand the unprepared Cards behind them.
+    const reserved = unpreparedOnly ? material.reserveFlags() : ok(undefined);
+    if (!reserved.ok) return materialResponse(reserved);
+    const batch = selectDueBatch(split.value, size, reserved.value);
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
     // Beginning records the batch and returns. The first status poll sends
