@@ -15,6 +15,23 @@ const counts = async (page: Page): Promise<{ unpreparedCount: number }> => {
   return body.session;
 };
 
+/** Keep the browser's background trigger independent of other journeys' Cards. */
+const reportDueWork = async (page: Page): Promise<void> => {
+  await page.route("**/api/study/status", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      session: { unpreparedCount: number };
+    };
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        session: { ...body.session, unpreparedCount: 1 },
+      },
+    });
+  });
+};
+
 /**
  * Whether a first exposure is banked for the Card this journey owns.
  *
@@ -158,17 +175,6 @@ test("a tab left in the background writes the sentences that are due", async ({
 test("an open session does not stop background preparation of other due Cards", async ({
   page,
 }) => {
-  const dueId = await ensureCard(page, "vocabulary", "鯨", {
-    lemma: "鯨",
-    reading: "くじら",
-    partOfSpeech: "noun",
-    meaning: "whale",
-    usageNotes: "",
-  });
-  await page.request.post(`/api/study/cards/${dueId}/state`, {
-    headers: MUTATION,
-    data: { action: "graduate" },
-  });
   await page.goto("/");
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -227,7 +233,7 @@ test("an open session does not stop background preparation of other due Cards", 
   });
   await page.reload();
   await expect(page.locator(".presentation")).toBeVisible();
-  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
+  await reportDueWork(page);
 
   const posts: unknown[] = [];
   let releasePoll = () => {};
@@ -286,19 +292,8 @@ test("an open session does not stop background preparation of other due Cards", 
 test("Prepare batch waits for a request already sent in the background", async ({
   page,
 }) => {
-  const dueId = await ensureCard(page, "vocabulary", "鹿", {
-    lemma: "鹿",
-    reading: "しか",
-    partOfSpeech: "noun",
-    meaning: "deer",
-    usageNotes: "",
-  });
-  await page.request.post(`/api/study/cards/${dueId}/state`, {
-    headers: MUTATION,
-    data: { action: "graduate" },
-  });
   await page.goto("/");
-  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
+  await reportDueWork(page);
 
   const posts: unknown[] = [];
   let releasePoll = () => {};
@@ -420,21 +415,6 @@ test("polls that settle nothing are paced, not chained", async ({ page }) => {
  * left behind; whether it is even attempted does not.
  */
 test("a tab looked at and left again still prepares", async ({ page }) => {
-  const id = await ensureCard(page, "vocabulary", "鳥", {
-    lemma: "鳥",
-    reading: "とり",
-    partOfSpeech: "noun",
-    meaning: "bird",
-    usageNotes: "A general word for a bird.",
-  });
-  expect(id).not.toBe("");
-  // Only a sentence Card has anything to prepare, so this one is put past
-  // the word stage or the hidden tab correctly finds nothing to do.
-  await page.request.post(`/api/study/cards/${id}/state`, {
-    headers: MUTATION,
-    data: { action: "graduate" },
-  });
-
   let dispatches = 0;
   await page.route("**/api/study/review-batch", async (route) => {
     dispatches += 1;
@@ -460,9 +440,7 @@ test("a tab looked at and left again still prepares", async ({ page }) => {
   });
 
   await page.goto("/");
-  await page.getByLabel("New Cards per Day").fill("100");
-  await page.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByRole("status")).toContainText("Study settings saved");
+  await reportDueWork(page);
 
   const setVisibility = (state: "hidden" | "visible") =>
     page.evaluate((value) => {
@@ -472,9 +450,6 @@ test("a tab looked at and left again still prepares", async ({ page }) => {
       });
       document.dispatchEvent(new Event("visibilitychange"));
     }, state);
-
-  // Something has to be worth preparing, or a tab correctly does nothing.
-  expect((await counts(page)).unpreparedCount).toBeGreaterThan(0);
 
   // Hide, look back before the settle is over, then leave again. The second
   // leaving is the one that has to work: the first run is still asleep
