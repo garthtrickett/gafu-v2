@@ -264,6 +264,11 @@ export type LearningMaterial = Readonly<{
    * may do it at once.
    */
   purgeFinishedBatches: (olderThanMs: number) => Result<number, MaterialFailure>;
+  /** An unfinished batch whose provider job can still be resumed after a reload. */
+  pendingReviewBatch: () => Result<
+    { batchId: string; total: number } | null,
+    MaterialFailure
+  >;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
   ) => Result<string, MaterialFailure>;
