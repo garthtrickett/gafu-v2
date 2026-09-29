@@ -1379,6 +1379,33 @@ export const openLearningMaterial = (
     prepare,
     hasTeaching,
     hasReserve,
+    pendingReviewBatch: () => {
+      const observedAt = safeNow(options.clock);
+      if (!observedAt.ok) return observedAt;
+      try {
+        // Old provider jobs expire. Prefer a dispatched job, whose generation
+        // has already been paid for, over a batch that was never polled.
+        const since = new Date(observedAt.value.getTime() - 24 * 60 * 60 * 1_000);
+        const row = database
+          .query(`SELECT b.batch_id AS batchId, count(i.seq) AS total
+            FROM review_batch b
+            JOIN review_batch_item i ON i.batch_id = b.batch_id
+            WHERE b.created_at >= ?
+              AND EXISTS (
+                SELECT 1 FROM review_batch_item pending
+                WHERE pending.batch_id = b.batch_id AND pending.status = 'pending'
+              )
+            GROUP BY b.batch_id
+            ORDER BY EXISTS (
+              SELECT 1 FROM review_batch_job j WHERE j.batch_id = b.batch_id
+            ) DESC, b.created_at DESC
+            LIMIT 1`)
+          .get(since.toISOString()) as { batchId: string; total: number } | null;
+        return ok(row);
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
+    },
     beginReviewBatch: (cards) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;

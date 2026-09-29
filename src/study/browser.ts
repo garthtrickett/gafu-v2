@@ -281,6 +281,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const SNAPSHOT_KEY = "snapshot";
   /** Foreground preparation waits for requests a hidden tab already paid for. */
   const backgroundRounds = new Set<Promise<boolean>>();
+  /** A poll can repeat while prepared Cards are still opening over the network. */
+  const openingIds = new Set<string>();
 
   /** Matches the server's page size; the pager counts pages in it. */
   const BANK_PAGE = 50;
@@ -768,35 +770,66 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const handOver = (cardIds: readonly string[]): void => {
     const batch = model.batch;
     if (batch === null || cardIds.length === 0) return;
-    batch.handedIds.push(...cardIds);
+    const offered = cardIds.filter(
+      (id) => !batch.handedIds.includes(id) && !openingIds.has(id),
+    );
+    if (offered.length === 0) return;
+    for (const id of offered) openingIds.add(id);
     const live = model.session !== null;
     // Mid-teaching, or mid-anything that is not a review session: leave the
     // learner alone. The reserves stay banked and open on the next press.
-    if (!live && model.presentation !== null) return;
-    const fetchItems = () =>
-      requestJson<{ items: readonly PreparedMaterial[] }>(
-        "/api/study/session/review-all",
-        {
-          method: "POST",
-          body: JSON.stringify({ cardIds }),
-        },
-      );
+    if (!live && model.presentation !== null) {
+      for (const id of offered) openingIds.delete(id);
+      return;
+    }
+    const fetchItems = async (): Promise<readonly PreparedMaterial[]> => {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const response = await requestJson<{ items: readonly PreparedMaterial[] }>(
+            "/api/study/session/review-all",
+            { method: "POST", body: JSON.stringify({ cardIds: offered }) },
+          );
+          batch.handedIds.push(...offered);
+          return response.items;
+        } catch (cause) {
+          if (attempt >= 2) throw cause;
+          await pause(1_000);
+        }
+      }
+    };
+    const failedToOpen = (): void => {
+      model.message =
+        "Prepared Cards could not open. Press Prepare batch to resume them.";
+      model.messageKind = "error";
+      if (model.batch?.id === batch.id) model.batch = null;
+      draw();
+    };
     if (live) {
       void fetchItems()
-        .then(({ items }) => {
+        .then((items) => {
           absorb(items);
           draw();
         })
-        .catch(() => undefined);
+        .catch(failedToOpen)
+        .finally(() => {
+          for (const id of offered) openingIds.delete(id);
+        });
       return;
     }
     void run(
-      async () =>
-        absorb((await fetchItems()).items) ??
-        "Read the sentence, then check the explanation and mark yourself.",
+      async () => {
+        const items = await fetchItems();
+        return (
+          absorb(items) ??
+          "Read the sentence, then check the explanation and mark yourself."
+        );
+      },
       { label: "Opening the prepared Cards…" },
       "status",
-    );
+    ).finally(() => {
+      for (const id of offered) openingIds.delete(id);
+      if (!batch.handedIds.includes(offered[0] ?? "")) failedToOpen();
+    });
   };
 
   const pause = (ms: number): Promise<void> =>
@@ -840,10 +873,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
     let settled = -1;
     while (keepGoing()) {
       try {
-        const progress = await requestJson<ReviewBatchProgress>(
-          `/api/study/review-batch/${encodeURIComponent(batchId)}`,
-          { method: "GET" },
-        );
+        const advance = () =>
+          requestJson<ReviewBatchProgress>(
+            `/api/study/review-batch/${encodeURIComponent(batchId)}`,
+            { method: "GET" },
+          );
+        const progress =
+          navigator.locks === undefined
+            ? await advance()
+            : await navigator.locks.request(`gafu-review-batch-${batchId}`, advance);
         consecutiveFailures = 0;
         if (!keepGoing()) return;
         onProgress(progress);
@@ -900,6 +938,25 @@ export const mountStudyApp = (root: HTMLElement): void => {
     );
   };
 
+  const attachReviewBatch = (batch: { batchId: string; total: number }): void => {
+    if (model.batch?.id === batch.batchId) return;
+    model.batch = {
+      id: batch.batchId,
+      total: batch.total,
+      completed: 0,
+      completedIds: [],
+      failed: 0,
+      failures: [],
+      pending: batch.total,
+      done: false,
+      round: 1,
+      requestInFlight: false,
+      handedIds: model.session?.items.map((item) => item.cardId) ?? [],
+    };
+    pollReviewBatch(batch.batchId);
+    draw();
+  };
+
   const startReviewBatch = (): void => {
     if (model.batch !== null && !model.batch.done) return;
     void run(
@@ -912,22 +969,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
           "/api/study/review-batch",
           { method: "POST", body: JSON.stringify({}) },
         );
-        model.batch = {
-          id: dispatched.batchId,
-          total: dispatched.total,
-          completed: 0,
-          completedIds: [],
-          failed: 0,
-          failures: [],
-          pending: dispatched.total,
-          done: false,
-          round: 1,
-          requestInFlight: false,
-          handedIds: [],
-        };
-        draw();
-        pollReviewBatch(dispatched.batchId);
-        return `Batch started for ${dispatched.total} Cards.`;
+        attachReviewBatch(dispatched);
+        return `Preparing ${dispatched.total} Cards.`;
       },
       {
         label:
@@ -1444,7 +1487,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     model.presentation === null
                       ? html`<div class="button-row">
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
-                            Prepare batch
+                            ${model.batch !== null && !model.batch.done ? "Preparing remaining Cards…" : "Prepare batch"}
                           </button>
                         </div>`
                       : ""
@@ -1823,7 +1866,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     model.busy = false;
     draw();
     await outbox.restore();
-    void run(async () => {
+    await run(async () => {
       await refresh();
       return model.session !== null
         ? "Picking up where you left off."
@@ -1831,6 +1874,19 @@ export const mountStudyApp = (root: HTMLElement): void => {
           ? "Your saved review session expired. Those Cards remain due; prepare a new batch."
           : "Card bank ready. No Cards are admitted until study asks for a queue.";
     });
+    try {
+      const active = await requestJson<{ batchId: string; total: number } | null>(
+        "/api/study/review-batch/active",
+      );
+      if (active !== null && model.batch === null && !tabIsHidden()) {
+        model.message =
+          "Resuming the unfinished batch. Remaining Cards will open as they are ready.";
+        model.messageKind = "neutral";
+        attachReviewBatch(active);
+      }
+    } catch {
+      // The next Prepare batch press also asks the server to resume it.
+    }
     // Opened into a background tab: there is no visibility change to wait
     // for, so the run starts here.
     if (tabIsHidden()) {

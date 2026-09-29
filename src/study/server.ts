@@ -494,6 +494,9 @@ const handleApi = async (
     }
     return Response.json({ items });
   }
+  if (request.method === "GET" && url.pathname === "/api/study/review-batch/active") {
+    return materialResponse(material.pendingReviewBatch());
+  }
   if (request.method === "POST" && url.pathname === "/api/study/review-batch") {
     const body = await readJson(request);
     if (body instanceof Response) return body;
@@ -527,6 +530,11 @@ const handleApi = async (
     }
     if (size < 1 || size > 20) {
       return invalidRequest("Batch size must be between 1 and 20.");
+    }
+    const pending = material.pendingReviewBatch();
+    if (!pending.ok) return materialResponse(pending);
+    if (pending.value !== null) {
+      return Response.json(pending.value, { status: 202 });
     }
     const queue = study.studyQueue();
     if (!queue.ok) return failureResponse(queue.error);

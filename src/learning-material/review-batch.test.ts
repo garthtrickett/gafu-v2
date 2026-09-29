@@ -150,6 +150,27 @@ const teachCard = async (
 };
 
 describe("review batch job", () => {
+  test("finds an unfinished batch after a browser reload without dispatching another", () => {
+    const app = harness(createDeterministicMaterialProvider());
+    const created = createWord(app.study, "鳥", "とり", "bird");
+    const admitted = app.study.studyQueue();
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!admitted.ok || !knowledge.ok) throw new Error("study setup");
+    const card = admitted.value.due.find((item) => item.card.id === created.id)?.card;
+    if (card === undefined) throw new Error("card not due");
+    const begun = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+
+    expect(app.material.pendingReviewBatch()).toEqual({
+      ok: true,
+      value: { batchId: begun.value, total: 1 },
+    });
+    app.clock.set("2026-09-09T09:00:01.000Z");
+    expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
+    app.study.close();
+    app.material.close();
+  });
+
   test("dispatches one request for every card, completes together, and serves banked reviews without new calls", async () => {
     let calls = 0;
     const inner = createDeterministicMaterialProvider();

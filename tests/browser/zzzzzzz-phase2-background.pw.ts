@@ -408,6 +408,52 @@ test("polls that settle nothing are paced, not chained", async ({ page }) => {
   expect(polls).toBeLessThan(10);
 });
 
+test("reload resumes the pending batch instead of asking for another twenty", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route("**/api/study/review-batch/active", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(posts === 0 ? null : { batchId: "resume-batch", total: 20 }),
+    });
+  });
+  await page.route("**/api/study/review-batch", async (route) => {
+    posts += 1;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ batchId: "resume-batch", total: 20 }),
+    });
+  });
+  await page.route("**/api/study/review-batch/resume-batch", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        batchId: "resume-batch",
+        done: false,
+        pending: 20,
+        completed: [],
+        failed: [],
+        round: 1,
+        requestInFlight: true,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Prepare batch" }).click();
+  await expect(page.getByTestId("batch-progress")).toContainText("20 remaining Cards");
+  await page.reload();
+  await expect(page.getByTestId("batch-progress")).toContainText("20 remaining Cards");
+  await expect(
+    page.getByRole("button", { name: "Preparing remaining Cards" }),
+  ).toBeDisabled();
+  expect(posts).toBe(1);
+});
+
 /**
  * Preparation survives a tab being looked at and left again.
  *
