@@ -34,6 +34,9 @@ export const MATERIAL_VALIDATION_VERSION = "material-v1";
 // One lifetime, owned by Study's contract, enforced here and there.
 const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
 const MAXIMUM_PENDING_PERMITS = 1_024;
+// Match Study's single-generation budget. A provider job that never becomes
+// terminal must not keep its Cards (and the Prepare button) blocked forever.
+const REVIEW_BATCH_JOB_TIMEOUT_MS = 5 * 60_000;
 
 type MaterialRow = Readonly<{
   id: string;
@@ -1163,7 +1166,8 @@ export const openLearningMaterial = (
     batch: NonNullable<MaterialProvider["batch"]>,
   ): Promise<Result<void, MaterialFailure>> => {
     let pending: PendingItem[];
-    let job: { job_id: string } | null;
+    let job: { job_id: string; dispatched_at: string } | null;
+    let created: { created_at: string } | null;
     try {
       pending = database
         .query(
@@ -1172,8 +1176,11 @@ export const openLearningMaterial = (
         )
         .all(batchId) as PendingItem[];
       job = database
-        .query("SELECT job_id FROM review_batch_job WHERE batch_id = ?")
-        .get(batchId) as { job_id: string } | null;
+        .query("SELECT job_id, dispatched_at FROM review_batch_job WHERE batch_id = ?")
+        .get(batchId) as typeof job;
+      created = database
+        .query("SELECT created_at FROM review_batch WHERE batch_id = ?")
+        .get(batchId) as typeof created;
     } catch (cause) {
       return err({ kind: "readFailed", detail: detail(cause) });
     }
@@ -1204,6 +1211,16 @@ export const openLearningMaterial = (
         return err({ kind: "writeFailed", detail: detail(cause) });
       }
     };
+
+    const startedAt = job?.dispatched_at ?? created?.created_at;
+    const startedAtMs = startedAt === undefined ? NaN : Date.parse(startedAt);
+    if (
+      startedAt !== undefined &&
+      (!Number.isFinite(startedAtMs) ||
+        observedAt.value.getTime() - startedAtMs >= REVIEW_BATCH_JOB_TIMEOUT_MS)
+    ) {
+      return failAll("timeout");
+    }
 
     if (job === null) {
       // A Card that already holds a reserve in the mode it wants needs no
@@ -1383,14 +1400,19 @@ export const openLearningMaterial = (
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
       try {
-        // Old provider jobs expire. Prefer a dispatched job, whose generation
-        // has already been paid for, over a batch that was never polled.
-        const since = new Date(observedAt.value.getTime() - 24 * 60 * 60 * 1_000);
+        // A stale job cannot be resumed. Use the dispatch time so a later
+        // retry round stays resumable even when the batch itself is older.
+        const since = new Date(
+          observedAt.value.getTime() - REVIEW_BATCH_JOB_TIMEOUT_MS,
+        );
         const row = database
           .query(`SELECT b.batch_id AS batchId, count(i.seq) AS total
             FROM review_batch b
             JOIN review_batch_item i ON i.batch_id = b.batch_id
-            WHERE b.created_at >= ?
+            WHERE coalesce((
+              SELECT j.dispatched_at FROM review_batch_job j
+              WHERE j.batch_id = b.batch_id
+            ), b.created_at) > ?
               AND EXISTS (
                 SELECT 1 FROM review_batch_item pending
                 WHERE pending.batch_id = b.batch_id AND pending.status = 'pending'
