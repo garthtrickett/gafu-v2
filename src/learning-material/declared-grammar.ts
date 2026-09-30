@@ -359,7 +359,11 @@ const patterns: readonly GrammarPattern[] = [
   { canonicalForm: "かしら", expression: /かしら/g },
   { canonicalForm: "って感じ", expression: /って感じ/g },
   { canonicalForm: "風", expression: /風/g },
-  { canonicalForm: "にきがつく", expression: /に気がつく|に気が付く|にきがつく/g },
+  {
+    canonicalForm: "にきがつく",
+    expression:
+      /に(?:気|き)が(?:つく|付く|つき(?:ます|ました|ません)|付き(?:ます|ました|ません))/g,
+  },
   { canonicalForm: "それに", expression: /それに/g },
   { canonicalForm: "それで", expression: /それで/g },
   {
@@ -385,7 +389,10 @@ const patterns: readonly GrammarPattern[] = [
     expression: /べきだ|べきです|べきではない|べきでない|べき/g,
   },
   { canonicalForm: "なかなか", expression: /なかなか/g },
-  { canonicalForm: "なかなか〜ない", expression: /なかなか[^。]*?ない/g },
+  {
+    canonicalForm: "なかなか〜ない",
+    expression: /なかなか[^。]*?(?:ない|なかった|ません(?:でした)?)/g,
+  },
   { canonicalForm: "によって", expression: /によって/g },
   { canonicalForm: "全く〜ない", expression: /全く[^。]*?ない|まったく[^。]*?ない/g },
   { canonicalForm: "させてもらう", expression: /させてもらう/g },
@@ -408,7 +415,10 @@ const patterns: readonly GrammarPattern[] = [
   { canonicalForm: "こそ / からこそ", expression: /こそ/g },
   { canonicalForm: "ばかり", expression: /ばかり/g },
   { canonicalForm: "ばかりに", expression: /ばかりに/g },
-  { canonicalForm: "ことがある (頻度)", expression: /ことがある/g },
+  {
+    canonicalForm: "ことがある (頻度)",
+    expression: /ことが(?:ある|あります|あった|ありました)/g,
+  },
   // ことにする / ことになる inflects at its endpoint (した/なった/しない);
   // the stem alternation covers the common forms.
   {
@@ -479,7 +489,11 @@ const patterns: readonly GrammarPattern[] = [
   // enumerate verb stems so できる never fires 切る. かけ/たて require an
   // i-row stem so 出かける/建てる never fire them. 旅に remains an accepted
   // たびに over-fire.
-  { canonicalForm: "〜ようとしない", expression: /ようとしない/g },
+  {
+    canonicalForm: "〜ようとしない",
+    expression:
+      /(?:[おこそとのほもよろぼぽごぞど]う|よう)と(?:しない|しなかった|しません(?:でした)?)/g,
+  },
   { canonicalForm: "もしかしたら", expression: /もしかしたら/g },
   { canonicalForm: "〜かというと", expression: /かというと/g },
   { canonicalForm: "〜ずつ", expression: /ずつ/g },
@@ -556,7 +570,11 @@ const patterns: readonly GrammarPattern[] = [
   // Batch 11, and five V1 names lack the 〜 prefix of their original-22
   // counterparts. Verbatim entries couple with the originals under keep-all,
   // exactly like の / の ( nominalizer ) / の (省略).
-  { canonicalForm: "わけにはいかない", expression: /わけにはいかない/g },
+  {
+    canonicalForm: "わけにはいかない",
+    expression:
+      /わけには(?:(?:いき|行き)ません(?:でした)?|(?:いか|行か)な(?:い|かった))/g,
+  },
   { canonicalForm: "つもりだ", expression: /つもりだ|つもりで(?:す|し)/g },
   { canonicalForm: "のに", expression: /のに/g },
   { canonicalForm: "かもしれない", expression: /かもしれない/g },

@@ -165,7 +165,7 @@ describe("review batch job", () => {
       ok: true,
       value: { batchId: begun.value, total: 1 },
     });
-    app.clock.set("2026-09-08T09:05:00.000Z");
+    app.clock.set("2026-09-08T09:15:00.000Z");
     expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
     app.study.close();
     app.material.close();
@@ -196,7 +196,7 @@ describe("review batch job", () => {
       ok: true,
       value: { done: false, pending: 1, requestInFlight: true },
     });
-    app.clock.set("2026-09-08T09:04:59.000Z");
+    app.clock.set("2026-09-08T09:14:59.000Z");
     expect(app.material.pendingReviewBatch()).toMatchObject({
       ok: true,
       value: { batchId: begun.value },
@@ -207,7 +207,7 @@ describe("review batch job", () => {
     });
     expect(polls).toBe(1);
 
-    app.clock.set("2026-09-08T09:05:00.000Z");
+    app.clock.set("2026-09-08T09:15:00.000Z");
     expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
     expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
       ok: true,
@@ -470,11 +470,17 @@ describe("review batch job", () => {
     // banked as a bare word and the learner would lose a day of sentences
     // to an outage that ends in a minute. Those Cards stay due.
     const inner = createDeterministicMaterialProvider();
+    const workingBatch = inner.batch;
+    if (workingBatch === undefined) throw new Error("batch provider missing");
+    let offline = true;
     const app = harness({
       ...inner,
       batch: {
-        dispatch: async () => err({ kind: "offline", detail: "no network" }),
-        poll: async () => err({ kind: "offline", detail: "no network" }),
+        dispatch: (targets, knowledge, signal) =>
+          offline
+            ? Promise.resolve(err({ kind: "offline", detail: "no network" }))
+            : workingBatch.dispatch(targets, knowledge, signal),
+        poll: workingBatch.poll,
       },
     } as MaterialProvider);
     const created = createWord(app.study, "鳥", "とり", "bird");
@@ -502,6 +508,21 @@ describe("review batch job", () => {
       ok: true,
       value: false,
     });
+    const blocked = app.material.backgroundRetryBlockedCards();
+    expect(blocked.ok && blocked.value.has(card.id)).toBe(true);
+
+    // A deliberate retry can still use the Card, and success lifts the
+    // background pause without waiting for the next day.
+    offline = false;
+    const retry = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!retry.ok) throw new Error(retry.error.kind);
+    await app.material.advanceReviewBatch(retry.value);
+    expect(await app.material.advanceReviewBatch(retry.value)).toMatchObject({
+      ok: true,
+      value: { done: true, completed: [card.id], failed: [] },
+    });
+    const cleared = app.material.backgroundRetryBlockedCards();
+    expect(cleared.ok && cleared.value.has(card.id)).toBe(false);
     app.study.close();
     app.material.close();
   });

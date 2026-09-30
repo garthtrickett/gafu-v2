@@ -35,7 +35,7 @@ const SHARED = [
   "must not be able to guess the target",
   "are English prose",
   "without the helper verbs that follow it",
-  "falls inside",
+  "targetSurface and targetSpan cover the full construction",
 ];
 
 test("both prompts carry every shared rule, once each", () => {
@@ -67,7 +67,7 @@ test("the prompt version moves when the ask changes", () => {
   // The stored version records which instructions produced each candidate.
   // Existing reserves remain until served; this only changes new generations.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v13"');
+  expect(server).toContain('promptVersion: "study-v14"');
 });
 
 /**

@@ -1,6 +1,7 @@
 import type { BroadPartOfSpeech } from "../analysis/contracts.ts";
 import type { Result } from "../result.ts";
 import type {
+  CardId,
   CardSummary,
   PresentationPermit,
   PresentationPermitVerifier,
@@ -269,6 +270,8 @@ export type LearningMaterial = Readonly<{
     { batchId: string; total: number } | null,
     MaterialFailure
   >;
+  /** Cards whose failed generation should not be bought again by a hidden tab. */
+  backgroundRetryBlockedCards: () => Result<ReadonlySet<CardId>, MaterialFailure>;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
   ) => Result<string, MaterialFailure>;

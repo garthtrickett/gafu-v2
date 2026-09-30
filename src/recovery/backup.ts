@@ -113,6 +113,7 @@ const requiredTables = [
   "learning_material_migration",
   "validated_presentation",
   "teaching_acknowledgement",
+  "review_batch_cooldown",
 ] as const;
 
 const hasCompleteSchema = (database: Database): boolean => {

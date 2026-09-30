@@ -33,6 +33,27 @@ type BankCard = CardSummary & Readonly<{ taught: boolean; teachable: boolean }>;
 const needsTeaching = (card: BankCard): boolean =>
   !card.taught && !card.teachable && card.state !== "suspended";
 
+const explainBatchFailure = (
+  failure: ReviewBatchProgress["failed"][number],
+): string => {
+  if (failure.kind === "timeout") return "The sentence request timed out.";
+  if (failure.kind !== "validationRejected") return "No usable sentence was returned.";
+  if (failure.reasons.length === 0) return "No sentence passed validation.";
+  return failure.reasons
+    .map((reason) => {
+      if (reason === "targetAbsent")
+        return "Gafu could not verify that the sentence used this Card.";
+      if (reason === "targetSurfaceMismatch")
+        return "The highlighted target did not match the sentence.";
+      if (reason.startsWith("unknownGrammar: "))
+        return `It used grammar not marked known: ${reason.slice(16)}.`;
+      if (reason.startsWith("unknownVocabulary: "))
+        return `It used words outside your Known Word Bank: ${reason.slice(19)}.`;
+      return "The sentence did not pass validation.";
+    })
+    .join(" ");
+};
+
 export type BrowserSnapshot = Readonly<{
   cards: readonly BankCard[];
   /** Cards matching the search and filter, of which `cards` is one page. */
@@ -1514,10 +1535,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           const named = failure as typeof failure & { title?: string };
                           return html`<li>
                             <strong lang="ja">${named.title ?? failure.cardId}</strong>
-                            stays due: ${failure.reasons.length > 0 ? failure.reasons.join("; ") : failure.kind}
+                            stays due. ${explainBatchFailure(failure)}
                           </li>`;
                         })}
-                      </ul>`
+                      </ul>
+                      <p>Background preparation will wait 24 hours before retrying these Cards. Prepare batch can retry sooner.</p>`
                     : ""
                 }
                 ${

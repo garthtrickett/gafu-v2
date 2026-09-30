@@ -396,6 +396,84 @@ describe("target span containment", () => {
     scope: { kind: "allSenses" },
   });
 
+  test("recognizes the six failed Grammar Cards in natural polite sentences", async () => {
+    const cases = [
+      ["にきがつく", "今、音に気がつきました。", "に気がつき", "に気がつきました"],
+      [
+        "わけにはいかない",
+        "この仕事を終えるわけにはいきません。",
+        "終えるわけにはいき",
+        "終えるわけにはいきません",
+      ],
+      ["れる・られる (可能)", "今は日本語が話せます。", "話せ", "話せ"],
+      [
+        "ことがある (頻度)",
+        "朝に歩くことがあります。",
+        "歩くことがあり",
+        "歩くことがあります",
+      ],
+      [
+        "〜ようとしない",
+        "その子は寝ようとしません。",
+        "寝ようとし",
+        "寝ようとしません",
+      ],
+      [
+        "〜ようとしない",
+        "あいつは話そうとしません。",
+        "話そうとし",
+        "話そうとしません",
+      ],
+      [
+        "なかなか〜ない",
+        "鍵はなかなか見つかりません。",
+        "なかなか見つかり",
+        "なかなか見つかりません",
+      ],
+    ] as const;
+    for (const [canonicalForm, japanese, surface, highlighted] of cases) {
+      const analyzed = await analyzer.analyze("polite grammar", japanese);
+      if (!analyzed.ok) throw new Error(analyzed.error.kind);
+      const vocabulary = analyzed.value.tokens
+        .filter((token) => !transparent.has(token.broadPartOfSpeech))
+        .map((token) =>
+          word(token.lemma, token.reading ?? token.surface, token.broadPartOfSpeech),
+        );
+      if (canonicalForm === "れる・られる (可能)")
+        vocabulary.push(word("話す", "はなす", "verb"));
+      const start = japanese.indexOf(surface);
+      const result = await createLearningMaterialValidator(dependencies()).validate(
+        candidate(japanese, start, start + surface.length),
+        { kind: "grammar", canonicalForm },
+        { vocabulary, grammar: new Set(declaredGrammarForms) },
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.presentation.targetSurface).toBe(highlighted);
+    }
+  });
+
+  test("a lexical can-verb is not mistaken for potential grammar", async () => {
+    const japanese = "音が聞こえますか。";
+    const analyzed = await analyzer.analyze("lexical can", japanese);
+    if (!analyzed.ok) throw new Error(analyzed.error.kind);
+    const vocabulary = analyzed.value.tokens
+      .filter((token) => !transparent.has(token.broadPartOfSpeech))
+      .map((token) =>
+        word(token.lemma, token.reading ?? token.surface, token.broadPartOfSpeech),
+      );
+    vocabulary.push(word("聞く", "きく", "verb"));
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 2, 5),
+      { kind: "grammar", canonicalForm: "れる・られる (可能)" },
+      { vocabulary, grammar: new Set(declaredGrammarForms) },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.reasons.map((reason) => reason.kind)).toContain(
+        "targetAbsent",
+      );
+  });
+
   test("a grammar target spanned whole-word contains its detected form", async () => {
     // The detector only ever matches the れた suffix; the model spans the
     // whole verb. Overlapping た-forms sit inside the span and are the

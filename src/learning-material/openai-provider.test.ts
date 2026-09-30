@@ -88,9 +88,9 @@ describe("OpenAI Learning Material adapter", () => {
     expect(body["model"]).toBe("gpt-5.6-luna");
     expect(body["background"]).toBe(true);
     expect(body["store"]).toBe(false);
-    // The model spans the whole grammar word; the detector only ever matches
-    // its suffix, so the instructions say the detected form falls inside.
-    expect(String(body["instructions"])).toContain("falls inside");
+    expect(String(body["instructions"])).toContain(
+      "targetSurface and targetSpan cover the full construction",
+    );
     // The scene must not hand the learner the answer.
     expect(String(body["instructions"])).toContain(
       "must not be able to guess the target",
@@ -344,6 +344,9 @@ describe("whole-batch generation", () => {
       (input["targets"] as { previousRejections: string[] }[])[0]?.previousRejections,
     ).toEqual(["unknownVocabulary: 難語"]);
     expect(String(body["instructions"])).toContain("previousRejections");
+    expect(String(body["instructions"])).toContain(
+      "targetSurface and targetSpan cover the full construction",
+    );
     expect(String(body["instructions"])).toContain(
       "must not be able to guess the target",
     );
