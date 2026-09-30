@@ -165,8 +165,67 @@ describe("review batch job", () => {
       ok: true,
       value: { batchId: begun.value, total: 1 },
     });
-    app.clock.set("2026-09-09T09:00:01.000Z");
+    app.clock.set("2026-09-08T09:05:00.000Z");
     expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
+    app.study.close();
+    app.material.close();
+  });
+
+  test("expires a provider job that stays pending and frees its Cards for another batch", async () => {
+    let polls = 0;
+    const inner = createDeterministicMaterialProvider();
+    const app = harness({
+      ...inner,
+      batch: {
+        dispatch: async () => ok({ jobId: "never-complete" }),
+        poll: async () => {
+          polls += 1;
+          return ok({ status: "pending" as const });
+        },
+      },
+    });
+    const created = createWord(app.study, "鳥", "とり", "bird");
+    const admitted = app.study.studyQueue();
+    const knowledge = app.study.knowledgeSnapshot();
+    if (!admitted.ok || !knowledge.ok) throw new Error("study setup");
+    const card = admitted.value.due.find((item) => item.card.id === created.id)?.card;
+    if (card === undefined) throw new Error("card not due");
+    const begun = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!begun.ok) throw new Error(begun.error.kind);
+    expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
+      ok: true,
+      value: { done: false, pending: 1, requestInFlight: true },
+    });
+    app.clock.set("2026-09-08T09:04:59.000Z");
+    expect(app.material.pendingReviewBatch()).toMatchObject({
+      ok: true,
+      value: { batchId: begun.value },
+    });
+    expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
+      ok: true,
+      value: { done: false, pending: 1, requestInFlight: true },
+    });
+    expect(polls).toBe(1);
+
+    app.clock.set("2026-09-08T09:05:00.000Z");
+    expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
+    expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
+      ok: true,
+      value: {
+        done: true,
+        pending: 0,
+        completed: [],
+        failed: [{ cardId: card.id, kind: "timeout" }],
+        requestInFlight: false,
+      },
+    });
+    expect(polls).toBe(1);
+    const next = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
+    if (!next.ok) throw new Error(next.error.kind);
+    expect(app.material.pendingReviewBatch()).toMatchObject({
+      ok: true,
+      value: { batchId: next.value },
+    });
     app.study.close();
     app.material.close();
   });
