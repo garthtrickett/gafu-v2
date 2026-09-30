@@ -26,7 +26,7 @@ import { parseBroadPartOfSpeech } from "./generated-decode.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 9;
+export const MATERIAL_SCHEMA_VERSION = 10;
 
 /** Marks a row written for a word Card rather than generated as a sentence. */
 const WORD_CARD_PROVIDER = "word-card";
@@ -34,9 +34,11 @@ export const MATERIAL_VALIDATION_VERSION = "material-v1";
 // One lifetime, owned by Study's contract, enforced here and there.
 const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
 const MAXIMUM_PENDING_PERMITS = 1_024;
-// Match Study's single-generation budget. A provider job that never becomes
-// terminal must not keep its Cards (and the Prepare button) blocked forever.
-const REVIEW_BATCH_JOB_TIMEOUT_MS = 5 * 60_000;
+// A batch can contain twenty targets and has taken longer than a single-Card
+// generation in production. Still bound a provider job so a lost response
+// cannot hold its Cards (and the Prepare button) indefinitely.
+const REVIEW_BATCH_JOB_TIMEOUT_MS = 15 * 60_000;
+const BACKGROUND_RETRY_COOLDOWN_MS = 24 * 60 * 60_000;
 
 type MaterialRow = Readonly<{
   id: string;
@@ -340,6 +342,39 @@ const migrate = (
         database
           .query(
             "INSERT INTO learning_material_migration(version, applied_at) VALUES (9, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 10) {
+        // Keep a small, durable pause for Cards whose last generation failed.
+        // Batch rows are purged after an hour, so they cannot protect a hidden
+        // tab from retrying the same impossible grammar Card all day.
+        database.exec(`
+        CREATE TABLE IF NOT EXISTS review_batch_cooldown (
+          card_id TEXT PRIMARY KEY,
+          failed_at TEXT NOT NULL
+        );
+      `);
+        const since = new Date(
+          Date.parse(appliedAt) - BACKGROUND_RETRY_COOLDOWN_MS,
+        ).toISOString();
+        database
+          .query(
+            `INSERT INTO review_batch_cooldown(card_id, failed_at)
+             SELECT i.card_id, max(i.updated_at)
+             FROM review_batch_item i
+             WHERE i.status = 'failed' AND i.updated_at > ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM review_batch_item newer
+                 WHERE newer.card_id = i.card_id AND newer.status = 'ready'
+                   AND newer.updated_at > i.updated_at
+               )
+             GROUP BY i.card_id`,
+          )
+          .run(since);
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (10, ?)",
           )
           .run(appliedAt);
       }
@@ -1138,6 +1173,23 @@ export const openLearningMaterial = (
       .run(status, failureKind, at, batchId, seq);
   };
 
+  const setBackgroundRetryCooldown = (
+    cardId: CardId,
+    status: "ready" | "failed",
+    at: string,
+  ): void => {
+    if (status === "ready") {
+      database.query("DELETE FROM review_batch_cooldown WHERE card_id = ?").run(cardId);
+    } else {
+      database
+        .query(
+          `INSERT INTO review_batch_cooldown(card_id, failed_at) VALUES (?, ?)
+           ON CONFLICT(card_id) DO UPDATE SET failed_at = excluded.failed_at`,
+        )
+        .run(cardId, at);
+    }
+  };
+
   /** Speaks the banked sentences a few at a time, as V1 did. */
   const speakAll = async (
     banked: readonly { id: string; japanese: string }[],
@@ -1199,8 +1251,10 @@ export const openLearningMaterial = (
     const failAll = (kind: string): Result<void, MaterialFailure> => {
       try {
         const apply = database.transaction(() => {
-          for (const item of pending)
+          for (const item of pending) {
             setItemStatus(batchId, item.seq, "failed", kind, at);
+            setBackgroundRetryCooldown(item.card_id, "failed", at);
+          }
           database
             .query("DELETE FROM review_batch_job WHERE batch_id = ?")
             .run(batchId);
@@ -1243,7 +1297,11 @@ export const openLearningMaterial = (
         if (!reserve.ok) return reserve;
         if (reserve.value) {
           try {
-            setItemStatus(batchId, item.seq, "ready", null, at);
+            const apply = database.transaction(() => {
+              setItemStatus(batchId, item.seq, "ready", null, at);
+              setBackgroundRetryCooldown(item.card_id, "ready", at);
+            });
+            apply.immediate();
           } catch (cause) {
             return err({ kind: "writeFailed", detail: detail(cause) });
           }
@@ -1363,21 +1421,25 @@ export const openLearningMaterial = (
             status = "ready";
             failureKind = null;
           }
-          database
-            .query(
-              `UPDATE review_batch_item
-               SET status = ?, attempts = ?, failure_kind = ?, hints_json = ?, updated_at = ?
-               WHERE batch_id = ? AND seq = ?`,
-            )
-            .run(
-              status,
-              attempts,
-              failureKind,
-              JSON.stringify([...new Set(hints)]),
-              at,
-              batchId,
-              item.seq,
-            );
+          const settle = database.transaction(() => {
+            database
+              .query(
+                `UPDATE review_batch_item
+                 SET status = ?, attempts = ?, failure_kind = ?, hints_json = ?, updated_at = ?
+                 WHERE batch_id = ? AND seq = ?`,
+              )
+              .run(
+                status,
+                attempts,
+                failureKind,
+                JSON.stringify([...new Set(hints)]),
+                at,
+                batchId,
+                item.seq,
+              );
+            setBackgroundRetryCooldown(item.card_id, status, at);
+          });
+          settle.immediate();
         }
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
@@ -1396,6 +1458,21 @@ export const openLearningMaterial = (
     prepare,
     hasTeaching,
     hasReserve,
+    backgroundRetryBlockedCards: () => {
+      const observedAt = safeNow(options.clock);
+      if (!observedAt.ok) return observedAt;
+      const since = new Date(
+        observedAt.value.getTime() - BACKGROUND_RETRY_COOLDOWN_MS,
+      ).toISOString();
+      try {
+        const rows = database
+          .query("SELECT card_id FROM review_batch_cooldown WHERE failed_at > ?")
+          .all(since) as { card_id: CardId }[];
+        return ok(new Set(rows.map((row) => row.card_id)));
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
+    },
     pendingReviewBatch: () => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
@@ -1561,18 +1638,12 @@ export const openLearningMaterial = (
         failureKind: string | null,
       ): Result<ReviewBatchProgress, MaterialFailure> => {
         try {
-          database
-            .query(
-              `UPDATE review_batch_item SET status = ?, failure_kind = ?, updated_at = ?
-               WHERE batch_id = ? AND seq = ?`,
-            )
-            .run(
-              status,
-              failureKind,
-              observedAt.value.toISOString(),
-              batchId,
-              item.seq,
-            );
+          const at = observedAt.value.toISOString();
+          const settle = database.transaction(() => {
+            setItemStatus(batchId, item.seq, status, failureKind, at);
+            setBackgroundRetryCooldown(item.card_id, status, at);
+          });
+          settle.immediate();
         } catch (cause) {
           return err({ kind: "writeFailed", detail: detail(cause) });
         }

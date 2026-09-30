@@ -48,6 +48,7 @@ const later = [
   "speech_daily_usage",
   "review_batch_job",
   "review_batch",
+  "review_batch_cooldown",
 ];
 
 test("a database already at version 2 still receives every later step", () => {
@@ -162,7 +163,7 @@ test("unshown bare grammar fallbacks are removed while history and words remain"
   banked("grammar-reserve", "grammar", null);
   banked("grammar-history", "grammar", "2026-09-19T01:00:00.000Z");
   banked("vocabulary-reserve", "vocabulary", null);
-  raw.query("DELETE FROM learning_material_migration WHERE version = 9").run();
+  raw.query("DELETE FROM learning_material_migration WHERE version >= 9").run();
   raw.close();
 
   open(databasePath).close();
@@ -172,4 +173,28 @@ test("unshown bare grammar fallbacks are removed while history and words remain"
   ).map((row) => row.id);
   check.close();
   expect(left.sort()).toEqual(["grammar-history", "vocabulary-reserve"].sort());
+});
+
+test("upgrading pauses recent failed Cards, but not Cards prepared afterward", () => {
+  const directory = mkdtempSync(join(tmpdir(), "gafu-batch-cooldown-"));
+  directories.push(directory);
+  const databasePath = join(directory, "material.sqlite");
+  open(databasePath).close();
+  const raw = new Database(databasePath);
+  const add = raw.query(
+    `INSERT INTO review_batch_item(batch_id, seq, card_id, input_json, status, updated_at)
+     VALUES (?, ?, ?, '{}', ?, ?)`,
+  );
+  add.run("one", 0, "still-failed", "failed", "2026-09-12T08:00:00.000Z");
+  add.run("two", 0, "recovered", "failed", "2026-09-12T08:00:00.000Z");
+  add.run("three", 0, "recovered", "ready", "2026-09-12T08:30:00.000Z");
+  add.run("four", 0, "old-failure", "failed", "2026-09-10T08:00:00.000Z");
+  raw.query("DELETE FROM learning_material_migration WHERE version = 10").run();
+  raw.exec("DROP TABLE review_batch_cooldown");
+  raw.close();
+
+  const upgraded = open(databasePath);
+  const blocked = upgraded.backgroundRetryBlockedCards();
+  expect(blocked.ok && [...blocked.value].join(",")).toBe("still-failed");
+  upgraded.close();
 });

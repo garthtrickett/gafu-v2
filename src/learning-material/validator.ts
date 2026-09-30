@@ -72,6 +72,11 @@ const insideSpan = (
   outer: DecodedPresentation["targetSpan"],
 ): boolean => inner.start >= outer.start && inner.end <= outer.end;
 
+const overlapsSpan = (
+  left: DecodedPresentation["targetSpan"],
+  right: DecodedPresentation["targetSpan"],
+): boolean => left.start < right.end && right.start < left.end;
+
 /**
  * A canonical form, with the two tildes read as one.
  *
@@ -100,9 +105,29 @@ const grammarContainsTarget = (
 /** A canonical form may name more than one shape: "てしまう / ちゃう". */
 const canonicalAlternatives = (canonicalForm: string): readonly string[] =>
   canonicalForm
+    .replace(/\s*[（(][^）)]*[）)]/gu, "")
     .split("/")
     .map((part) => part.replace(/[~～〜]/gu, "").trim())
     .filter((part) => part.length > 1);
+
+const potentialBase = (lemma: string): string | null => {
+  if (lemma === "できる") return "する";
+  if (lemma.endsWith("られる")) return `${lemma.slice(0, -3)}る`;
+  if (!lemma.endsWith("る")) return null;
+  const godan: Readonly<Record<string, string>> = {
+    え: "う",
+    け: "く",
+    げ: "ぐ",
+    せ: "す",
+    て: "つ",
+    ね: "ぬ",
+    べ: "ぶ",
+    め: "む",
+    れ: "る",
+  };
+  const ending = godan[lemma.slice(-2, -1)];
+  return ending === undefined ? null : `${lemma.slice(0, -2)}${ending}`;
+};
 
 /**
  * The construction inside the span, put back into its dictionary form.
@@ -291,8 +316,7 @@ export const createLearningMaterialValidator = (
     // Everything below reads the repaired span, and it is the repaired span
     // that travels back: the learner's colouring lands on the word, not on
     // where the model counted it to be.
-    const span = located === null ? claimed : { ...claimed, ...located };
-    const spanned = { ...presentation, targetSpan: span };
+    let span = located === null ? claimed : { ...claimed, ...located };
 
     const analyzed = await dependencies.analyzer.analyze(
       "learning-material",
@@ -380,15 +404,51 @@ export const createLearningMaterialValidator = (
         // identity claim covers the whole, and components resolve no
         // independent sense. Form equality above is the whole check.
       }
-    } else if (!grammarContainsTarget(grammar, target.canonicalForm, span)) {
-      // The detector only knows the citation form. Before refusing, ask the
-      // analyzer what the span says in dictionary form — an inflected
-      // construction is the same construction.
-      const rebuilt = spanDictionaryForm(analyzed.value.tokens, span);
-      const names = canonicalAlternatives(target.canonicalForm).some((form) =>
-        rebuilt.endsWith(form),
-      );
-      if (!names) reasons.push({ kind: "targetAbsent" });
+    } else {
+      const overlapping = grammar
+        .filter((item) => sameCanonicalForm(item.canonicalForm, target.canonicalForm))
+        .flatMap((item) => item.spans)
+        .filter((found) => overlapsSpan(found, span));
+      if (overlapping.length === 1) {
+        // The model often highlights the stem but omits the polite or
+        // negative ending that actually makes the construction. The detected
+        // form proves which ending belongs to it; include that ending in the
+        // highlight rather than refusing a correct sentence.
+        const found = overlapping[0];
+        if (found !== undefined)
+          span = {
+            ...span,
+            start: Math.min(span.start, found.start),
+            end: Math.max(span.end, found.end),
+          };
+      } else if (!grammarContainsTarget(grammar, target.canonicalForm, span)) {
+        // For a polite potential (話せます) the target stem lemmatizes to
+        // 話せる. Test that dictionary form with the same detector, while
+        // retaining the model's surface span for the learner.
+        const rebuilt = spanDictionaryForm(analyzed.value.tokens, span);
+        const names = canonicalAlternatives(target.canonicalForm).some((form) =>
+          rebuilt.endsWith(form),
+        );
+        const detected = dependencies.grammar
+          .detect(rebuilt)
+          .some((item) => sameCanonicalForm(item.canonicalForm, target.canonicalForm));
+        if (!names && !detected) reasons.push({ kind: "targetAbsent" });
+      }
+      if (target.canonicalForm === "れる・られる (可能)") {
+        // 聞こえる is its own verb, even when translated "can hear"; it is
+        // not the potential form of 聞く. Require an ordinary known base verb
+        // behind the highlighted form (話せる → 話す, 食べられる → 食べる).
+        const formed = analyzed.value.tokens.some((token) => {
+          if (token.broadPartOfSpeech !== "verb" || !overlapsSpan(token.span, span))
+            return false;
+          const base = potentialBase(token.lemma);
+          return (
+            base !== null && knowledge.vocabulary.some((word) => word.lemma === base)
+          );
+        });
+        if (!formed && !reasons.some((reason) => reason.kind === "targetAbsent"))
+          reasons.push({ kind: "targetAbsent" });
+      }
     }
 
     const analysisWithSenses = {
@@ -455,7 +515,14 @@ export const createLearningMaterialValidator = (
 
     return reasons.length === 0
       ? ok({
-          presentation: spanned,
+          presentation: {
+            ...presentation,
+            targetSpan: span,
+            targetSurface:
+              target.kind === "grammar"
+                ? normalizedJapanese.slice(span.start, span.end)
+                : presentation.targetSurface,
+          },
           normalizedJapanese,
           analyzer: dependencies.analyzer.name,
         })

@@ -554,11 +554,15 @@ const handleApi = async (
     // strand the unprepared Cards behind them.
     const reserved = unpreparedOnly ? material.reserveFlags() : ok(undefined);
     if (!reserved.ok) return materialResponse(reserved);
+    const blocked = unpreparedOnly
+      ? material.backgroundRetryBlockedCards()
+      : ok(new Set<string>());
+    if (!blocked.ok) return materialResponse(blocked);
     const batch = selectDueBatch(
       split.value,
       size,
       reserved.value,
-      new Set(excludeCardIds),
+      new Set([...excludeCardIds, ...blocked.value]),
     );
     if (batch.length === 0)
       return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
@@ -1018,7 +1022,8 @@ const materialProvider = fakeAi
       // learner. v5 says what answer is for, after v3's no-translation rule
       // was read as covering it and the Japanese sentence came back verbatim.
       // v13 asks for faithful translations and natural clues for early Cards.
-      promptVersion: "study-v13",
+      // v14 makes grammar construction and span requirements explicit.
+      promptVersion: "study-v14",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,
