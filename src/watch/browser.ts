@@ -37,6 +37,7 @@ type WatchModel = {
   repairingAudio: boolean;
   repairFraction: number;
   repairMessage: string;
+  repairDetail: string;
   track: WatchSubtitleTrack | null;
   activeCues: readonly WatchCue[];
   shortcut: CaptureShortcut;
@@ -132,6 +133,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     repairingAudio: false,
     repairFraction: 0,
     repairMessage: "",
+    repairDetail: "",
     track: null,
     activeCues: [],
     shortcut: readShortcut(),
@@ -153,6 +155,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     model.repairingAudio = false;
     model.repairFraction = 0;
     model.repairMessage = "";
+    model.repairDetail = "";
   };
 
   const invalidateCapture = (): void => {
@@ -194,6 +197,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     root.querySelector<HTMLVideoElement>("video")?.pause();
     model.audioReady = false;
     model.audioMuted = false;
+    model.repairMessage = "Loading the converted audio…";
+    model.repairDetail = "";
     model.audioUrl = playback.replaceAudio(file);
     setMessage(`Loaded ${file.name} locally. Waiting for its audio track.`, "neutral");
   };
@@ -228,26 +233,34 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
         loadAudio(result.value);
         return;
       }
+      model.repairDetail = result.error.detail ?? "";
       switch (result.error.kind) {
         case "cancelled":
           setMessage("Audio repair cancelled. You can try again.");
           return;
         case "engineUnavailable":
+          model.repairMessage =
+            "The audio engine could not load. Try again or choose an extracted audio track.";
           setMessage(
             "The browser audio engine could not load. Try again or choose an extracted audio track below.",
             "error",
           );
           return;
         case "conversionFailed":
+          model.repairMessage =
+            "Audio conversion failed. See the repair details below.";
           setMessage(
             "The first audio track could not be converted. Try another audio track or a browser-compatible video.",
             "error",
           );
           return;
       }
-    } catch {
+    } catch (cause) {
       if (destroyed || repairController !== controller) return;
       cancelRepair();
+      model.repairMessage =
+        "The audio engine could not load. Try again or choose an extracted audio track.";
+      model.repairDetail = String(cause).slice(-1200);
       setMessage(
         "The browser audio engine could not load. Try again or choose an extracted audio track below.",
         "error",
@@ -262,6 +275,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     model.audioUrl = null;
     model.audioReady = false;
     model.audioMuted = false;
+    model.repairMessage = "";
+    model.repairDetail = "";
     const video = root.querySelector<HTMLVideoElement>("video");
     if (video !== null) video.muted = false;
     setMessage("Using the video’s original audio track.");
@@ -325,14 +340,21 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     audio.volume = video.volume;
     audio.muted = model.audioMuted;
     model.audioReady = true;
+    model.repairMessage = "Audio converted. Press play on the video to hear it.";
     video.muted = true;
     syncAudio(true);
     setMessage("Firefox-compatible audio is ready. Press play.", "success");
   };
 
   const onAudioError = (event: Event): void => {
-    if ((event.currentTarget as HTMLAudioElement).src !== model.audioUrl) return;
+    const audio = event.currentTarget as HTMLAudioElement;
+    if (audio.src !== model.audioUrl) return;
+    const detail =
+      audio.error?.message || `Media error ${audio.error?.code ?? "unknown"}`;
     clearAudio();
+    model.repairMessage =
+      "Firefox could not play the audio. See the repair details below.";
+    model.repairDetail = detail.slice(-1200);
     setMessage(
       "This browser could not play the selected audio. Choose an Ogg/Opus file.",
       "error",
@@ -345,9 +367,11 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     if (video === null || audio === null) return;
     syncAudio(true);
     if (!audio.paused) return;
-    void audio.play().catch(() => {
+    void audio.play().catch((cause: unknown) => {
       if (destroyed || video.paused || audioElements().audio !== audio) return;
       video.pause();
+      model.repairMessage = "Firefox could not start the audio. Press play again.";
+      model.repairDetail = String(cause).slice(-1200);
       setMessage(
         "Firefox could not start the repaired audio. Press play again.",
         "error",
@@ -611,13 +635,21 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                   model.repairingAudio
                     ? html`
                   <progress aria-label="Audio repair progress" max="1" .value=${model.repairFraction}></progress>
-                  <p>${model.repairMessage}</p>
                   <button type="button" class="secondary" @click=${() => {
                     cancelRepair();
                     setMessage("Audio repair cancelled. You can try again.");
                   }}>Cancel audio repair</button>
                 `
                     : ""
+                }
+                ${model.repairMessage === "" ? "" : html`<p data-audio-repair-status aria-live="polite">${model.repairMessage}</p>`}
+                ${
+                  model.repairDetail === ""
+                    ? ""
+                    : html`<details>
+                  <summary>Audio repair details</summary>
+                  <p>${model.repairDetail}</p>
+                </details>`
                 }
                 <details>
                   <summary>Choose an existing audio track</summary>

@@ -205,7 +205,75 @@ test("repairs MKV audio in the browser without uploading media", async ({ page }
       .locator("video")
       .evaluate((element) => (element as HTMLVideoElement).muted),
   ).toBe(true);
+  // Loading metadata alone cannot prove that Firefox decodes and plays audio.
+  // Measure PCM from the converted tone while both media clocks advance.
+  await page.evaluate(async () => {
+    const video = document.querySelector("video");
+    const audio = document.querySelector<HTMLAudioElement>("[data-watch-audio]");
+    if (video === null || audio === null) throw new Error("media elements missing");
+    const context = new AudioContext();
+    const analyser = context.createAnalyser();
+    context.createMediaElementSource(audio).connect(analyser);
+    analyser.connect(context.destination);
+    Object.assign(window, { repairedAudioAnalyser: analyser });
+    await context.resume();
+    await video.play();
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const analyser = (window as unknown as { repairedAudioAnalyser: AnalyserNode })
+          .repairedAudioAnalyser;
+        const samples = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(samples);
+        return Math.max(...samples.map(Math.abs));
+      }),
+    )
+    .toBeGreaterThan(0.01);
+  await expect
+    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).currentTime))
+    .toBeGreaterThan(0.2);
+  expect(
+    await audio.evaluate((element) => (element as HTMLAudioElement).error),
+  ).toBeNull();
+  await page.locator("video").evaluate((video) => (video as HTMLVideoElement).pause());
+  await expect
+    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).paused))
+    .toBe(true);
   expect(uploads).toBe(0);
+});
+
+test("failed audio repair shows its reason beside the retry button", async ({
+  page,
+}) => {
+  await page.goto("/?view=watch");
+  await page.getByLabel("Choose video").setInputFiles({
+    name: "invalid.mkv",
+    mimeType: "video/x-matroska",
+    buffer: Buffer.from("invalid media"),
+  });
+  const repair = page.getByRole("button", { name: "Fix audio in Firefox" });
+  await repair.click();
+  await expect(page.locator("[data-audio-repair-status]")).toContainText(
+    "Audio conversion failed",
+    { timeout: 45_000 },
+  );
+  await expect(repair).toBeEnabled();
+  await page.getByText("Audio repair details", { exact: true }).click();
+  await expect(
+    page.getByText(/Invalid data found when processing input/u),
+  ).toBeVisible();
+  await page.getByText("Choose an existing audio track", { exact: true }).click();
+  await page.getByLabel("Choose repaired audio").setInputFiles({
+    name: "invalid.ogg",
+    mimeType: "audio/ogg",
+    buffer: Buffer.from("invalid audio"),
+  });
+  await expect(page.locator("[data-audio-repair-status]")).toContainText(
+    "Firefox could not play the audio",
+  );
+  await expect(page.locator("[data-watch-audio]")).toHaveCount(0);
+  await expect(page.getByText("Audio repair details", { exact: true })).toBeVisible();
 });
 
 test.describe("audio repair cancellation", () => {
