@@ -702,7 +702,8 @@ rollback product and neither V1 nor `jp-player` is archived.
 - A plugin or public API surface.
 - Multiple AI providers beyond the configured provider and test fake.
 - Hosted video, audio upload, and remote media storage.
-- Automatic alignment, transcoding, and browser-WASM FFmpeg.
+- Automatic alignment and video transcoding. The reported Firefox MKV audio
+  failure activated browser-local audio repair; see the Phase 5 follow-up.
 - Automatic Card creation from passive playback.
 - Grammar capture from selected subtitles.
 - Generated or synthesized audio.

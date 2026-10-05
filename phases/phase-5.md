@@ -69,6 +69,22 @@ The browser derives content-based episode and cue keys using Web Crypto with the
 same Phase 3 identity inputs. Filenames and positional cue numbers are display
 metadata only. SRT text is never persisted merely because the learner watched.
 
+**Firefox MKV follow-up (2026-10-05):** The reported silent MKV failure activates
+the previously deferred audio repair requirement. The learner can select an MKV
+and press **Fix audio in Firefox**. A lazily loaded FFmpeg worker reads the local
+File through WORKERFS and converts its first audio track to Ogg/Opus. No media
+crosses the network. Cancellation, replacement, and unload terminate the worker
+and release its memory. Watch keeps the repaired track aligned with play, pause,
+buffering, seeking, playback rate, and volume, and revokes both object URLs when
+replaced or unloaded. An existing local audio track can also be attached.
+
+The published dependencies are pinned to @ffmpeg/ffmpeg 0.12.15 (MIT wrapper)
+and @ffmpeg/core 0.12.10 (GPL v2 or later core); the licences and upstream source
+and build recipe are linked from Watch. The implementation uses the old player
+only as behavioral evidence and imports no code from it. MKV video decoding
+still depends on the browser's native codec support; automatic subtitle
+alignment and video transcoding remain deferred.
+
 The Watch page accepts exactly one video and one SRT for this phase. This is a
 deliberate first-release surface, not an inference that ASS, alignment, or audio
 repair is unimportant. Those behaviors are deferred until the prepare/study/

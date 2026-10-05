@@ -1,4 +1,23 @@
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+
+const silentWav = (): Buffer => {
+  const samples = 16_000;
+  const bytes = Buffer.alloc(44 + samples * 2);
+  bytes.write("RIFF", 0);
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write("WAVEfmt ", 8);
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(8_000, 24);
+  bytes.writeUInt32LE(16_000, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write("data", 36);
+  bytes.writeUInt32LE(samples * 2, 40);
+  return bytes;
+};
 
 const subtitles = `1
 00:00:00,000 --> 00:00:10,000
@@ -96,4 +115,132 @@ test("Study, Watch, and Prepare stay reachable on the supported critical surface
   await expect(
     page.getByRole("heading", { name: "Learn the Japanese your shows need." }),
   ).toBeVisible();
+});
+
+test("local MKV sidecar audio follows seeking, speed, volume, and video replacement", async ({
+  page,
+}) => {
+  await page.goto("/?view=watch");
+  await page.getByLabel("Choose video").setInputFiles({
+    name: "episode.mkv",
+    mimeType: "video/x-matroska",
+    buffer: Buffer.from("local-mkv-fixture"),
+  });
+  await expect(page.getByText("Silent MKV in Firefox?")).toBeVisible();
+  await page.getByText("Choose an existing audio track").click();
+  await page.getByLabel("Choose repaired audio").setInputFiles({
+    name: "audio.wav",
+    mimeType: "audio/wav",
+    buffer: silentWav(),
+  });
+  await expect(page.getByRole("status")).toContainText(
+    "Firefox-compatible audio is ready",
+  );
+  const state = await page.evaluate(() => {
+    const video = document.querySelector("video");
+    const audio = document.querySelector<HTMLAudioElement>("[data-watch-audio]");
+    if (video === null || audio === null) throw new Error("media elements missing");
+    video.currentTime = 0.6;
+    video.dispatchEvent(new Event("seeking"));
+    video.playbackRate = 1.5;
+    video.volume = 0.4;
+    return {
+      videoMuted: video.muted,
+      audioTime: audio.currentTime,
+    };
+  });
+  expect(state.videoMuted).toBe(true);
+  expect(state.audioTime).toBeCloseTo(0.6, 1);
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-watch-audio]")
+        .evaluate((audio) => (audio as HTMLAudioElement).playbackRate),
+    )
+    .toBe(1.5);
+  await expect
+    .poll(() =>
+      page
+        .locator("[data-watch-audio]")
+        .evaluate((audio) => (audio as HTMLAudioElement).volume),
+    )
+    .toBe(0.4);
+
+  await page.getByLabel("Choose video").setInputFiles({
+    name: "next.mkv",
+    mimeType: "video/x-matroska",
+    buffer: Buffer.from("next-local-mkv-fixture"),
+  });
+  await expect(page.locator("[data-watch-audio]")).toHaveCount(0);
+  expect(
+    await page.locator("video").evaluate((video) => (video as HTMLVideoElement).muted),
+  ).toBe(false);
+});
+
+test("repairs MKV audio in the browser without uploading media", async ({ page }) => {
+  let uploads = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "GET") uploads += 1;
+  });
+  await page.goto("/?view=watch");
+  await page
+    .getByLabel("Choose video")
+    .setInputFiles(
+      fileURLToPath(new URL("./fixtures/firefox-mkv.mkv", import.meta.url)),
+    );
+  await page.getByRole("button", { name: "Fix audio in Firefox" }).click();
+  await expect(
+    page.getByRole("button", { name: "Audio fixed", exact: true }),
+  ).toBeVisible({ timeout: 45_000 });
+  const audio = page.locator("[data-watch-audio]");
+  await expect(audio).toHaveAttribute("src", /^blob:/u);
+  expect(
+    await audio.evaluate((element) => (element as HTMLAudioElement).duration),
+  ).toBeGreaterThan(1.9);
+  expect(
+    await audio.evaluate((element) => (element as HTMLAudioElement).readyState),
+  ).toBeGreaterThanOrEqual(1);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((element) => (element as HTMLVideoElement).muted),
+  ).toBe(true);
+  expect(uploads).toBe(0);
+});
+
+test.describe("audio repair cancellation", () => {
+  test.use({ serviceWorkers: "block" });
+
+  test("audio repair can be cancelled during module loading and retried", async ({
+    page,
+  }) => {
+    let moduleRequested = false;
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/*audio-repair*.js", async (route) => {
+      moduleRequested = true;
+      await gate;
+      await route.continue().catch(() => {});
+    });
+    await page.goto("/?view=watch");
+    await page
+      .getByLabel("Choose video")
+      .setInputFiles(
+        fileURLToPath(new URL("./fixtures/firefox-mkv.mkv", import.meta.url)),
+      );
+    const repair = page.getByRole("button", { name: "Fix audio in Firefox" });
+    expect(moduleRequested).toBe(false);
+    await repair.click();
+    await expect.poll(() => moduleRequested).toBe(true);
+    await page.getByRole("button", { name: "Cancel audio repair" }).click();
+    await expect(repair).toBeEnabled();
+    await expect(page.locator("[data-watch-audio]")).toHaveCount(0);
+    release();
+    await repair.click();
+    await expect(
+      page.getByRole("button", { name: "Audio fixed", exact: true }),
+    ).toBeVisible({ timeout: 45_000 });
+  });
 });

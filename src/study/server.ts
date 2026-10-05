@@ -937,6 +937,8 @@ const contentTypes: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".woff2": "font/woff2",
+  ".wasm": "application/wasm",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 const staticResponse = async (request: Request): Promise<Response> => {

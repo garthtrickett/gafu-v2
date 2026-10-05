@@ -2,6 +2,8 @@ import { activeWatchCues, type WatchCue } from "./subtitles.ts";
 
 export type LocalPlayback = Readonly<{
   replaceVideo: (file: File) => Readonly<{ url: string; name: string }>;
+  replaceAudio: (file: File) => string;
+  clearAudio: () => void;
   cuesAt: (
     cues: readonly WatchCue[],
     currentTimeSeconds: number,
@@ -15,18 +17,31 @@ export type ObjectUrlPort = Readonly<{
 }>;
 
 export const createLocalPlayback = (objectUrls: ObjectUrlPort): LocalPlayback => {
-  let currentUrl: string | null = null;
+  let videoUrl: string | null = null;
+  let audioUrl: string | null = null;
+  const clearAudio = (): void => {
+    if (audioUrl !== null) objectUrls.revoke(audioUrl);
+    audioUrl = null;
+  };
   return {
     replaceVideo: (file) => {
-      if (currentUrl !== null) objectUrls.revoke(currentUrl);
-      currentUrl = objectUrls.create(file);
-      return { url: currentUrl, name: file.name };
+      if (videoUrl !== null) objectUrls.revoke(videoUrl);
+      clearAudio();
+      videoUrl = objectUrls.create(file);
+      return { url: videoUrl, name: file.name };
     },
+    replaceAudio: (file) => {
+      clearAudio();
+      audioUrl = objectUrls.create(file);
+      return audioUrl;
+    },
+    clearAudio,
     cuesAt: (cues, currentTimeSeconds) =>
       activeWatchCues(cues, Math.round(currentTimeSeconds * 1_000)),
     dispose: () => {
-      if (currentUrl !== null) objectUrls.revoke(currentUrl);
-      currentUrl = null;
+      if (videoUrl !== null) objectUrls.revoke(videoUrl);
+      videoUrl = null;
+      clearAudio();
     },
   };
 };

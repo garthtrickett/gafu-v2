@@ -1116,6 +1116,15 @@ summary {
   border-top: 1px solid #343a32;
 }
 
+.watch-controls code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 0.6rem;
+  border: 1px solid #343a32;
+  border-radius: 0.4rem;
+  background: #101310;
+}
+
 kbd {
   padding: 0.2rem 0.4rem;
   border: 1px solid #596155;
