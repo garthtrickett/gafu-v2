@@ -1105,6 +1105,11 @@ summary {
   gap: 1rem;
 }
 
+.watch-controls section {
+  display: grid;
+  gap: 0.65rem;
+}
+
 .watch-controls h2,
 .capture-panel h2 {
   margin: 0;

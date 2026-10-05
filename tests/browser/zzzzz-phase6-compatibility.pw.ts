@@ -353,3 +353,155 @@ test.describe("audio repair cancellation", () => {
     ).toBeVisible({ timeout: 45_000 });
   });
 });
+
+const timingBursts = [
+  [6.3, 1.2],
+  [9.75, 2.3],
+  [15.1, 0.8],
+  [18.6, 1.7],
+  [23.8, 1.1],
+  [27.3, 2.1],
+  [33.4, 1.4],
+  [38.2, 2.4],
+  [42.6, 0.9],
+  [47.7, 1.6],
+  [51.3, 2.2],
+  [56.8, 1.3],
+  [60.4, 1.9],
+  [65.7, 1.1],
+  [70.2, 2],
+  [74.8, 1.4],
+] as const;
+const timingSrt = (text: string, shift = 0): string =>
+  timingBursts
+    .map(([start, length], i) => {
+      const stamp = (seconds: number): string => {
+        const ms = Math.round(seconds * 1000);
+        return `00:${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")},${String(ms % 1000).padStart(3, "0")}`;
+      };
+      return `${i + 1}\n${stamp(start - 3.3 + shift)} --> ${stamp(start + length - 3.3 + shift)}\n${text} ${i + 1}`;
+    })
+    .join("\n\n");
+
+test("local subtitle analysis shares correction with Japanesified cues and exports it", async ({
+  page,
+}) => {
+  let uploads = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "GET") uploads += 1;
+  });
+  await page.goto("/?view=watch");
+  await page
+    .getByLabel("Choose video")
+    .setInputFiles(
+      fileURLToPath(new URL("./fixtures/subtitle-timing.mkv", import.meta.url)),
+    );
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "japanese.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(timingSrt("猫は寝る。")),
+  });
+  const analyze = page.getByRole("button", {
+    name: "Analyze subtitle timing",
+    exact: true,
+  });
+  await analyze.click();
+  await expect(page.locator("[data-subtitle-timing-status]")).toContainText(
+    "Timing applied:",
+    { timeout: 45000 },
+  );
+  const offset = page.getByLabel("Subtitle offset (seconds)");
+  const scale = page.getByLabel("Subtitle timing scale");
+  expect(Math.abs(Number(await offset.inputValue()) - 3.3)).toBeLessThan(0.3);
+  expect(Math.abs(Number(await scale.inputValue()) - 1)).toBeLessThan(0.004);
+  const correction = [await offset.inputValue(), await scale.inputValue()];
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "japanesified.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(timingSrt("Cat は, sleeps よ。")),
+  });
+  await expect(page.locator("[data-subtitle-timing-status]")).toContainText(
+    "kept the current subtitle correction",
+  );
+  expect([await offset.inputValue(), await scale.inputValue()]).toEqual(correction);
+  await page.locator("video").evaluate((element) => {
+    (element as HTMLVideoElement).currentTime = 6.6;
+  });
+  await expect(page.locator("[data-cue-key]")).toContainText("Cat は, sleeps よ。 1");
+  await page.getByRole("button", { name: "Later 0.1s", exact: true }).click();
+  expect(Number(await offset.inputValue())).toBeCloseTo(Number(correction[0]) + 0.1, 2);
+  await offset.fill("1.5");
+  await offset.dispatchEvent("change");
+  await scale.fill("1");
+  await scale.dispatchEvent("change");
+  const downloadPending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download corrected SRT" }).click();
+  const download = await downloadPending;
+  expect(download.suggestedFilename()).toBe("japanesified-aligned.srt");
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  if (stream === null) throw new Error("download stream missing");
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const output = Buffer.concat(chunks).toString("utf8");
+  expect(output).toContain("00:00:04,500 --> 00:00:05,700\nCat は, sleeps よ。 1");
+  expect(output.split(" --> ")).toHaveLength(17);
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "different.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(timingSrt("犬が走る。", 1)),
+  });
+  await expect(offset).toHaveValue("0");
+  await expect(scale).toHaveValue("1");
+  await expectNoHorizontalOverflow(page);
+  expect(uploads).toBe(0);
+});
+
+test.describe("subtitle analysis recovery", () => {
+  test.use({ serviceWorkers: "block" });
+  test("cancelled and failed analysis preserve the manual correction", async ({
+    page,
+  }) => {
+    let moduleRequested = false;
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/*audio-analysis*.js", async (route) => {
+      moduleRequested = true;
+      await gate;
+      await route.continue().catch(() => {});
+    });
+    await page.goto("/?view=watch");
+    await page.getByLabel("Choose video").setInputFiles({
+      name: "silent.mkv",
+      mimeType: "video/x-matroska",
+      buffer: silentWav(),
+    });
+    await page.getByLabel("Choose Japanese SRT").setInputFiles({
+      name: "episode.srt",
+      mimeType: "application/x-subrip",
+      buffer: Buffer.from(timingSrt("猫は寝る。")),
+    });
+    const offset = page.getByLabel("Subtitle offset (seconds)");
+    await offset.fill("0.5");
+    await offset.dispatchEvent("change");
+    const analyze = page.getByRole("button", {
+      name: "Analyze subtitle timing",
+      exact: true,
+    });
+    await analyze.click();
+    await expect.poll(() => moduleRequested).toBe(true);
+    await page.getByRole("button", { name: "Cancel subtitle analysis" }).click();
+    await expect(analyze).toBeEnabled();
+    release();
+    await analyze.click();
+    await expect(page.locator("[data-subtitle-timing-status]")).toContainText(
+      "at least ten seconds",
+      { timeout: 45000 },
+    );
+    await expect(offset).toHaveValue("0.5");
+    await expect(analyze).toBeEnabled();
+    await page.getByRole("button", { name: "Reset subtitle timing" }).click();
+    await expect(offset).toHaveValue("0");
+  });
+});
