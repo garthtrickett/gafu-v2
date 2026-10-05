@@ -350,7 +350,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const audio = event.currentTarget as HTMLAudioElement;
     if (audio.src !== model.audioUrl) return;
     const detail =
-      audio.error?.message ?? `Media error ${audio.error?.code ?? "unknown"}`;
+      audio.error?.message || `Media error ${audio.error?.code ?? "unknown"}`;
     clearAudio();
     model.repairMessage =
       "Firefox could not play the audio. See the repair details below.";

@@ -263,6 +263,17 @@ test("failed audio repair shows its reason beside the retry button", async ({
   await expect(
     page.getByText(/Invalid data found when processing input/u),
   ).toBeVisible();
+  await page.getByText("Choose an existing audio track", { exact: true }).click();
+  await page.getByLabel("Choose repaired audio").setInputFiles({
+    name: "invalid.ogg",
+    mimeType: "audio/ogg",
+    buffer: Buffer.from("invalid audio"),
+  });
+  await expect(page.locator("[data-audio-repair-status]")).toContainText(
+    "Firefox could not play the audio",
+  );
+  await expect(page.locator("[data-watch-audio]")).toHaveCount(0);
+  await expect(page.getByText("Audio repair details", { exact: true })).toBeVisible();
 });
 
 test.describe("audio repair cancellation", () => {
