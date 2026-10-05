@@ -6,6 +6,7 @@ import { err, ok, type Result } from "../result.ts";
 
 export type AudioRepairError = Readonly<{
   kind: "cancelled" | "engineUnavailable" | "conversionFailed";
+  detail?: string;
 }>;
 
 export type AudioRepairProgress = Readonly<{
@@ -25,6 +26,12 @@ export const repairBrowserAudio = async (
   const cancel = (): void => engine.terminate();
   signal.addEventListener("abort", cancel, { once: true });
   let failure: AudioRepairError["kind"] = "engineUnavailable";
+  let conversionDetail = "";
+  engine.on("log", ({ type, message }) => {
+    if (type === "stderr") {
+      conversionDetail = `${conversionDetail}\n${message}`.trim().slice(-1200);
+    }
+  });
   try {
     report({ fraction: 0, message: "Loading the browser audio engine…" });
     await engine.load({
@@ -40,7 +47,12 @@ export const repairBrowserAudio = async (
       { blobs: [{ name: "input.mkv", data: file }] },
       "/media",
     );
-    if (!mounted) return err({ kind: "conversionFailed" });
+    if (!mounted) {
+      return err({
+        kind: "conversionFailed",
+        detail: "The local file could not be opened.",
+      });
+    }
     report({ fraction: 0.05, message: "Converting the first audio track locally…" });
     engine.on("progress", ({ progress }) => {
       if (!signal.aborted) {
@@ -69,18 +81,26 @@ export const repairBrowserAudio = async (
       "ogg",
       "/audio.ogg",
     ]);
-    if (exitCode !== 0) return err({ kind: "conversionFailed" });
+    if (exitCode !== 0) {
+      return err({ kind: "conversionFailed", detail: conversionDetail });
+    }
     const data = await engine.readFile("/audio.ogg");
     if (typeof data === "string" || data.byteLength === 0) {
-      return err({ kind: "conversionFailed" });
+      return err({
+        kind: "conversionFailed",
+        detail: "The conversion produced no audio.",
+      });
     }
     if (signal.aborted) return err({ kind: "cancelled" });
     report({ fraction: 1, message: "Preparing Firefox-compatible audio…" });
     return ok(
       new File([new Uint8Array(data)], "firefox-audio.ogg", { type: "audio/ogg" }),
     );
-  } catch {
-    return err({ kind: signal.aborted ? "cancelled" : failure });
+  } catch (cause) {
+    return err({
+      kind: signal.aborted ? "cancelled" : failure,
+      detail: (conversionDetail || String(cause)).slice(-1200),
+    });
   } finally {
     signal.removeEventListener("abort", cancel);
     engine.terminate();

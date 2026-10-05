@@ -78,6 +78,14 @@ and release its memory. Watch keeps the repaired track aligned with play, pause,
 buffering, seeking, playback rate, and volume, and revokes both object URLs when
 replaced or unloaded. An existing local audio track can also be attached.
 
+Repair and playback failures are also shown beside the repair button, with
+bounded local engine or decoder details available there. Details are not sent
+to the server. A successful conversion explicitly tells the learner to press
+play. The browser gate checks advancing audio and nonzero decoded PCM from a
+synthetic tone, rather than treating loaded metadata as proof of playback.
+Headless Firefox runs with a PulseAudio null sink so the gate has an output
+device; a missing host audio service must not mask a playback regression.
+
 The published dependencies are pinned to @ffmpeg/ffmpeg 0.12.15 (MIT wrapper)
 and @ffmpeg/core 0.12.10 (GPL v2 or later core); the licences and upstream source
 and build recipe are linked from Watch. The implementation uses the old player
