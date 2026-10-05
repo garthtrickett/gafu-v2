@@ -101,8 +101,8 @@ The published dependencies are pinned to @ffmpeg/ffmpeg 0.12.15 (MIT wrapper)
 and @ffmpeg/core 0.12.10 (GPL v2 or later core); the licences and upstream source
 and build recipe are linked from Watch. The implementation uses the old player
 only as behavioral evidence and imports no code from it. MKV video decoding
-still depends on the browser's native codec support; automatic subtitle
-alignment and video transcoding remain deferred.
+still depends on the browser's native codec support; video transcoding remains deferred. The subtitle-timing follow-up below
+activates alignment separately.
 
 The Watch page accepts exactly one video and one SRT for this phase. This is a
 deliberate first-release surface, not an inference that ASS, alignment, or audio
@@ -421,3 +421,51 @@ Phase 6 handoff.
 - [x] Watch resolution and pending capture are implemented.
 - [x] Atomic Study capture is implemented.
 - [x] Watch browser journey and closure evidence pass.
+
+
+## Subtitle timing follow-up — 2026-10-05
+
+The owner requested V1-style audio analysis and offset correction for Japanese
+and Japanesified English SRTs. This activates the earlier alignment/manual-drift
+deferral. V1 is read-only behavioral evidence: it matches audio activity with cue
+times, without recognizing words. V2 implements this behavior independently;
+no legacy source is copied and no dependency is added.
+
+The follow-up patch order is timing projection/export, local analysis, then
+browser orchestration and regression gates. Watch has one ephemeral affine
+correction: media time = source cue time × scale + offset. Positive offsets show
+subtitles later. Playback uses the inverse transform, retaining original cue
+objects, content-derived keys, and capture source timestamps. Study/Preparation
+persistence and SRS progress are untouched.
+
+The existing lazily loaded FFmpeg engine mounts the selected File through
+WORKERFS and decodes its first audio track (or the chosen local sidecar) to
+speech-band mono 8 kHz PCM, retaining leading silence and timestamp gaps. A
+10 Hz log-RMS activity trace and timing-only cues go to a separate timing worker.
+The bounded search covers offsets ±180s and common frame-rate drift around
+0.96–1.04. It correlates subtitle occupancy with activity and rejects constant,
+insufficient, and ambiguous signals. A reliable result updates timing; low
+confidence or failure preserves the current correction. This is an estimate,
+not speech recognition, and cannot repair inserted/deleted scenes. Analyze at
+least ten seconds/eight dialogue cues, with a four-hour decoding bound.
+
+The browser offers analysis progress/cancel/retry, manual offset in ±600s,
+0.1s earlier/later steps, timing scale in 0.9–1.1, reset, and corrected SRT
+download. No media is uploaded. Replacing/unloading input or editing timing
+cancels work and stale completions cannot apply. Repair and analysis do not run
+concurrently. All workers and temporary object URLs are released.
+
+A translated SRT with the same cue boundaries can be analyzed directly: words
+are irrelevant to this timing match. Switching Japanese/Japanesified tracks
+with identical times retains correction; a different timeline or a new video
+resets it. Download writes displayed cue text and corrected timestamps into a
+new UTF-8 SRT. Partially negative starts clip to zero; entirely negative cues
+produce a clear export error rather than dropping text. No media/subtitle file
+is overwritten or retained across closing Watch.
+
+Gate: synthetic known-offset browser analysis in Chromium, Firefox, and mobile;
+Japanesified track switching, adjusted playback, offset edits, export/reset,
+cancellation/retry, failed-signal preservation, and zero media uploads. Pure
+rules cover positive/negative shifts, frame-rate drift, ambiguous/silent PCM,
+translation-independent timing, export text preservation, and stable provenance.
+Run all four required checks plus git diff --check.

@@ -28,7 +28,17 @@ type CaptureModel = Readonly<{
   operationKey: string;
 }>;
 
-type WatchModel = {
+import {
+  correctedSrt,
+  originalTiming,
+  type SubtitleTiming,
+  sameSubtitleTimes,
+  subtitleTime,
+  validSubtitleTiming,
+} from "./timing.ts";
+import { subtitleTimingControls, type TimingControlsModel } from "./timing-controls.ts";
+
+type WatchModel = TimingControlsModel & {
   videoUrl: string | null;
   videoName: string;
   audioUrl: string | null;
@@ -125,6 +135,12 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     revoke: (url) => URL.revokeObjectURL(url),
   });
   const model: WatchModel = {
+    timing: originalTiming,
+    analyzing: false,
+    analysisMessage:
+      "Choose a video and subtitles to analyze their timing. No media is uploaded.",
+    analysisDetail: "",
+    analysisFraction: 0,
     videoUrl: null,
     videoName: "",
     audioUrl: null,
@@ -147,6 +163,14 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   let captureVersion = 0;
   let destroyed = false;
   let videoFile: File | null = null;
+  let audioFile: File | null = null;
+  let subtitleName = "subtitles.srt";
+  let analysisController: AbortController | null = null;
+  const cancelAnalysis = (): void => {
+    analysisController?.abort();
+    analysisController = null;
+    model.analyzing = false;
+  };
   let repairController: AbortController | null = null;
   let usingRepairedVideo = false;
   let pendingVideoTime: number | null = null;
@@ -179,6 +203,11 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (file === undefined) return;
     cancelRepair();
+    cancelAnalysis();
+    model.timing = originalTiming;
+    model.analysisMessage = "New video loaded. Subtitle timing reset.";
+    model.analysisDetail = "";
+    audioFile = null;
     usingRepairedVideo = false;
     pendingVideoTime = null;
     videoFile = file;
@@ -198,6 +227,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   };
 
   const loadAudio = (file: File): void => {
+    cancelAnalysis();
+    audioFile = file;
     root.querySelector<HTMLVideoElement>("video")?.pause();
     model.audioReady = false;
     model.audioMuted = false;
@@ -216,6 +247,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
 
   const repairFirefoxAudio = async (): Promise<void> => {
     if (videoFile === null || model.repairingAudio || model.audioReady) return;
+    cancelAnalysis();
     const file = videoFile;
     const controller = new AbortController();
     repairController = controller;
@@ -282,6 +314,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   };
 
   const clearAudio = (): void => {
+    cancelAnalysis();
+    audioFile = null;
     const previousVideo = root.querySelector<HTMLVideoElement>("video");
     const position = previousVideo?.currentTime ?? 0;
     previousVideo?.pause();
@@ -306,6 +340,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (file === undefined) return;
+    cancelAnalysis();
     const version = ++subtitleVersion;
     invalidateCapture();
     draw();
@@ -313,13 +348,25 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     if (destroyed || version !== subtitleVersion) return;
     if (!parsed.ok) {
       model.track = null;
+      model.timing = originalTiming;
       model.activeCues = [];
       setMessage(parsed.error.detail, "error");
       return;
     }
+    const keepTiming =
+      model.track !== null && sameSubtitleTimes(model.track.cues, parsed.value.cues);
+    if (!keepTiming) model.timing = originalTiming;
+    model.analysisMessage = keepTiming
+      ? "Matching cue timings: kept the current subtitle correction."
+      : "Subtitles loaded. Timing reset for this timeline.";
+    model.analysisDetail = "";
+    subtitleName = file.name;
     model.track = parsed.value;
     const video = root.querySelector<HTMLVideoElement>("video");
-    model.activeCues = playback.cuesAt(parsed.value.cues, video?.currentTime ?? 0);
+    model.activeCues = playback.cuesAt(
+      parsed.value.cues,
+      subtitleTime(video?.currentTime ?? 0, model.timing),
+    );
     setMessage(
       `Loaded ${parsed.value.cues.length} local subtitle cues. Select text or copy normally.`,
       "success",
@@ -348,8 +395,118 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     if (video === null) return;
     syncAudio();
     const clock = model.audioReady && audio !== null ? audio : video;
-    model.activeCues = playback.cuesAt(model.track?.cues ?? [], clock.currentTime);
+    model.activeCues = playback.cuesAt(
+      model.track?.cues ?? [],
+      subtitleTime(clock.currentTime, model.timing),
+    );
     draw();
+  };
+
+  const changeTiming = (timing: SubtitleTiming): void => {
+    cancelAnalysis();
+    if (!validSubtitleTiming(timing)) {
+      model.analysisMessage =
+        "Use a finite offset within ten minutes and a timing scale between 0.9 and 1.1.";
+      draw();
+      return;
+    }
+    model.timing = timing;
+    model.analysisMessage =
+      "Subtitle timing updated. The original file stays unchanged.";
+    model.analysisDetail = "";
+    invalidateCapture();
+    if (model.videoUrl === null)
+      model.activeCues = playback.cuesAt(
+        model.track?.cues ?? [],
+        subtitleTime(0, timing),
+      );
+    updateCues();
+    draw();
+  };
+
+  const analyzeTiming = async (): Promise<void> => {
+    const track = model.track;
+    const file = audioFile ?? videoFile;
+    if (track === null || file === null || model.analyzing) return;
+    cancelRepair();
+    const controller = new AbortController();
+    analysisController = controller;
+    model.analyzing = true;
+    model.analysisFraction = 0;
+    model.analysisDetail = "";
+    model.analysisMessage = "Loading local audio analysis…";
+    draw();
+    try {
+      const { analyzeSubtitleTiming } = await import("./audio-analysis.ts");
+      const result = await analyzeSubtitleTiming(
+        file,
+        track.cues,
+        controller.signal,
+        (progress) => {
+          if (destroyed || analysisController !== controller) return;
+          model.analysisFraction = progress.fraction;
+          model.analysisMessage = progress.message;
+          draw();
+        },
+      );
+      if (destroyed || analysisController !== controller) return;
+      cancelAnalysis();
+      if (result.ok) {
+        if (result.value.reliable) {
+          model.timing = result.value.timing;
+          invalidateCapture();
+          model.analysisMessage = `Timing applied: ${model.timing.offsetSeconds.toFixed(2)}s offset, scale ${model.timing.scale}. Check a dialogue scene and adjust if needed.`;
+          updateCues();
+        } else {
+          model.analysisMessage =
+            "No clear timing match. Your current correction is unchanged; use the manual offset.";
+        }
+      } else {
+        model.analysisDetail = result.error.detail ?? "";
+        switch (result.error.kind) {
+          case "cancelled":
+            model.analysisMessage = "Subtitle analysis cancelled. You can try again.";
+            break;
+          case "engineUnavailable":
+            model.analysisMessage =
+              "The local audio engine could not load. Try again or use the manual offset.";
+            break;
+          case "conversionFailed":
+            model.analysisMessage =
+              "The audio track could not be analyzed. Use the manual offset or choose an extracted audio track.";
+            break;
+          case "insufficientSignal":
+            model.analysisMessage = result.error.detail;
+            break;
+        }
+      }
+      draw();
+    } catch (cause) {
+      if (destroyed || analysisController !== controller) return;
+      cancelAnalysis();
+      model.analysisMessage =
+        "Subtitle analysis could not start. Try again or use the manual offset.";
+      model.analysisDetail = String(cause).slice(-1200);
+      draw();
+    }
+  };
+
+  const downloadSubtitles = (): void => {
+    if (model.track === null) return;
+    const exported = correctedSrt(model.track, model.timing);
+    if (!exported.ok) {
+      model.analysisMessage = exported.error.detail;
+      draw();
+      return;
+    }
+    const url = URL.createObjectURL(
+      new Blob([exported.value], { type: "application/x-subrip;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${subtitleName.replace(/\.srt$/iu, "")}-aligned.srt`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const onAudioReady = (event: Event): void => {
@@ -666,7 +823,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
               <div>
                 <h3>Silent MKV in Firefox?</h3>
                 <p>Repair the first audio track and prepare a playable video copy in this browser. The MKV stays unchanged and no media is uploaded.</p>
-                <button type="button" ?disabled=${model.repairingAudio || model.audioReady}
+                <button type="button" ?disabled=${model.repairingAudio || model.audioReady || model.analyzing}
                   @click=${() => void repairFirefoxAudio()}>${model.audioReady ? "Audio fixed" : model.repairingAudio ? "Repairing audio…" : "Fix audio in Firefox"}</button>
                 ${
                   model.repairingAudio
@@ -698,11 +855,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                     <input type="file" accept="audio/*,.ogg,.opus,.m4a,.mp3,.wav" @change=${chooseAudio} />
                   </label>
                 </details>
-                <details>
-                  <summary>Audio engine source and licences</summary>
-                  <p><a href=${coreLicenseUrl}>FFmpeg core: GPL v2 or later</a> · <a href=${wrapperLicenseUrl}>Browser wrapper: MIT</a></p>
-                  <p><a href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1">Core source and build recipe (0.12.10)</a> · <a href="https://github.com/ffmpegwasm/ffmpeg.wasm">Browser wrapper source</a></p>
-                </details>
+
                 ${
                   model.audioUrl === null && !usingRepairedVideo
                     ? ""
@@ -731,6 +884,28 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
               Choose Japanese SRT
               <input type="file" accept=".srt,application/x-subrip" @change=${chooseSubtitles} />
             </label>
+            <hr />
+            ${subtitleTimingControls(
+              model,
+              model.track !== null && videoFile !== null && !model.repairingAudio,
+              model.track !== null,
+              {
+                analyze: () => void analyzeTiming(),
+                cancel: () => {
+                  cancelAnalysis();
+                  model.analysisMessage =
+                    "Subtitle analysis cancelled. You can try again.";
+                  draw();
+                },
+                change: changeTiming,
+                download: downloadSubtitles,
+              },
+            )}
+                <details>
+                  <summary>Audio engine source and licences</summary>
+                  <p><a href=${coreLicenseUrl}>FFmpeg core: GPL v2 or later</a> · <a href=${wrapperLicenseUrl}>Browser wrapper: MIT</a></p>
+                  <p><a href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1">Core source and build recipe (0.12.10)</a> · <a href="https://github.com/ffmpegwasm/ffmpeg.wasm">Browser wrapper source</a></p>
+                </details>
             <hr />
             <h2>Capture one word</h2>
             <p>
@@ -828,6 +1003,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   draw();
   return () => {
     destroyed = true;
+    cancelAnalysis();
     cancelRepair();
     subtitleVersion += 1;
     captureVersion += 1;
