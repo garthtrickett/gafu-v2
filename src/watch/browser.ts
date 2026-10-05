@@ -148,6 +148,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   let destroyed = false;
   let videoFile: File | null = null;
   let repairController: AbortController | null = null;
+  let usingRepairedVideo = false;
+  let pendingVideoTime: number | null = null;
 
   const cancelRepair = (): void => {
     repairController?.abort();
@@ -177,6 +179,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (file === undefined) return;
     cancelRepair();
+    usingRepairedVideo = false;
+    pendingVideoTime = null;
     videoFile = file;
     const previousVideo = root.querySelector<HTMLVideoElement>("video");
     previousVideo?.pause();
@@ -217,7 +221,9 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     repairController = controller;
     model.repairingAudio = true;
     model.repairMessage = "Loading the browser audio engine…";
-    root.querySelector<HTMLVideoElement>("video")?.pause();
+    const video = root.querySelector<HTMLVideoElement>("video");
+    const position = video?.currentTime ?? 0;
+    video?.pause();
     draw();
     try {
       const { repairBrowserAudio } = await import("./audio-repair.ts");
@@ -230,7 +236,14 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
       if (destroyed || repairController !== controller) return;
       cancelRepair();
       if (result.ok) {
-        loadAudio(result.value);
+        model.audioReady = false;
+        model.audioUrl = null;
+        if (video !== null) video.muted = false;
+        model.videoUrl = playback.replaceVideo(result.value).url;
+        usingRepairedVideo = true;
+        pendingVideoTime = position;
+        model.repairMessage = "Loading the repaired video…";
+        setMessage("Audio repaired locally. Waiting for the playable video copy.");
         return;
       }
       model.repairDetail = result.error.detail ?? "";
@@ -269,7 +282,9 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
   };
 
   const clearAudio = (): void => {
-    root.querySelector<HTMLVideoElement>("video")?.pause();
+    const previousVideo = root.querySelector<HTMLVideoElement>("video");
+    const position = previousVideo?.currentTime ?? 0;
+    previousVideo?.pause();
     root.querySelector<HTMLAudioElement>("[data-watch-audio]")?.pause();
     playback.clearAudio();
     model.audioUrl = null;
@@ -277,6 +292,11 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
     model.audioMuted = false;
     model.repairMessage = "";
     model.repairDetail = "";
+    if (usingRepairedVideo && videoFile !== null) {
+      model.videoUrl = playback.replaceVideo(videoFile).url;
+      usingRepairedVideo = false;
+      pendingVideoTime = position;
+    }
     const video = root.querySelector<HTMLVideoElement>("video");
     if (video !== null) video.muted = false;
     setMessage("Using the video’s original audio track.");
@@ -356,7 +376,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
       "Firefox could not play the audio. See the repair details below.";
     model.repairDetail = detail.slice(-1200);
     setMessage(
-      "This browser could not play the selected audio. Choose an Ogg/Opus file.",
+      "This browser could not play the selected audio. Choose an Ogg audio file.",
       "error",
     );
   };
@@ -573,6 +593,23 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                       controls
                       .src=${model.videoUrl}
                       aria-label=${model.videoName}
+                      @loadedmetadata=${() => {
+                        const video = audioElements().video;
+                        if (video !== null && pendingVideoTime !== null) {
+                          video.currentTime = pendingVideoTime;
+                          pendingVideoTime = null;
+                          syncAudio(true);
+                        }
+                        if (usingRepairedVideo && model.audioUrl === null) {
+                          model.audioReady = true;
+                          model.repairMessage =
+                            "Audio repaired. Press play on the video to hear it.";
+                          setMessage(
+                            "Firefox-compatible audio is ready. Press play.",
+                            "success",
+                          );
+                        }
+                      }}
                       @play=${onVideoPlay}
                       @playing=${onVideoPlay}
                       @waiting=${() => audioElements().audio?.pause()}
@@ -628,7 +665,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                 ? html`
               <div>
                 <h3>Silent MKV in Firefox?</h3>
-                <p>Convert the first audio track in this browser. The MKV stays unchanged and no media is uploaded.</p>
+                <p>Repair the first audio track and prepare a playable video copy in this browser. The MKV stays unchanged and no media is uploaded.</p>
                 <button type="button" ?disabled=${model.repairingAudio || model.audioReady}
                   @click=${() => void repairFirefoxAudio()}>${model.audioReady ? "Audio fixed" : model.repairingAudio ? "Repairing audio…" : "Fix audio in Firefox"}</button>
                 ${
@@ -653,8 +690,9 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                 }
                 <details>
                   <summary>Choose an existing audio track</summary>
-                  <p>You can also extract audio on your computer with FFmpeg and choose the output here.</p>
-                  <code>ffmpeg -i "input.mkv" -map 0:a:0 -vn -c:a libopus "audio.ogg"</code>
+                  <p>You can also repair the file on your computer with FFmpeg, then select repaired.mkv with Choose video above.</p>
+                  <code>ffmpeg -i "input.mkv" -map 0:v:0 -map 0:a:0 -c:v copy -c:a libvorbis "repaired.mkv"</code>
+                  <p>If you already have a separate audio track, choose it below.</p>
                   <label>
                     Choose repaired audio
                     <input type="file" accept="audio/*,.ogg,.opus,.m4a,.mp3,.wav" @change=${chooseAudio} />
@@ -666,10 +704,14 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                   <p><a href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1">Core source and build recipe (0.12.10)</a> · <a href="https://github.com/ffmpegwasm/ffmpeg.wasm">Browser wrapper source</a></p>
                 </details>
                 ${
-                  model.audioUrl === null
+                  model.audioUrl === null && !usingRepairedVideo
                     ? ""
                     : html`<div class="button-row">
                   <button type="button" class="secondary" @click=${clearAudio}>Use original audio</button>
+                  ${
+                    model.audioUrl === null
+                      ? ""
+                      : html`
                   <button type="button" class="secondary" ?disabled=${!model.audioReady} @click=${() => {
                     const audio = audioElements().audio;
                     if (audio === null) return;
@@ -677,6 +719,8 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
                     audio.muted = model.audioMuted;
                     draw();
                   }}>${model.audioMuted ? "Unmute repaired audio" : "Mute repaired audio"}</button>
+                  `
+                  }
                 </div>`
                 }
               </div>

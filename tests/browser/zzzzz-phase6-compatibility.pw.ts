@@ -177,71 +177,112 @@ test("local MKV sidecar audio follows seeking, speed, volume, and video replacem
   ).toBe(false);
 });
 
-test("repairs MKV audio in the browser without uploading media", async ({ page }) => {
-  let uploads = 0;
-  page.on("request", (request) => {
-    if (request.method() !== "GET") uploads += 1;
-  });
-  await page.goto("/?view=watch");
-  await page
-    .getByLabel("Choose video")
-    .setInputFiles(
-      fileURLToPath(new URL("./fixtures/firefox-mkv.mkv", import.meta.url)),
-    );
-  await page.getByRole("button", { name: "Fix audio in Firefox" }).click();
-  await expect(
-    page.getByRole("button", { name: "Audio fixed", exact: true }),
-  ).toBeVisible({ timeout: 45_000 });
-  const audio = page.locator("[data-watch-audio]");
-  await expect(audio).toHaveAttribute("src", /^blob:/u);
-  expect(
-    await audio.evaluate((element) => (element as HTMLAudioElement).duration),
-  ).toBeGreaterThan(1.9);
-  expect(
-    await audio.evaluate((element) => (element as HTMLAudioElement).readyState),
-  ).toBeGreaterThanOrEqual(1);
-  expect(
+for (const fixture of [
+  { name: "AAC", file: "firefox-mkv.mkv", channels: 1 },
+  { name: "stereo FLAC", file: "firefox-stereo-flac.mkv", channels: 2 },
+]) {
+  test(`repairs ${fixture.name} MKV audio in the browser without uploading media`, async ({
+    page,
+  }) => {
+    let uploads = 0;
+    page.on("request", (request) => {
+      if (request.method() !== "GET") uploads += 1;
+    });
+    await page.goto("/?view=watch");
     await page
-      .locator("video")
-      .evaluate((element) => (element as HTMLVideoElement).muted),
-  ).toBe(true);
-  // Loading metadata alone cannot prove that Firefox decodes and plays audio.
-  // Measure PCM from the converted tone while both media clocks advance.
-  await page.evaluate(async () => {
-    const video = document.querySelector("video");
-    const audio = document.querySelector<HTMLAudioElement>("[data-watch-audio]");
-    if (video === null || audio === null) throw new Error("media elements missing");
-    const context = new AudioContext();
-    const analyser = context.createAnalyser();
-    context.createMediaElementSource(audio).connect(analyser);
-    analyser.connect(context.destination);
-    Object.assign(window, { repairedAudioAnalyser: analyser });
-    await context.resume();
-    await video.play();
+      .getByLabel("Choose video")
+      .setInputFiles(
+        fileURLToPath(new URL(`./fixtures/${fixture.file}`, import.meta.url)),
+      );
+    const video = page.locator("video");
+    const videoDigest = () =>
+      video.evaluate(async (element) => {
+        const bytes = await (
+          await fetch((element as HTMLVideoElement).src)
+        ).arrayBuffer();
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest)).join(",");
+      });
+    const originalDigest = await videoDigest();
+    await video.evaluate((element) => {
+      (element as HTMLVideoElement).currentTime = 0.4;
+    });
+    await page.getByRole("button", { name: "Fix audio in Firefox" }).click();
+    await expect(
+      page.getByRole("button", { name: "Audio fixed", exact: true }),
+    ).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("[data-watch-audio]")).toHaveCount(0);
+    await expect(video).toHaveAttribute("src", /^blob:/u);
+    expect(
+      await video.evaluate((element) => (element as HTMLVideoElement).duration),
+    ).toBeGreaterThan(1.9);
+    expect(await video.evaluate((element) => (element as HTMLVideoElement).muted)).toBe(
+      false,
+    );
+    expect(
+      await video.evaluate((element) => (element as HTMLVideoElement).currentTime),
+    ).toBeCloseTo(0.4, 1);
+    // Require real playback and independently audible channels. A successful
+    // encoder or loaded metadata alone misses the Firefox FLAC buffering bug.
+    await page.evaluate(async () => {
+      const video = document.querySelector("video");
+      if (video === null) throw new Error("video missing");
+      const context = new AudioContext();
+      const splitter = context.createChannelSplitter(2);
+      const merger = context.createChannelMerger(2);
+      const analysers = [context.createAnalyser(), context.createAnalyser()];
+      context.createMediaElementSource(video).connect(splitter);
+      for (const [channel, analyser] of analysers.entries()) {
+        splitter.connect(analyser, channel);
+        analyser.connect(merger, 0, channel);
+      }
+      merger.connect(context.destination);
+      Object.assign(window, { repairedAudioAnalysers: analysers });
+      await context.resume();
+      await video.play();
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const analysers = (
+            window as unknown as { repairedAudioAnalysers: AnalyserNode[] }
+          ).repairedAudioAnalysers;
+          return analysers.map((analyser) => {
+            const samples = new Float32Array(analyser.fftSize);
+            analyser.getFloatTimeDomainData(samples);
+            return samples.some((sample) => Math.abs(sample) > 0.01);
+          });
+        }),
+      )
+      .toEqual([true, fixture.channels === 2]);
+    await expect
+      .poll(() =>
+        video.evaluate((element) => (element as HTMLVideoElement).currentTime),
+      )
+      .toBeGreaterThan(0.6);
+    expect(
+      await video.evaluate((element) => (element as HTMLVideoElement).error),
+    ).toBeNull();
+    await video.evaluate((element) => (element as HTMLVideoElement).pause());
+    expect(
+      await video.evaluate((element) => (element as HTMLVideoElement).paused),
+    ).toBe(true);
+    await video.evaluate((element) => {
+      (element as HTMLVideoElement).currentTime = 1;
+    });
+    await page.getByRole("button", { name: "Use original audio", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Fix audio in Firefox", exact: true }),
+    ).toBeEnabled();
+    await expect.poll(videoDigest).toBe(originalDigest);
+    await expect
+      .poll(() =>
+        video.evaluate((element) => (element as HTMLVideoElement).currentTime),
+      )
+      .toBeCloseTo(1, 1);
+    expect(uploads).toBe(0);
   });
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const analyser = (window as unknown as { repairedAudioAnalyser: AnalyserNode })
-          .repairedAudioAnalyser;
-        const samples = new Float32Array(analyser.fftSize);
-        analyser.getFloatTimeDomainData(samples);
-        return Math.max(...samples.map(Math.abs));
-      }),
-    )
-    .toBeGreaterThan(0.01);
-  await expect
-    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).currentTime))
-    .toBeGreaterThan(0.2);
-  expect(
-    await audio.evaluate((element) => (element as HTMLAudioElement).error),
-  ).toBeNull();
-  await page.locator("video").evaluate((video) => (video as HTMLVideoElement).pause());
-  await expect
-    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).paused))
-    .toBe(true);
-  expect(uploads).toBe(0);
-});
+}
 
 test("failed audio repair shows its reason beside the retry button", async ({
   page,

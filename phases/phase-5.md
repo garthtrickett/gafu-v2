@@ -72,11 +72,14 @@ metadata only. SRT text is never persisted merely because the learner watched.
 **Firefox MKV follow-up (2026-10-05):** The reported silent MKV failure activates
 the previously deferred audio repair requirement. The learner can select an MKV
 and press **Fix audio in Firefox**. A lazily loaded FFmpeg worker reads the local
-File through WORKERFS and converts its first audio track to Ogg/Opus. No media
+File through WORKERFS, converts its first audio track to Vorbis, and copies the
+first video track into a new MKV. Video frames are not re-encoded. No media
 crosses the network. Cancellation, replacement, and unload terminate the worker
-and release its memory. Watch keeps the repaired track aligned with play, pause,
-buffering, seeking, playback rate, and volume, and revokes both object URLs when
-replaced or unloaded. An existing local audio track can also be attached.
+and release its memory. The repaired copy replaces playback at the current
+position, using native video/audio synchronization, seeking, speed, and volume.
+The original File is retained for **Use original audio**. An existing local
+audio track can also be attached and synchronized as a sidecar. All object URLs
+are revoked when replaced or unloaded.
 
 Repair and playback failures are also shown beside the repair button, with
 bounded local engine or decoder details available there. Details are not sent
@@ -85,6 +88,14 @@ play. The browser gate checks advancing audio and nonzero decoded PCM from a
 synthetic tone, rather than treating loaded metadata as proof of playback.
 Headless Firefox runs with a PulseAudio null sink so the gate has an output
 device; a missing host audio service must not mask a playback regression.
+
+The downloaded opening of the episode reported on 2026-10-05 and a synthetic stereo FLAC
+fixture both trigger `RuntimeError: index out of bounds` in the pinned WASM
+Opus encoding path. Vorbis succeeds with the same input and preserves stereo;
+Firefox also buffers indefinitely on the original embedded FLAC even when it
+is muted; replacing it in the playable copy avoids that second failure. The
+browser gate covers both the original AAC fixture and stereo FLAC, checks
+nonzero signal independently in each channel, and proves playback.
 
 The published dependencies are pinned to @ffmpeg/ffmpeg 0.12.15 (MIT wrapper)
 and @ffmpeg/core 0.12.10 (GPL v2 or later core); the licences and upstream source

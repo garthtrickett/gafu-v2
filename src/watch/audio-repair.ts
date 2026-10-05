@@ -71,30 +71,46 @@ export const repairBrowserAudio = async (
       "-i",
       "/media/input.mkv",
       "-map",
+      "0:v:0",
+      "-map",
       "0:a:0",
-      "-vn",
+      // Muting the source cannot prevent Firefox from buffering on embedded
+      // FLAC. Copy its encoded video frames and replace its audio in one
+      // container, keeping native playback controls and its timestamps.
+      "-c:v",
+      "copy",
       "-c:a",
-      "libopus",
+      // The pinned WASM libopus encoder traps on stereo FLAC input. Vorbis
+      // preserves the channels and plays in Firefox without that encoder path.
+      "libvorbis",
       "-b:a",
       "128k",
+      "-avoid_negative_ts",
+      "disabled",
       "-f",
-      "ogg",
-      "/audio.ogg",
+      "matroska",
+      "/repaired.mkv",
     ]);
     if (exitCode !== 0) {
       return err({ kind: "conversionFailed", detail: conversionDetail });
     }
-    const data = await engine.readFile("/audio.ogg");
+    const data = await engine.readFile("/repaired.mkv");
     if (typeof data === "string" || data.byteLength === 0) {
       return err({
         kind: "conversionFailed",
-        detail: "The conversion produced no audio.",
+        detail: "The conversion produced no playable video.",
       });
     }
+    const buffer = data.buffer;
+    if (!(buffer instanceof ArrayBuffer)) return err({ kind: "conversionFailed" });
     if (signal.aborted) return err({ kind: "cancelled" });
     report({ fraction: 1, message: "Preparing Firefox-compatible audio…" });
     return ok(
-      new File([new Uint8Array(data)], "firefox-audio.ogg", { type: "audio/ogg" }),
+      new File(
+        [new Uint8Array(buffer, data.byteOffset, data.byteLength)],
+        "firefox-repaired.mkv",
+        { type: "video/x-matroska" },
+      ),
     );
   } catch (cause) {
     return err({
