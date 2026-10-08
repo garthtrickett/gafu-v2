@@ -947,10 +947,15 @@ export const mountStudyApp = (root: HTMLElement): void => {
         };
         if (progress.done) {
           model.message =
-            progress.failed.length === 0
-              ? `Batch ready: ${progress.completed.length} to review.`
-              : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
-          model.messageKind = "success";
+            progress.completed.length === 0 && progress.failed.length > 0
+              ? `No Cards were prepared. ${progress.failed.length} failed and stay due. Prepare batch can retry them.`
+              : progress.failed.length === 0
+                ? `Batch ready: ${progress.completed.length} to review.`
+                : `Batch ready: ${progress.completed.length} to review, ${progress.failed.length} failed and stay due.`;
+          model.messageKind =
+            progress.completed.length === 0 && progress.failed.length > 0
+              ? "error"
+              : "success";
         }
         handOver(progress.completed.filter((cardId) => !handedIds.includes(cardId)));
         draw();
@@ -1547,7 +1552,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
                     ? html`<p data-testid="batch-progress">
                         ${
                           model.batch.done
-                            ? `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
+                            ? model.batch.completed === 0 && model.batch.failed > 0
+                              ? `No Cards were prepared. ${model.batch.failed} failed and stay due. Prepare batch can retry them.`
+                              : `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
                             : model.batch.requestInFlight
                               ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… ${model.batch.pending} remaining Cards are in one LLM request (round ${model.batch.round} of 3). Ready Cards can be studied while it runs.`
                               : model.batch.round > 1

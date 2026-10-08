@@ -23,6 +23,7 @@ const SHARED = [
   "never empty where the writing has kanji",
   "including the sentence-final 。",
   "Do not pad",
+  "politeness does not require passive voice",
   // How much of the target's work the rest of the sentence does is the one
   // thing that changes with the learner, and it changes in both prompts.
   "depends on target.consecutiveCorrect",
@@ -67,7 +68,7 @@ test("the prompt version moves when the ask changes", () => {
   // The stored version records which instructions produced each candidate.
   // Existing reserves remain until served; this only changes new generations.
   const server = readFileSync("src/study/server.ts", "utf8");
-  expect(server).toContain('promptVersion: "study-v14"');
+  expect(server).toContain('promptVersion: "study-v15"');
 });
 
 /**

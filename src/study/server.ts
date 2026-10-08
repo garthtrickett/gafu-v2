@@ -1025,7 +1025,7 @@ const materialProvider = fakeAi
       // was read as covering it and the Japanese sentence came back verbatim.
       // v13 asks for faithful translations and natural clues for early Cards.
       // v14 makes grammar construction and span requirements explicit.
-      promptVersion: "study-v14",
+      promptVersion: "study-v15",
       // Bounds one HTTP call. Dispatch and each poll are short whatever the
       // model does, so this is a transport bound, not a generation budget.
       timeoutMs: 30_000,

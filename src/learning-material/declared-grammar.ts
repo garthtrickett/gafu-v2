@@ -5,6 +5,13 @@ type GrammarPattern = Readonly<{
   expression: RegExp;
 }>;
 
+// Voice constructions retain their identity through ordinary tense, negative,
+// and polite endings. In particular, させられました is still させられる.
+const causative =
+  /(?:させ|せ)(?:る|た|て|ない|なかった|ます|ました|ません(?:でした)?)/g;
+const causativePassive =
+  /させられ(?:る|た|て|ない|なかった|ます|ました|ません(?:でした)?)/g;
+
 const patterns: readonly GrammarPattern[] = [
   { canonicalForm: "〜ている", expression: /[てで]いる/g },
   { canonicalForm: "〜たことがある", expression: /たことがある/g },
@@ -27,7 +34,7 @@ const patterns: readonly GrammarPattern[] = [
   { canonicalForm: "〜てしまう（縮約）", expression: /(?:ちゃ|じゃ)(?:う|っ)/g },
   { canonicalForm: "可能形", expression: /(?:[えけげせてねべめれ]る|できる)/g },
   { canonicalForm: "受身形", expression: /(?:れ|られ)(?:る|た|て)/g },
-  { canonicalForm: "使役形", expression: /(?:せ|させ)(?:る|た|て)/g },
+  { canonicalForm: "使役形", expression: causative },
   { canonicalForm: "〜ほど〜ない", expression: /ほど[^。]*ない/g },
   { canonicalForm: "〜前に", expression: /前に/g },
   { canonicalForm: "〜ても", expression: /ても/g },
@@ -272,13 +279,13 @@ const patterns: readonly GrammarPattern[] = [
   },
   { canonicalForm: "ばあいは", expression: /ばあいは|場合は/g },
   { canonicalForm: "てよかった", expression: /てよかった|でよかった/g },
-  { canonicalForm: "Verb［せる・させる］", expression: /(?:せ|させ)(?:る|た|て)/g },
+  { canonicalForm: "Verb［せる・させる］", expression: causative },
   { canonicalForm: "〜ても・〜でも", expression: /ても|でも/g },
   {
     canonicalForm: "てしまう / ちゃう",
     expression: /てしまう|でしまう|ちゃう|じゃう/g,
   },
-  { canonicalForm: "させられる", expression: /させられる/g },
+  { canonicalForm: "させられる", expression: causativePassive },
   { canonicalForm: "てある", expression: /てある|である/g },
   // Batch 7: V1 inventory #151-175 (170 ながら already declared above).
   // と (条件) is verb-plain + と; comitative と after nouns that end in a

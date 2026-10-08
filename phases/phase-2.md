@@ -1773,3 +1773,34 @@ Implementation is complete. Production-provider proof remains open until the
 paid smoke succeeds; the Kaishi source and repository licence remain the
 pre-existing external closure gates. See
 [`../docs/evidence/phase-2.md`](../docs/evidence/phase-2.md).
+
+## Voice grammar validation follow-up — 2026-10-08
+
+The reported failed batch named `Verb[せる・させる]`, `させられる`, and
+`わざわざ` with unknown `受身形`. Reproduction found three matcher defects:
+
+- Generated grammar targets are NFKC-normalized, but target comparison kept the
+  declared fullwidth brackets. Even `食べさせる` failed the imported Card.
+- Voice patterns omitted polite, negative, and past causative-passive endings
+  such as `食べさせられました`.
+- The surface passive pattern matched `れて` in ordinary `くれて`.
+
+The correction compares target and support forms at the same character width
+while retaining sense labels and Card identities. Causative/causative-passive
+patterns recognize standard endings and extend a stem-only model highlight over
+the detected ending. Passive evidence is removed only when the analyzer
+positively identifies a dictionary lexical れる-verb; actual or ambiguous voice
+auxiliaries remain evidence. The fallback cannot relabel that lexical verb as a
+passive target. No grammar is marked known and no Card or review state is changed.
+
+Both generation paths now explicitly ask for active sentences when passive or
+causative grammar is neither the target nor allowed support (`study-v15`).
+Actual unknown passive grammar remains a rejection. The screen reports an
+all-failed batch as not prepared instead of “ready / working through”. Manual
+Prepare batch can retry immediately; the background 24-hour cooldown is retained.
+
+Gate: reproduce the bracket-width and lexical-passive failures before changing
+code, then check seven standard voice examples, wrong-form negatives, support
+width equality, false passive rejection as a target, and genuine unknown passive
+rejection. The frozen valid/adversarial corpus stays enabled. Run all four
+required checks plus git diff --check.

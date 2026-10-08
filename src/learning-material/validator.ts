@@ -78,15 +78,18 @@ const overlapsSpan = (
 ): boolean => left.start < right.end && right.start < left.end;
 
 /**
- * A canonical form, with the two tildes read as one.
+ * A canonical form, comparing character widths without erasing sense labels.
  *
  * The declared patterns write the gap as ～ (U+FF5E); Cards imported from V1
  * write it as ~ (U+007E). Compared verbatim, すこしも~ない could never match
  * the pattern named すこしも～ない, so the Card was refused for not using the
- * construction it was entirely made of, every time, for ever.
+ * construction it was entirely made of. NFKC also reconciles the square
+ * brackets in Verb[せる・させる] with the declared Verb［せる・させる］.
  */
+const comparableCanonicalForm = (form: string): string =>
+  form.normalize("NFKC").replace(/[~～]/gu, "~");
 const sameCanonicalForm = (left: string, right: string): boolean =>
-  left.replace(/[~～]/gu, "~") === right.replace(/[~～]/gu, "~");
+  comparableCanonicalForm(left) === comparableCanonicalForm(right);
 
 const grammarContainsTarget = (
   evidence: readonly DetectedGrammar[],
@@ -265,6 +268,16 @@ export const tilings = (
   return found;
 };
 
+// A known lexical れる-verb has its own lemma; voice auxiliaries keep their
+// separate lemmas or the analyzer marks the merged token as 受身形.
+const lexicalReruVerb = (token: AnalyzedToken): boolean =>
+  token.dictionaryFormFound &&
+  token.broadPartOfSpeech === "verb" &&
+  token.conjugation !== "受身形" &&
+  token.lemma.endsWith("れる") &&
+  token.lemma !== "れる" &&
+  token.lemma !== "られる";
+
 const analysisFailure = (kind: string, cause: string): ValidationError =>
   kind === "degraded"
     ? { kind: "analysisDegraded", cause }
@@ -329,7 +342,24 @@ export const createLearningMaterialValidator = (
       return err({ kind: "rejected", reasons });
     }
 
-    const grammar = dependencies.grammar.detect(normalizedJapanese);
+    const knownGrammar = new Set([...knowledge.grammar].map(comparableCanonicalForm));
+    const grammar = dependencies.grammar.detect(normalizedJapanese).flatMap((item) => {
+      if (item.canonicalForm !== "受身形") return [item];
+      // Surface-only れた/れて also occurs in ordinary れる-verbs, e.g.
+      // 忘れた and くれて. Only discard a match when analysis positively
+      // identifies that lexical verb; genuine/ambiguous voice auxiliaries
+      // remain evidence and must be known outside the target.
+      const spans = item.spans.filter(
+        (found) =>
+          !analyzed.value.tokens.some(
+            (token) =>
+              lexicalReruVerb(token) &&
+              found.start >= token.span.start &&
+              found.start < token.span.end,
+          ),
+      );
+      return spans.length === 0 ? [] : [{ ...item, spans }];
+    });
     if (target.kind === "vocabulary") {
       const covering = tilings(analyzed.value.tokens, span);
       // Nothing tiles a highlight that stops inside a token, and a noun
@@ -429,9 +459,18 @@ export const createLearningMaterialValidator = (
         const names = canonicalAlternatives(target.canonicalForm).some((form) =>
           rebuilt.endsWith(form),
         );
-        const detected = dependencies.grammar
-          .detect(rebuilt)
-          .some((item) => sameCanonicalForm(item.canonicalForm, target.canonicalForm));
+        const lexicalPassive =
+          sameCanonicalForm(target.canonicalForm, "受身形") &&
+          analyzed.value.tokens.some(
+            (token) => lexicalReruVerb(token) && overlapsSpan(token.span, span),
+          );
+        const detected =
+          !lexicalPassive &&
+          dependencies.grammar
+            .detect(rebuilt)
+            .some((item) =>
+              sameCanonicalForm(item.canonicalForm, target.canonicalForm),
+            );
         if (!names && !detected) reasons.push({ kind: "targetAbsent" });
       }
       if (target.canonicalForm === "れる・られる (可能)") {
@@ -506,7 +545,7 @@ export const createLearningMaterialValidator = (
             item.spans.length > 0 &&
             item.spans.every((found) => startsInsideSpan(found, span))
           ) &&
-          !knowledge.grammar.has(item.canonicalForm),
+          !knownGrammar.has(comparableCanonicalForm(item.canonicalForm)),
       )
       .map((item) => item.canonicalForm);
     if (unknownGrammar.length > 0) {
