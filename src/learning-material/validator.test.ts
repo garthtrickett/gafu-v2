@@ -452,6 +452,103 @@ describe("target span containment", () => {
     }
   });
 
+  test("causative targets survive bracket widths and polite/past/negative endings", async () => {
+    for (const [canonicalForm, japanese, surface] of [
+      ["Verb[せる・させる]", "食べさせる。", "食べさせる"],
+      ["Verb［せる・させる］", "食べさせます。", "食べさせ"],
+      ["Verb[せる・させる]", "行かせました。", "行かせ"],
+      ["Verb[せる・させる]", "行かせない。", "行かせない"],
+      ["させられる", "食べさせられました。", "食べさせられ"],
+      ["させられる", "食べさせられない。", "食べさせられない"],
+      ["させられる", "させられません。", "させられ"],
+    ] as const) {
+      const text = japanese;
+      const highlighted = surface;
+      const start = text.indexOf(highlighted);
+      const result = await createLearningMaterialValidator(dependencies()).validate(
+        candidate(text, start, start + highlighted.length),
+        { kind: "grammar", canonicalForm },
+        { vocabulary: [], grammar: new Set(declaredGrammarForms) },
+      );
+      expect(result.ok, `${canonicalForm}: ${japanese} ${JSON.stringify(result)}`).toBe(
+        true,
+      );
+    }
+  });
+
+  test("a causative label cannot license an ordinary verb or a different construction", async () => {
+    for (const [canonicalForm, japanese, surface] of [
+      ["Verb[せる・させる]", "食べます。", "食べ"],
+      ["させられる", "食べさせます。", "食べさせ"],
+      ["させられる", "食べられます。", "食べられ"],
+      ["受身形", "来てくれてありがとう。", "くれて"],
+    ] as const) {
+      const text = japanese;
+      const highlighted = surface;
+      const start = text.indexOf(highlighted);
+      const result = await createLearningMaterialValidator(dependencies()).validate(
+        candidate(text, start, start + highlighted.length),
+        { kind: "grammar", canonicalForm },
+        { vocabulary: [], grammar: new Set(declaredGrammarForms) },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error.reasons.map((reason) => reason.kind)).toContain(
+          "targetAbsent",
+        );
+    }
+  });
+
+  test("くれて is not passive support, but an actual passive still requires knowledge", async () => {
+    for (const [japanese, usesPassive] of [
+      ["わざわざ来てくれてありがとう。", false],
+      ["わざわざ呼ばれた。", true],
+    ] as const) {
+      const analyzed = await analyzer.analyze("passive support", japanese);
+      if (!analyzed.ok) throw new Error(analyzed.error.kind);
+      const vocabulary = analyzed.value.tokens
+        .filter((token) => !transparent.has(token.broadPartOfSpeech))
+        .map((token) =>
+          word(token.lemma, token.reading ?? token.surface, token.broadPartOfSpeech),
+        );
+      const result = await createLearningMaterialValidator(dependencies()).validate(
+        candidate(japanese, 0, 4),
+        { kind: "grammar", canonicalForm: "わざわざ" },
+        {
+          vocabulary,
+          grammar: new Set(declaredGrammarForms.filter((form) => form !== "受身形")),
+        },
+      );
+      expect(result.ok, japanese).toBe(!usesPassive);
+      if (!result.ok)
+        expect(result.error.reasons).toContainEqual({
+          kind: "unknownGrammar",
+          canonicalForms: ["受身形"],
+        });
+    }
+  });
+
+  test("known supporting grammar uses the same bracket-width comparison", async () => {
+    const japanese = "わざわざ食べさせる。";
+    const analyzed = await analyzer.analyze("support widths", japanese);
+    if (!analyzed.ok) throw new Error(analyzed.error.kind);
+    const vocabulary = analyzed.value.tokens
+      .filter((token) => !transparent.has(token.broadPartOfSpeech))
+      .map((token) =>
+        word(token.lemma, token.reading ?? token.surface, token.broadPartOfSpeech),
+      );
+    const grammar = new Set(
+      declaredGrammarForms.filter((form) => form !== "Verb［せる・させる］"),
+    );
+    grammar.add("Verb[せる・させる]");
+    const result = await createLearningMaterialValidator(dependencies()).validate(
+      candidate(japanese, 0, 4),
+      { kind: "grammar", canonicalForm: "わざわざ" },
+      { vocabulary, grammar },
+    );
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+  });
+
   test("a lexical can-verb is not mistaken for potential grammar", async () => {
     const japanese = "音が聞こえますか。";
     const analyzed = await analyzer.analyze("lexical can", japanese);
