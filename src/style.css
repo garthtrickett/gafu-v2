@@ -1036,8 +1036,17 @@ summary {
   gap: 0.75rem;
 }
 
+@font-face {
+  font-family: "Gafu Watch";
+  src: url("./watch/fonts/noto-sans-jp-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 .watch-stage {
   position: relative;
+  container-type: inline-size;
   overflow: hidden;
   aspect-ratio: 16 / 9;
   border: 1px solid #343a32;
@@ -1080,12 +1089,16 @@ summary {
   margin: 0;
   padding: 0.08em 0.3em;
   color: white;
-  font-family: "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
-  font-size: clamp(1.45rem, 4.5vw, 4rem);
-  font-weight: 750;
-  line-height: 1.42;
+  font-family:
+    "Gafu Watch", "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic",
+    "Hiragino Kaku Gothic ProN", sans-serif;
+  /* Scale with the video stage, including full screen, rather than the window. */
+  font-size: clamp(1rem, 3cqw, 3rem);
+  font-weight: 700;
+  line-height: 1.3;
   text-align: center;
   white-space: pre-line;
+  overflow-wrap: anywhere;
   text-shadow:
     0 0 0.08em black,
     0 0.04em 0.08em black,

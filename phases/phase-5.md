@@ -469,3 +469,29 @@ cancellation/retry, failed-signal preservation, and zero media uploads. Pure
 rules cover positive/negative shifts, frame-rate drift, ambiguous/silent PCM,
 translation-independent timing, export text preservation, and stable provenance.
 Run all four required checks plus git diff --check.
+
+## Subtitle typography follow-up — 2026-10-08
+
+The owner reported oversized English with tiny kana in a mixed Japanesified
+SRT. Authenticated browser inspection with the supplied local SRT confirms the
+cue is one plain text node with one CSS font size: no subtitle markup assigns
+separate sizes. The exact tiny glyph rendering depends on the client platform
+and was not reproduced with this machine's installed scalable CJK fonts. The
+old stack names fonts without delivering them, allowing different platform
+fonts for Latin and Japanese. The old viewport-based 4.5vw size also remains
+large when the video stage occupies only part of the window.
+
+Watch now delivers a licensed, scalable Noto Sans CJK JP Bold WOFF2 subset for
+both scripts. It is requested from this app when subtitle text is rendered and
+cached by the existing immutable-asset service worker. No package dependency,
+remote font request, subtitle upload, or persistent learner state is added.
+The font source, license, coverage, and reproduction command live beside it.
+
+Typography follows the video stage's inline container width at 3%, bounded by
+1rem and 3rem. It keeps native text selection, literal text rendering and
+multiline cues, uses a tighter 1.3 line height, and wraps long words within the
+stage. Native full screen uses the same container rule. Browser regressions in
+Chromium, Firefox, and mobile Chromium check font loading, actual kana/Latin
+glyph metrics, player resizing without window resizing, containment, and
+native full screen when supported. User-provided subtitle/video bytes and
+private screenshots remain outside the repository.
