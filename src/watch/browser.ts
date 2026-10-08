@@ -902,9 +902,10 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
               },
             )}
                 <details>
-                  <summary>Audio engine source and licences</summary>
+                  <summary>Player source and licences</summary>
                   <p><a href=${coreLicenseUrl}>FFmpeg core: GPL v2 or later</a> · <a href=${wrapperLicenseUrl}>Browser wrapper: MIT</a></p>
                   <p><a href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1">Core source and build recipe (0.12.10)</a> · <a href="https://github.com/ffmpegwasm/ffmpeg.wasm">Browser wrapper source</a></p>
+                  <p><a href=${new URL("./fonts/OFL.txt", import.meta.url).href}>Noto subtitle font licence (SIL OFL 1.1)</a></p>
                 </details>
             <hr />
             <h2>Capture one word</h2>

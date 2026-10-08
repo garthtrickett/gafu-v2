@@ -456,6 +456,77 @@ test("local subtitle analysis shares correction with Japanesified cues and expor
   expect(uploads).toBe(0);
 });
 
+test("mixed subtitles keep kana readable and scale with the player", async ({
+  page,
+}) => {
+  await page.goto("/?view=watch");
+  const cue = "For me は, that place で, a book を, you が read, okay けど?";
+  await page.getByLabel("Choose Japanese SRT").setInputFiles({
+    name: "mixed.srt",
+    mimeType: "application/x-subrip",
+    buffer: Buffer.from(`1\n00:00:00,000 --> 00:00:10,000\n${cue}\n`),
+  });
+  const subtitle = page.locator("[data-cue-key]");
+  await expect(subtitle).toHaveText(cue);
+  const stage = page.locator(".watch-stage");
+  const measure = async () =>
+    subtitle.evaluate(async (element) => {
+      const style = getComputedStyle(element);
+      const faces = await document.fonts.load(
+        `700 ${style.fontSize} "Gafu Watch"`,
+        "Aはをが",
+      );
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (context === null) throw new Error("Missing canvas metrics");
+      context.font = style.font;
+      const latin = context.measureText("ABC").actualBoundingBoxAscent;
+      const kana = context.measureText("はをが").actualBoundingBoxAscent;
+      return {
+        loaded: faces.length,
+        ratio: kana / latin,
+        fontSize: Number.parseFloat(style.fontSize),
+        stageWidth: element.closest(".watch-stage")?.clientWidth ?? 0,
+        width: element.getBoundingClientRect().width,
+        height: element.getBoundingClientRect().height,
+        selectable: style.userSelect,
+      };
+    });
+  const normal = await measure();
+  expect(normal.loaded).toBe(1);
+  expect(normal.ratio).toBeGreaterThan(0.8);
+  expect(normal.ratio).toBeLessThan(1.5);
+  expect(normal.selectable).toBe("text");
+  expect(normal.fontSize).toBeLessThanOrEqual(Math.max(16, normal.stageWidth * 0.031));
+
+  // The window is unchanged: the size must follow a resized player inside it.
+  await stage.evaluate((element) => {
+    element.style.width = "320px";
+  });
+  const small = await measure();
+  expect(small.fontSize).toBeLessThanOrEqual(normal.fontSize);
+  expect(small.width).toBeLessThan(320);
+  expect(small.height).toBeLessThan(100);
+  expect(small.ratio).toBeGreaterThan(0.8);
+  await stage.evaluate((element) => {
+    element.style.width = "";
+  });
+
+  // Android's headless project does not promise native fullscreen support.
+  if (await page.evaluate(() => document.fullscreenEnabled)) {
+    await page.getByRole("button", { name: "Full screen player" }).click();
+    await expect
+      .poll(() => page.evaluate(() => document.fullscreenElement?.className))
+      .toBe("watch-stage");
+    const full = await measure();
+    expect(full.fontSize).toBeLessThanOrEqual(48);
+    expect(full.height).toBeLessThan(150);
+    expect(full.ratio).toBeGreaterThan(0.8);
+    await page.evaluate(() => document.exitFullscreen());
+  }
+  await expect(subtitle).toHaveText(cue);
+});
+
 test.describe("subtitle analysis recovery", () => {
   test.use({ serviceWorkers: "block" });
   test("cancelled and failed analysis preserve the manual correction", async ({
