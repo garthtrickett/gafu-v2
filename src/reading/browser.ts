@@ -269,21 +269,29 @@ export const mountReadingApp = (root: HTMLElement): void => {
   const passageParagraph = (
     sentences: readonly ReadingSentence[],
     start: number,
-  ): TemplateResult => html`<div class="reading-paragraph" data-testid="reading-paragraph">
-    <p class="japanese" lang="ja" data-japanese-sentence>
+  ): TemplateResult => {
+    const dialogue = sentences.some((sentence) => sentence.speaker !== undefined);
+    return html`<div class="reading-paragraph" data-testid="reading-paragraph">
+    <p class="japanese" lang="ja">
       ${sentences.map(
-        (sentence) => html`<span data-testid="reading-sentence"
-        >${sentencePieces(sentence.japanese, sentence.segments, null).map((piece) =>
+        (
+          sentence,
+        ) => html`<span data-testid="reading-sentence" class=${dialogue ? "reading-dialogue-line" : ""}
+        >${sentence.speaker === undefined ? "" : html`<strong class="reading-speaker" data-testid="reading-speaker">${sentence.speaker}:</strong>`}<span data-japanese-sentence>${sentencePieces(
+          sentence.japanese,
+          sentence.segments,
+          null,
+        ).map((piece) =>
           piece.reading === null
             ? html`<span>${piece.text}</span>`
             : html`<ruby>${piece.text}<rt>${piece.reading}</rt></ruby>`,
-        )}</span>`,
+        )}</span></span>`,
       )}
     </p>
     ${
       model.revealed.has(start)
         ? html`<p class="reading-english" data-testid="reading-english">
-          ${sentences.map((sentence) => sentence.english).join(" ")}
+          ${dialogue ? sentences.map((sentence) => html`<span class="reading-dialogue-line">${sentence.speaker === undefined ? "" : html`<strong>${sentence.speaker}:</strong> `}${sentence.english}</span>`) : sentences.map((sentence) => sentence.english).join(" ")}
         </p>`
         : html`<button type="button" class="secondary" @click=${() => {
             model.revealed.add(start);
@@ -291,6 +299,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
           }}>Show English</button>`
     }
   </div>`;
+  };
 
   const view = (): TemplateResult => html`<main class="study-shell">
     <header class="hero">

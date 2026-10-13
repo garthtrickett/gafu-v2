@@ -3,6 +3,7 @@ import type { ReadingSegment } from "../learning-material/contracts.ts";
 import { err, ok, type Result } from "../result.ts";
 
 export type AuthoredSentence = Readonly<{
+  speaker?: string;
   japanese: string;
   english: string;
   segments: readonly ReadingSegment[] | null;
@@ -28,6 +29,7 @@ type JsonObject = {
   segments?: unknown;
   written?: unknown;
   reading?: unknown;
+  speaker?: unknown;
 };
 
 const object = (value: unknown): JsonObject | null =>
@@ -79,6 +81,14 @@ export const decodePassage = (value: unknown): Result<AuthoredPassage, string> =
           `Paragraph ${paragraphIndex + 1}, sentence ${sentenceIndex + 1} needs Japanese and English text.`,
         );
       }
+      if (
+        sentence.speaker !== undefined &&
+        (!boundedText(sentence.speaker, 60) || /[\r\n]/u.test(sentence.speaker))
+      ) {
+        return err(
+          `Paragraph ${paragraphIndex + 1}, sentence ${sentenceIndex + 1} needs a speaker name of 1–60 characters on one line.`,
+        );
+      }
       let segments: readonly ReadingSegment[] | null = null;
       if (sentence.segments !== undefined) {
         if (
@@ -106,6 +116,7 @@ export const decodePassage = (value: unknown): Result<AuthoredPassage, string> =
         );
       }
       paragraph.push({
+        ...(sentence.speaker === undefined ? {} : { speaker: sentence.speaker.trim() }),
         japanese: sentence.japanese,
         english: sentence.english,
         segments,

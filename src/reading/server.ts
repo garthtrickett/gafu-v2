@@ -170,7 +170,11 @@ export const handleReadingApi = async (
             { status: 422 },
           );
         }
-        sentences.push({ ...checked.value, index: sentences.length });
+        sentences.push({
+          ...checked.value,
+          index: sentences.length,
+          ...(sentence.speaker === undefined ? {} : { speaker: sentence.speaker }),
+        });
       }
     }
     const saved = api.store.savePassage({

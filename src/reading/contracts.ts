@@ -48,6 +48,8 @@ export type Tale = Readonly<{
 
 export type ReadingSentence = Readonly<{
   index: number;
+  /** A narrator or character label, separate from the Japanese sentence. */
+  speaker?: string;
   japanese: string;
   /** Written form and reading per run, for furigana over the kanji only. */
   segments: readonly ReadingSegment[];

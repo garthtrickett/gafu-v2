@@ -853,6 +853,20 @@ form {
   white-space: pre;
 }
 
+.reading-paragraph .reading-dialogue-line {
+  display: block;
+}
+
+.reading-paragraph .reading-dialogue-line + .reading-dialogue-line::before {
+  content: none;
+}
+
+.reading-speaker {
+  margin-right: 0.5em;
+  font-size: 0.8em;
+  color: #b7d583;
+}
+
 .bank-pager {
   display: flex;
   gap: 0.75rem;

@@ -8,6 +8,7 @@ import { createKuromojiAnalyzer } from "../analysis/kuromoji-analyzer.ts";
 import { loadKuromojiFromDirectory } from "../analysis/loaders.ts";
 import { mutationHeaders } from "../local-api.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
+import { decodePassage } from "./passage-import.ts";
 import { handleReadingApi } from "./server.ts";
 import { openReadingStore } from "./store.ts";
 
@@ -89,6 +90,7 @@ const passage = {
   paragraphs: [
     [
       {
+        speaker: "Narrator",
         japanese: "女は川に行く。",
         english: "The woman goes to the river.",
         segments: [
@@ -174,6 +176,7 @@ test("an authored passage is checked whole, saved with furigana and reopened", a
     if (!listed.ok) throw new Error("listing failed");
     expect(listed.value).toHaveLength(1);
     expect(listed.value[0]?.paragraphStarts).toEqual([0, 2]);
+    expect(listed.value[0]?.sentences[0]?.speaker).toBe("Narrator");
     expect(listed.value[0]?.sentences[0]?.segments[0]).toEqual({
       written: "女",
       reading: "おんな",
@@ -190,10 +193,11 @@ test("an authored passage is checked whole, saved with furigana and reopened", a
     const reopenedReading = (await loaded?.json()) as {
       title: string;
       paragraphStarts: number[];
-      sentences: { japanese: string }[];
+      sentences: { japanese: string; speaker?: string }[];
     };
     expect(reopenedReading.title).toBe(passage.title);
     expect(reopenedReading.paragraphStarts).toEqual([0, 2]);
+    expect(reopenedReading.sentences[0]?.speaker).toBe("Narrator");
     expect(reopenedReading.sentences.map((sentence) => sentence.japanese)).toEqual([
       "女は川に行く。",
       "女は川を見る。",
@@ -204,3 +208,25 @@ test("an authored passage is checked whole, saved with furigana and reopened", a
     rmSync(directory, { recursive: true, force: true });
   }
 }, 20_000);
+
+test("speaker labels are optional, bounded and part of a passage's identity", () => {
+  const original = decodePassage(passage);
+  const unlabeled = structuredClone(passage);
+  const first = unlabeled.paragraphs[0]?.[0];
+  if (first === undefined) throw new Error("missing fixture sentence");
+  delete first.speaker;
+  const without = decodePassage(unlabeled);
+  expect(original.ok).toBe(true);
+  expect(without.ok).toBe(true);
+  if (!original.ok || !without.ok) throw new Error("fixture refused");
+  expect(original.value.id).not.toBe(without.value.id);
+  expect(without.value.paragraphs[0]?.[0]?.speaker).toBeUndefined();
+  for (const speaker of [null, 7, "", " ", "A\nB", "x".repeat(61)]) {
+    expect(
+      decodePassage({
+        ...passage,
+        paragraphs: [[{ japanese: "川。", english: "A river.", speaker }]],
+      }).ok,
+    ).toBe(false);
+  }
+});
