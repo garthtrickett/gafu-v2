@@ -40,6 +40,12 @@ split the sentence into ordered `written`/`reading` segments as shown above. The
 written segments must rejoin into the sentence, and the reading must fit its
 written form.
 
+For a narrated dialogue, add an optional `speaker` to each sentence, for example
+`"speaker": "Narrator"` or `"speaker": "Yuki"`. A paragraph with speaker labels
+displays each sentence on its own line with the name in front. The labels also
+appear with the English meanings. Names are kept separate from the Japanese
+text and its vocabulary check.
+
 Gafu checks every sentence against the learner's known words. If any sentence
 uses an unknown word or has invalid structure, the entire import is refused and
 the error names the sentence. This import creates a Reading, not a Study Card,

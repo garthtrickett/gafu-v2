@@ -127,4 +127,48 @@ test("imports a connected passage into the Story reader and reopens it", async (
     .getByRole("button", { name: "Read it" })
     .click();
   await expect(page.getByTestId("reading-paragraph")).toHaveCount(2);
+
+  // Narration and dialogue carry their own labels and keep one line each.
+  await page.getByRole("button", { name: "All tales" }).click();
+  const dialogue = JSON.parse(file.buffer.toString()) as {
+    title: string;
+    titleEnglish: string;
+    paragraphs: { speaker?: string }[][];
+  };
+  dialogue.title = "川の会話";
+  dialogue.titleEnglish = "River dialogue";
+  for (const [index, sentence] of dialogue.paragraphs.flat().entries()) {
+    sentence.speaker = ["Narrator", "Yuki", "Aki"][index] ?? "Narrator";
+  }
+  await page.getByLabel("Import a passage").setInputFiles({
+    name: "river-dialogue.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(dialogue)),
+  });
+  await expect(page.getByTestId("reading-speaker")).toHaveText([
+    "Narrator:",
+    "Yuki:",
+    "Aki:",
+  ]);
+  await expect(page.getByTestId("reading-sentence").first()).toHaveCSS(
+    "display",
+    "block",
+  );
+  await page
+    .getByTestId("reading-paragraph")
+    .first()
+    .getByRole("button", { name: "Show English" })
+    .click();
+  await expect(page.getByTestId("reading-english")).toContainText("Yuki:");
+  await page.reload();
+  await page
+    .getByTestId("tale-list")
+    .locator(".bank-card", { hasText: "River dialogue" })
+    .getByRole("button", { name: "Read it" })
+    .click();
+  await expect(page.getByTestId("reading-speaker")).toHaveText([
+    "Narrator:",
+    "Yuki:",
+    "Aki:",
+  ]);
 });
