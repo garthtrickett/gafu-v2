@@ -349,8 +349,7 @@ const patterns: readonly GrammarPattern[] = [
   // never fire it; かい likewise so 社会 never fires it. し uses a negative
   // lookahead so verb inflections do not fire it. と (条件) after nouns that
   // end in a verb-class kana (私と) and 風 inside 台風 are accepted
-  // over-fires. させてもらう only matches ichidan/suru/kuru causatives;
-  // godan せ+てもらう (休ませてもらう) is a recorded ceiling.
+  // over-fires.
   // 命令形 splits by collision risk: げぜでえ rarely end sentences
   // non-imperatively, so they allow 。; other e-row endings require a command
   // continuation (よ/ぞ/ぜ/、) because ね。/て。/れ。/め。 end ordinary
@@ -402,7 +401,15 @@ const patterns: readonly GrammarPattern[] = [
   },
   { canonicalForm: "によって", expression: /によって/g },
   { canonicalForm: "全く〜ない", expression: /全く[^。]*?ない|まったく[^。]*?ない/g },
-  { canonicalForm: "させてもらう", expression: /させてもらう/g },
+  {
+    // Godan permission has an a-row stem (休ませてもらう, 書かせてもらう).
+    // Bare せ would also match the ordinary benefactive 見せてもらう.
+    // The final もらう keeps its identity through polite, past, and negative
+    // endings, including permission requests such as 休ませてもらえますか.
+    canonicalForm: "させてもらう",
+    expression:
+      /(?:させ|[わかがさたなばまら]せ)てもら(?:う|った|って|わない|わなかった|います|いました|いません(?:でした)?|え(?:る|た|て|ない|なかった|ます|ました|ません(?:でした)?|ば)|おう)/g,
+  },
   {
     canonicalForm: "Particle + の",
     expression:
@@ -517,7 +524,8 @@ const patterns: readonly GrammarPattern[] = [
   { canonicalForm: "割に", expression: /割に|わりに/g },
   {
     canonicalForm: "Verb[volitional]とする",
-    expression: /(?:[おこそとのほもよろぼぽごぞど]う|よう)とする/g,
+    expression:
+      /(?:[おこそとのほもよろぼぽごぞど]う|よう)と(?:する|した|して|しない|しなかった|します|しました|しません(?:でした)?|すれば|しよう)/g,
   },
   { canonicalForm: "そうもない", expression: /そうもない/g },
   { canonicalForm: "ないことはない", expression: /ないことはない/g },

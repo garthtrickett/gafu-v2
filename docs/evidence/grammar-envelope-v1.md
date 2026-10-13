@@ -55,12 +55,21 @@ Verb[よう] intentionally couples with every よう-compound.
   目的 fires 的; 社会 avoids かい only via end-anchoring; 後ろ。 fires 命令形;
   旅に fires たびに; 上がる avoids がる via the stem class.
 - Kanji stems are invisible to surface regex (見た needed 見|寝|起|着|居;
-  来い needed explicit cover; godan せ+てもらう never matches
-  /させてもらう/). Unlisted kanji stems need analyzer-backed detection.
+  来い needed explicit cover). Unlisted kanji stems need analyzer-backed
+  detection.
 - Dictionary-form verb Cards (くる/する) only validate when the surface
   appears; conjugated targets need analyzer-backed span evidence.
 - 帰れ。-class れ-imperatives need a command continuation to validate.
 - Bare-kana きり and bare きれない rely on enumerated kanji-adjacent forms.
+
+The 2026-10-13 study regression retires the godan permission ceiling:
+`させてもらう` now recognizes a-row causatives such as `休ませてもらいます`
+and ordinary inflections, including `休ませてもらえますか` requests.
+`Verb[volitional]とする` likewise recognizes inflected `する` endings such as
+`話そうとします` and `読もうとしました`. Detector and real-analyzer validator
+tests cover these forms, shortened-highlight repair, and rejection of ordinary
+benefactives or a different volitional construction. The 315 declared forms and
+296 migrated identities remain unchanged.
 
 ## Follow-up (not in this change)
 
