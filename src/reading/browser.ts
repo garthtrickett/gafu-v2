@@ -13,6 +13,7 @@ type TaleListing = Readonly<{
   sentenceCount: number;
   words: readonly TaleWord[];
   generatedAt: string | null;
+  kind: "tale" | "passage";
 }>;
 
 type Model = {
@@ -39,15 +40,18 @@ const request = async <Value>(url: string, init?: RequestInit): Promise<Value> =
   });
   const body = (await response.json()) as
     | Value
-    | { error?: { kind?: string }; detail?: string };
+    | {
+        error?: { kind?: string; detail?: string; index?: number; reasons?: string[] };
+      };
   if (!response.ok) {
     const failure =
       typeof body === "object" && body !== null && "error" in body ? body : null;
     const kind = failure?.error?.kind;
+    const error = failure?.error;
     throw new Error(
-      failure?.detail === undefined
-        ? (kind ?? `requestFailed:${response.status}`)
-        : `${kind ?? "failed"} — ${failure.detail}`,
+      error?.reasons !== undefined
+        ? `Sentence ${(error.index ?? 0) + 1}: ${error.reasons.join("; ")}`
+        : (error?.detail ?? kind ?? `requestFailed:${response.status}`),
     );
   }
   return body as Value;
@@ -110,6 +114,25 @@ export const mountReadingApp = (root: HTMLElement): void => {
       model.reading = reading;
       model.revealed = new Set<number>();
       return `${reading.title} — ${reading.sentences.length} sentences.`;
+    });
+  };
+
+  const importPassage = (file: File): void => {
+    void run(async () => {
+      let body: unknown;
+      try {
+        body = JSON.parse(await file.text());
+      } catch {
+        throw new Error("Choose a valid JSON passage file.");
+      }
+      const imported = await request<{ id: string }>("/api/reading/import", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      const reading = await request<Reading>(`/api/reading/${imported.id}`);
+      model.reading = reading;
+      model.revealed = new Set<number>();
+      return `${reading.title} imported — ${reading.sentences.length} sentences.`;
     });
   };
 
@@ -243,6 +266,32 @@ export const mountReadingApp = (root: HTMLElement): void => {
     </article>`;
   };
 
+  const passageParagraph = (
+    sentences: readonly ReadingSentence[],
+    start: number,
+  ): TemplateResult => html`<div class="reading-paragraph" data-testid="reading-paragraph">
+    <p class="japanese" lang="ja" data-japanese-sentence>
+      ${sentences.map(
+        (sentence) => html`<span data-testid="reading-sentence"
+        >${sentencePieces(sentence.japanese, sentence.segments, null).map((piece) =>
+          piece.reading === null
+            ? html`<span>${piece.text}</span>`
+            : html`<ruby>${piece.text}<rt>${piece.reading}</rt></ruby>`,
+        )}</span>`,
+      )}
+    </p>
+    ${
+      model.revealed.has(start)
+        ? html`<p class="reading-english" data-testid="reading-english">
+          ${sentences.map((sentence) => sentence.english).join(" ")}
+        </p>`
+        : html`<button type="button" class="secondary" @click=${() => {
+            model.revealed.add(start);
+            draw();
+          }}>Show English</button>`
+    }
+  </div>`;
+
   const view = (): TemplateResult => html`<main class="study-shell">
     <header class="hero">
       <div>
@@ -252,6 +301,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
           Each tale is written fresh against your own vocabulary: every sentence uses
           words you know, except for the one word the tale cannot be told without.
         </p>
+        <p>Import a connected passage written with your known words to read it here too.</p>
         <p class="hint">Highlight a word, then press Alt (Option on Mac) for Jisho.</p>
       </div>
       <nav class="button-row">
@@ -291,7 +341,19 @@ export const mountReadingApp = (root: HTMLElement): void => {
     model.tales === null
       ? html`<p class="empty">Loading tales…</p>`
       : html`<section class="panel">
-          <h2>Tales</h2>
+          <h2>Readings</h2>
+          <div class="reading-import">
+            <label for="reading-import-file">Import a passage</label>
+            <input id="reading-import-file" type="file" accept=".json,application/json"
+              ?disabled=${model.busy} @change=${(event: Event) => {
+                const input = event.currentTarget as HTMLInputElement;
+                const file = input.files?.[0];
+                if (file !== undefined) importPassage(file);
+                input.value = "";
+              }} />
+            <p class="hint">Choose a Gafu passage JSON file with Japanese sentences,
+              English meanings and paragraph breaks. Furigana can be included in the file.</p>
+          </div>
           <div class="card-list" data-testid="tale-list">
             ${model.tales.map(
               (tale) => html`<article class="bank-card" data-tale-id=${tale.id}>
@@ -299,13 +361,17 @@ export const mountReadingApp = (root: HTMLElement): void => {
                   <h3 lang="ja">${tale.title}<span class="pill">${tale.titleReading}</span></h3>
                   <p>${tale.titleEnglish} · ${tale.sentenceCount} sentences</p>
                   <p class="answer-copy">${tale.provenance}</p>
-                  <p class="answer-copy">
+                  ${
+                    tale.kind === "passage"
+                      ? ""
+                      : html`<p class="answer-copy">
                     ${
                       tale.words.length === 0
                         ? "You already know every word this tale needs."
                         : html`New words: ${tale.words.map((word) => word.lemma).join("、")}`
                     }
-                  </p>
+                  </p>`
+                  }
                 </div>
                 <div class="button-row">
                   ${
@@ -319,14 +385,18 @@ export const mountReadingApp = (root: HTMLElement): void => {
                           Read it
                         </button>`
                   }
-                  <button
+                  ${
+                    tale.kind === "passage"
+                      ? ""
+                      : html`<button
                     type="button"
                     class="secondary"
                     ?disabled=${model.busy}
                     @click=${() => writeTale(tale.id)}
                   >
                     ${tale.generatedAt === null ? "Write it" : "Write it again"}
-                  </button>
+                  </button>`
+                  }
                 </div>
               </article>`,
             )}
@@ -339,7 +409,16 @@ export const mountReadingApp = (root: HTMLElement): void => {
   >
     <h2 lang="ja">${reading.title}</h2>
     <p>${reading.titleEnglish} · ${reading.provenance}</p>
-    ${reading.sentences.map(sentenceView)}
+    ${
+      reading.paragraphStarts === undefined
+        ? reading.sentences.map(sentenceView)
+        : reading.paragraphStarts.map((start, index) =>
+            passageParagraph(
+              reading.sentences.slice(start, reading.paragraphStarts?.[index + 1]),
+              start,
+            ),
+          )
+    }
   </section>`;
 
   draw();
