@@ -2,6 +2,7 @@ import type { BroadPartOfSpeech, JapaneseAnalyzer } from "../analysis/contracts.
 import { readBoundedJson } from "../local-api.ts";
 import type { KnowledgeSnapshot } from "../study/contracts.ts";
 import type { ReadingFailure, ReadingSentence } from "./contracts.ts";
+import { decodePassage } from "./passage-import.ts";
 import {
   alreadyHas,
   checkBeat,
@@ -56,27 +57,138 @@ export const handleReadingApi = async (
       return Response.json({ error: written.error }, { status: status(written.error) });
     }
     const knowledge = api.knowledge();
+    const imported = api.store.passages();
+    if (!imported.ok) {
+      return Response.json(
+        { error: imported.error },
+        { status: status(imported.error) },
+      );
+    }
     return Response.json({
-      tales: tales.map((tale) => {
-        const words = taleWords(tale);
-        // The same rule the beat itself uses, so the list cannot promise a
-        // tale is cheaper than it turns out to be.
-        const unknown =
-          knowledge === null
-            ? words
-            : words.filter((word) => !alreadyHas(word, knowledge));
-        return {
-          id: tale.id,
-          title: tale.title,
-          titleReading: tale.titleReading,
-          titleEnglish: tale.titleEnglish,
-          provenance: tale.provenance,
-          sentenceCount: tale.beats.length,
-          words: unknown,
-          generatedAt: written.value.get(tale.id) ?? null,
-        };
-      }),
+      tales: [
+        ...tales.map((tale) => {
+          const words = taleWords(tale);
+          // The same rule the beat itself uses, so the list cannot promise a
+          // tale is cheaper than it turns out to be.
+          const unknown =
+            knowledge === null
+              ? words
+              : words.filter((word) => !alreadyHas(word, knowledge));
+          return {
+            id: tale.id,
+            title: tale.title,
+            titleReading: tale.titleReading,
+            titleEnglish: tale.titleEnglish,
+            provenance: tale.provenance,
+            sentenceCount: tale.beats.length,
+            words: unknown,
+            generatedAt: written.value.get(tale.id) ?? null,
+            kind: "tale" as const,
+          };
+        }),
+        ...imported.value.map((passage) => ({
+          id: passage.id,
+          title: passage.title,
+          titleReading: passage.titleReading,
+          titleEnglish: passage.titleEnglish,
+          provenance: passage.provenance,
+          sentenceCount: passage.sentences.length,
+          words: [],
+          generatedAt: passage.generatedAt,
+          kind: "passage" as const,
+        })),
+      ],
     });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/reading/import") {
+    const knowledge = api.knowledge();
+    if (knowledge === null) {
+      return Response.json(
+        { error: { kind: "readFailed", detail: "knowledge unavailable" } },
+        { status: 500 },
+      );
+    }
+    const body = await readBoundedJson(request);
+    if (!body.ok) {
+      return Response.json(
+        { error: { kind: "invalidPassage", detail: body.error.kind } },
+        { status: 400 },
+      );
+    }
+    const decoded = decodePassage(body.value);
+    if (!decoded.ok) {
+      return Response.json(
+        { error: { kind: "invalidPassage", detail: decoded.error } },
+        { status: 400 },
+      );
+    }
+    const sentences: ReadingSentence[] = [];
+    const paragraphStarts: number[] = [];
+    for (const paragraph of decoded.value.paragraphs) {
+      paragraphStarts.push(sentences.length);
+      for (const sentence of paragraph) {
+        let segments = sentence.segments;
+        if (segments === null) {
+          const analyzed = await api.analyzer.analyze("reading", sentence.japanese);
+          if (!analyzed.ok) {
+            return Response.json(
+              {
+                error: {
+                  kind: "beatRefused",
+                  index: sentences.length,
+                  reasons: ["the sentence could not be analyzed"],
+                },
+              },
+              { status: 422 },
+            );
+          }
+          segments = analyzed.value.tokens.map((token) => ({
+            written: token.surface,
+            reading: token.reading ?? token.surface,
+          }));
+        }
+        const checked = await checkBeat(
+          {
+            analyzer: api.analyzer,
+            provider: api.provider,
+            transparentPartOfSpeech: api.transparentPartOfSpeech,
+          },
+          { japanese: sentence.japanese, english: sentence.english, segments },
+          null,
+          knowledge,
+        );
+        if (!checked.ok) {
+          return Response.json(
+            {
+              error: {
+                kind: "beatRefused",
+                index: sentences.length,
+                reasons: checked.error,
+              },
+            },
+            { status: 422 },
+          );
+        }
+        sentences.push({ ...checked.value, index: sentences.length });
+      }
+    }
+    const saved = api.store.savePassage({
+      id: decoded.value.id,
+      title: decoded.value.title,
+      titleReading: decoded.value.titleReading,
+      titleEnglish: decoded.value.titleEnglish,
+      provenance: "Imported passage",
+      generatedAt: api.now().toISOString(),
+      paragraphStarts,
+      sentences,
+    });
+    if (!saved.ok)
+      return Response.json({ error: saved.error }, { status: status(saved.error) });
+    return Response.json(
+      { id: decoded.value.id, sentences: sentences.length },
+      { status: 201 },
+    );
   }
 
   const match = url.pathname.match(/^\/api\/reading\/([A-Za-z0-9-]+)(\/progress)?$/u);
@@ -85,6 +197,27 @@ export const handleReadingApi = async (
   const isProgress = match[2] !== undefined;
   const tale = taleById(taleId);
   if (tale === null) {
+    if (request.method === "GET" && !isProgress) {
+      const imported = api.store.passages();
+      if (!imported.ok)
+        return Response.json(
+          { error: imported.error },
+          { status: status(imported.error) },
+        );
+      const passage = imported.value.find((item) => item.id === taleId);
+      if (passage !== undefined) {
+        return Response.json({
+          taleId: passage.id,
+          title: passage.title,
+          titleReading: passage.titleReading,
+          titleEnglish: passage.titleEnglish,
+          provenance: passage.provenance,
+          generatedAt: passage.generatedAt,
+          paragraphStarts: passage.paragraphStarts,
+          sentences: passage.sentences,
+        });
+      }
+    }
     return Response.json({ error: { kind: "taleNotFound", taleId } }, { status: 404 });
   }
 

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../result.ts";
-import type { Reading, ReadingFailure, ReadingSentence } from "./contracts.ts";
+import type { Passage, Reading, ReadingFailure, ReadingSentence } from "./contracts.ts";
 
-const READING_SCHEMA_VERSION = 2;
+const READING_SCHEMA_VERSION = 3;
 
 const detail = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
@@ -60,6 +60,17 @@ const migrate = (database: Database, appliedAt: string): void => {
         .query("INSERT INTO reading_migration(version, applied_at) VALUES (2, ?)")
         .run(appliedAt);
     }
+    if (current.version < 3) {
+      database.exec(`
+        CREATE TABLE reading_passage (
+          tale_id TEXT PRIMARY KEY REFERENCES reading(tale_id) ON DELETE CASCADE,
+          metadata_json TEXT NOT NULL
+        );
+      `);
+      database
+        .query("INSERT INTO reading_migration(version, applied_at) VALUES (3, ?)")
+        .run(appliedAt);
+    }
   });
   apply.immediate();
 };
@@ -84,6 +95,9 @@ export type ReadingStore = Readonly<{
   >;
   /** Which tales already have a reading, for the list to say so. */
   generated: () => Result<ReadonlyMap<string, string>, ReadingFailure>;
+  /** Imported passages are committed whole and listed separately from tales. */
+  savePassage: (passage: Passage) => Result<void, ReadingFailure>;
+  passages: () => Result<readonly Passage[], ReadingFailure>;
   /** Clears any part-written reading and lays out one pending beat each. */
   begin: (taleId: string, beats: number) => Result<void, ReadingFailure>;
   progress: (taleId: string) => Result<ReadingProgress, ReadingFailure>;
@@ -146,6 +160,70 @@ export const openReadingStore = (options: {
             .query("SELECT tale_id, generated_at FROM reading")
             .all() as { tale_id: string; generated_at: string }[];
           return ok(new Map(rows.map((row) => [row.tale_id, row.generated_at])));
+        } catch (cause) {
+          return err({ kind: "readFailed", detail: detail(cause) });
+        }
+      },
+      savePassage: (passage) => {
+        try {
+          const insert = database.transaction(() => {
+            database
+              .query(
+                `INSERT OR IGNORE INTO reading(tale_id, generated_at, sentences_json)
+               VALUES (?, ?, ?)`,
+              )
+              .run(passage.id, passage.generatedAt, JSON.stringify(passage.sentences));
+            database
+              .query(
+                `INSERT OR IGNORE INTO reading_passage(tale_id, metadata_json)
+               VALUES (?, ?)`,
+              )
+              .run(
+                passage.id,
+                JSON.stringify({
+                  title: passage.title,
+                  titleReading: passage.titleReading,
+                  titleEnglish: passage.titleEnglish,
+                  provenance: passage.provenance,
+                  paragraphStarts: passage.paragraphStarts,
+                }),
+              );
+          });
+          insert.immediate();
+          return ok(undefined);
+        } catch (cause) {
+          return err({ kind: "writeFailed", detail: detail(cause) });
+        }
+      },
+      passages: () => {
+        try {
+          const rows = database
+            .query(
+              `SELECT p.tale_id, p.metadata_json, r.generated_at, r.sentences_json
+             FROM reading_passage p JOIN reading r ON r.tale_id = p.tale_id
+             ORDER BY r.generated_at DESC, p.tale_id`,
+            )
+            .all() as {
+            tale_id: string;
+            metadata_json: string;
+            generated_at: string;
+            sentences_json: string;
+          }[];
+          return ok(
+            rows.map((row) => ({
+              id: row.tale_id,
+              ...(JSON.parse(row.metadata_json) as Pick<
+                Passage,
+                | "title"
+                | "titleReading"
+                | "titleEnglish"
+                | "provenance"
+                | "paragraphStarts"
+              >),
+              generatedAt: row.generated_at,
+              sentences: JSON.parse(row.sentences_json) as readonly ReadingSentence[],
+            })),
+          );
         } catch (cause) {
           return err({ kind: "readFailed", detail: detail(cause) });
         }

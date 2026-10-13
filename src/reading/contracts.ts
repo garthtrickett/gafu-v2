@@ -67,6 +67,19 @@ export type Reading = Readonly<{
   provenance: string;
   generatedAt: string;
   sentences: readonly ReadingSentence[];
+  /** Start index of each paragraph in an imported passage. */
+  paragraphStarts?: readonly number[];
+}>;
+
+export type Passage = Readonly<{
+  id: string;
+  title: string;
+  titleReading: string;
+  titleEnglish: string;
+  provenance: string;
+  generatedAt: string;
+  paragraphStarts: readonly number[];
+  sentences: readonly ReadingSentence[];
 }>;
 
 export type ReadingFailure =
