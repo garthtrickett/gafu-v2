@@ -476,12 +476,75 @@ describe("target span containment", () => {
     }
   });
 
+  test("attempt and permission Cards accept inflected examples and repair shortened highlights", async () => {
+    for (const [canonicalForm, japanese, surface, highlighted] of [
+      [
+        "Verb[volitional]とする",
+        "今、話そうとします。",
+        "話そうとし",
+        "話そうとします",
+      ],
+      [
+        "Verb[volitional]とする",
+        "昨日、読もうとしました。",
+        "読もうとし",
+        "読もうとしました",
+      ],
+      ["Verb[volitional]とする", "寝ようとした。", "寝ようとした", "寝ようとした"],
+      ["Verb[volitional]とする", "行こうとしている。", "行こうとし", "行こうとして"],
+      [
+        "させてもらう",
+        "今日は休ませてもらいます。",
+        "休ませてもらい",
+        "休ませてもらいます",
+      ],
+      [
+        "させてもらう",
+        "昨日は読ませてもらった。",
+        "読ませてもらった",
+        "読ませてもらった",
+      ],
+      [
+        "させてもらう",
+        "食べさせてもらいました。",
+        "食べさせてもらい",
+        "食べさせてもらいました",
+      ],
+      [
+        "させてもらう",
+        "休ませてもらえますか。",
+        "休ませてもらえ",
+        "休ませてもらえます",
+      ],
+    ] as const) {
+      const analyzed = await analyzer.analyze("attempt and permission", japanese);
+      if (!analyzed.ok) throw new Error(analyzed.error.kind);
+      const vocabulary = analyzed.value.tokens
+        .filter((token) => !transparent.has(token.broadPartOfSpeech))
+        .map((token) =>
+          word(token.lemma, token.reading ?? token.surface, token.broadPartOfSpeech),
+        );
+      const start = japanese.indexOf(surface);
+      const result = await createLearningMaterialValidator(dependencies()).validate(
+        candidate(japanese, start, start + surface.length),
+        { kind: "grammar", canonicalForm },
+        { vocabulary, grammar: new Set(declaredGrammarForms) },
+      );
+      expect(result.ok, `${japanese}: ${JSON.stringify(result)}`).toBe(true);
+      if (result.ok) expect(result.value.presentation.targetSurface).toBe(highlighted);
+    }
+  });
+
   test("a causative label cannot license an ordinary verb or a different construction", async () => {
     for (const [canonicalForm, japanese, surface] of [
       ["Verb[せる・させる]", "食べます。", "食べ"],
       ["させられる", "食べさせます。", "食べさせ"],
       ["させられる", "食べられます。", "食べられ"],
       ["受身形", "来てくれてありがとう。", "くれて"],
+      ["させてもらう", "食べてもらいます。", "食べてもらい"],
+      ["させてもらう", "見せてもらいました。", "見せてもらい"],
+      ["Verb[volitional]とする", "話そうと思います。", "話そうと思い"],
+      ["Verb[volitional]とする", "話すとします。", "話すとし"],
     ] as const) {
       const text = japanese;
       const highlighted = surface;

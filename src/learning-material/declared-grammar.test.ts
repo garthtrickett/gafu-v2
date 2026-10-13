@@ -45,6 +45,63 @@ test("morphologically ambiguous spans retain both distinct grammar identities", 
   expect(detected.map((evidence) => evidence.canonicalForm)).toContain("可能形");
 });
 
+test("attempts and causative permission retain their identity when inflected", () => {
+  for (const [form, sentences] of [
+    [
+      "Verb[volitional]とする",
+      [
+        "話そうとします。",
+        "読もうとしました。",
+        "寝ようとした。",
+        "行こうとしている。",
+        "食べようとしませんでした。",
+        "開けようとしなかった。",
+        "開けようとすれば。",
+        "読もうとしよう。",
+      ],
+    ],
+    [
+      "させてもらう",
+      [
+        "休ませてもらいます。",
+        "読ませてもらった。",
+        "書かせてもらっている。",
+        "食べさせてもらいました。",
+        "させてもらわない。",
+        "させてもらいませんでした。",
+        "休ませてもらえますか。",
+        "読ませてもらえませんか。",
+        "食べさせてもらえなかった。",
+        "書かせてもらおう。",
+      ],
+    ],
+  ] as const) {
+    for (const sentence of sentences) {
+      expect(
+        declaredGrammarDetector.detect(sentence).map((item) => item.canonicalForm),
+        `${form}: ${sentence}`,
+      ).toContain(form);
+    }
+  }
+});
+
+test("ordinary benefactives and other volitional constructions are not these targets", () => {
+  for (const [form, sentences] of [
+    ["させてもらう", ["食べてもらいます。", "見せてもらいました。", "もらった。"]],
+    [
+      "Verb[volitional]とする",
+      ["話そうと思います。", "話すとします。", "話しています。"],
+    ],
+  ] as const) {
+    for (const sentence of sentences) {
+      expect(
+        declaredGrammarDetector.detect(sentence).map((item) => item.canonicalForm),
+        `${form}: ${sentence}`,
+      ).not.toContain(form);
+    }
+  }
+});
+
 describe("which Grammar Cards material can be generated for", () => {
   test("accepts a declared construction however it is written", () => {
     // The declared forms are written for a reader: some carry the placeholder
