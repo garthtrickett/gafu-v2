@@ -33,7 +33,7 @@ test("a saved session with expired review permits returns its Cards to study", a
   });
   await page.reload();
   await expect(page.getByRole("status")).toContainText(
-    "Your saved review session expired. Those Cards remain due",
+    "Your saved session is no longer available",
   );
   await expect(page.getByRole("button", { name: "Explanation" })).toHaveCount(0);
 });

@@ -136,8 +136,8 @@ class RequestFailure extends Error {
     super(
       kind === "presentationInvalid" || kind === "presentationExpired"
         ? "review expired or unavailable; prepare a new batch"
-        : kind === "cardNotAnswerable"
-          ? "Card is no longer due"
+        : kind === "cardNotDue" || kind === "cardNotAnswerable"
+          ? "Card is no longer available for this session"
           : kind,
     );
   }
@@ -1481,7 +1481,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }
         ${
           model.sync.failed.length > 0
-            ? html`<p class="notice notice--error" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. The Cards stay due.</p>`
+            ? html`<p class="notice notice--error" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. Check the current Card status before retrying.</p>`
             : ""
         }
 
@@ -1882,26 +1882,51 @@ export const mountStudyApp = (root: HTMLElement): void => {
     const saved = await store.get<unknown>(SNAPSHOT_KEY);
     if (isDrawableSnapshot(saved)) model.snapshot = saved;
     const session = await store.get<NonNullable<BrowserModel["session"]>>(SESSION_KEY);
-    const remaining = session?.items.slice(session.index).filter(answerable) ?? [];
-    const current = remaining[0];
-    if (current !== undefined) {
-      model.session = { items: remaining, index: 0 };
-      model.presentation = current;
-      model.revealed = false;
-      void store.set(SESSION_KEY, model.session);
-    } else if (session !== undefined) {
-      void store.delete(SESSION_KEY);
-    }
-    model.busy = false;
+    // Check saved material before enabling its actions. Teaching has no
+    // permit expiry to protect it; unexpired reviews also work offline.
     draw();
     await outbox.restore();
+    const remaining = session?.items.slice(session.index).filter(answerable) ?? [];
     await run(async () => {
-      await refresh();
-      return model.session !== null
-        ? "Picking up where you left off."
-        : session !== undefined
-          ? "Your saved review session expired. Those Cards remain due; prepare a new batch."
-          : "Card bank ready. No Cards are admitted until study asks for a queue.";
+      try {
+        await refresh();
+        if (remaining.length > 0) {
+          const checked = await requestJson<{ eligibleIds: string[] }>(
+            "/api/study/session/resume",
+            {
+              method: "POST",
+              body: JSON.stringify({
+                items: remaining.map(({ id, cardId, mode }) => ({ id, cardId, mode })),
+              }),
+            },
+          );
+          const eligible = new Set(checked.eligibleIds);
+          const current = remaining.filter((item) => eligible.has(item.id));
+          if (current.length > 0) {
+            beginSession(current);
+            return "Picking up where you left off.";
+          }
+        }
+      } catch (cause) {
+        // A review permit authorizes offline grading until it expires.
+        // Teaching has no such permit: leave those presentations on the
+        // device, without offering actions the server may now refuse.
+        if (cause instanceof TypeError) {
+          const reviews = remaining.filter((item) => item.mode === "review");
+          const first = reviews[0];
+          if (first !== undefined) {
+            model.session = { items: reviews, index: 0 };
+            model.presentation = first;
+            model.revealed = false;
+          }
+        }
+        throw cause;
+      }
+      if (session !== undefined) {
+        await store.delete(SESSION_KEY);
+        return "Your saved session is no longer available. Prepare a new batch for the Cards currently due.";
+      }
+      return "Card bank ready. No Cards are admitted until study asks for a queue.";
     });
     try {
       const active = await requestJson<{ batchId: string; total: number } | null>(

@@ -444,6 +444,49 @@ const handleApi = async (
   if (request.method === "GET" && url.pathname === "/api/provider/last-request") {
     return materialResponse(material.inspectLastRequest());
   }
+  if (request.method === "POST" && url.pathname === "/api/study/session/resume") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      !Array.isArray(body["items"]) ||
+      body["items"].some(
+        (item) =>
+          !isRecord(item) ||
+          typeof item["id"] !== "string" ||
+          typeof item["cardId"] !== "string" ||
+          (item["mode"] !== "teach" && item["mode"] !== "review"),
+      )
+    )
+      return invalidRequest("Saved session items are invalid.");
+    // A saved presentation can outlive suspension, re-staging, or learning
+    // in another tab. Check the authoritative deck without admitting Cards.
+    const cards = study.listCards();
+    if (!cards.ok) return failureResponse(cards.error);
+    const status = study.status();
+    if (!status.ok) return failureResponse(status.error);
+    const flags = material.teachingFlags();
+    if (!flags.ok) return materialResponse(flags);
+    const modes = new Map(
+      cards.value
+        .filter(
+          (card) =>
+            card.state === "active" &&
+            card.dueAt !== null &&
+            card.dueAt <= status.value.observedAt,
+        )
+        .map((card) => [
+          card.id as string,
+          wantsTeaching(card, flags.value.taught.has(card.id)) ? "teach" : "review",
+        ]),
+    );
+    const items = body["items"] as { id: string; cardId: string; mode: string }[];
+    return Response.json({
+      eligibleIds: items
+        .filter((item) => modes.get(item.cardId) === item.mode)
+        .map((item) => item.id),
+    });
+  }
   if (request.method === "POST" && url.pathname === "/api/study/session") {
     return serveFirst(study, material);
   }
