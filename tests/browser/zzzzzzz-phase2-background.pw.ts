@@ -179,7 +179,22 @@ test("an open session does not stop background preparation of other due Cards", 
 }) => {
   await page.clock.install();
   await page.goto("/");
-  await page.evaluate(async () => {
+  // A saved session must refer to an active, due Card. Use a real first
+  // exposure so restoration checks the same eligibility as production.
+  const openCardId = await ensureCard(page, "vocabulary", "棚", {
+    lemma: "棚",
+    reading: "たな",
+    partOfSpeech: "noun",
+    meaning: "shelf for the open background session",
+    usageNotes: "",
+  });
+  const prepared = await page.request.post("/api/study/session/prepare", {
+    headers: MUTATION,
+    data: { cardId: openCardId },
+  });
+  expect(prepared.ok(), await prepared.text()).toBe(true);
+  const presentation = await prepared.json();
+  await page.evaluate(async (item) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const opened = indexedDB.open("gafu-v2-study", 1);
       opened.onsuccess = () => resolve(opened.result);
@@ -187,53 +202,12 @@ test("an open session does not stop background preparation of other due Cards", 
     });
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction("kv", "readwrite");
-      transaction.objectStore("kv").put(
-        {
-          items: [
-            {
-              id: "held-presentation",
-              cardId: "already-open",
-              mode: "review",
-              source: "reserve",
-              audioUrl: null,
-              permit: { token: "held", expiresAt: "2099-01-01T00:00:00.000Z" },
-              material: {
-                targetKind: "vocabulary",
-                target: {
-                  lemma: "猿",
-                  reading: "さる",
-                  partOfSpeech: "noun",
-                  meaning: "monkey",
-                },
-                japanese: "猿。",
-                targetSurface: "猿",
-                targetSpan: {
-                  start: 0,
-                  end: 1,
-                  unit: "utf16-code-unit",
-                  normalization: "nfkc-v1",
-                },
-                readingSegments: [
-                  { written: "猿", reading: "さる" },
-                  { written: "。", reading: "。" },
-                ],
-                context: "",
-                prompt: "What does the target express?",
-                answer: "monkey",
-                explanation: "monkey",
-                usageNote: "",
-              },
-            },
-          ],
-          index: 0,
-        },
-        "session",
-      );
+      transaction.objectStore("kv").put({ items: [item], index: 0 }, "session");
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
     database.close();
-  });
+  }, presentation);
   await page.reload();
   await expect(page.locator(".presentation")).toBeVisible();
   await reportDueWork(page);
@@ -279,7 +253,7 @@ test("an open session does not stop background preparation of other due Cards", 
   await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
   expect(posts[0]).toMatchObject({
     unpreparedOnly: true,
-    excludeCardIds: ["already-open"],
+    excludeCardIds: [openCardId],
   });
 
   await page.evaluate(() => {
