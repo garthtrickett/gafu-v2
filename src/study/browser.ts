@@ -17,6 +17,7 @@ import type {
   StudyPreferences,
   StudyStatus,
 } from "./contracts.ts";
+import { createStudyDisplay } from "./display.ts";
 import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
@@ -298,6 +299,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     offline: typeof navigator !== "undefined" && navigator.onLine === false,
   };
   const store = openIndexedDbStore();
+  const display = createStudyDisplay(root, () => draw());
   const SESSION_KEY = "session";
   const SNAPSHOT_KEY = "snapshot";
   /** Foreground preparation waits for requests a hidden tab already paid for. */
@@ -704,6 +706,11 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   document.addEventListener("keydown", (event) => {
     if (lookup.handleKeydown(event)) return;
+    if (event.key === "Escape" && display.isMaximised()) {
+      event.preventDefault();
+      display.exit();
+      return;
+    }
     const target = event.target as Element | null;
     // Typing fields keep their letters; a focused button does not need them.
     if (target?.matches("input, select, textarea")) return;
@@ -1336,10 +1343,34 @@ export const mountStudyApp = (root: HTMLElement): void => {
     if (!more) void refreshStatus().then(draw, draw);
   };
 
+  const displayButton = (): TemplateResult => html`
+    <button
+      type="button"
+      class="secondary study-display-toggle"
+      data-testid="study-display-toggle"
+      aria-label=${display.isMaximised() ? "Exit maximised study" : "Maximise study"}
+      title=${display.isMaximised() ? "Exit maximised study (Escape)" : "Maximise study"}
+      aria-pressed=${display.isMaximised()}
+      @click=${display.toggle}
+    >
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d=${
+          display.isMaximised()
+            ? "M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5"
+            : "M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"
+        } />
+      </svg>
+    </button>`;
+
   const presentationView = (presentation: PreparedMaterial): TemplateResult =>
     html`<article class="presentation presentation--${presentation.mode}">
-                        <span class="pill">${presentation.mode}</span>
-                        <span class="pill pill--state" data-testid="card-kind">${presentation.material.targetKind}</span>
+                        <header class="presentation-heading">
+                          <div class="presentation-meta">
+                            <span class="pill">${presentation.mode}</span>
+                            <span class="pill pill--state" data-testid="card-kind">${presentation.material.targetKind}</span>
+                          </div>
+                          ${displayButton()}
+                        </header>
                         ${
                           // A review opens on its situation. A teach card's
                           // context is only "<target> in use." and its prompt
@@ -1357,7 +1388,6 @@ export const mountStudyApp = (root: HTMLElement): void => {
                               ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
                               : ""
                           }
-                          <p class="hint">Highlight a word, then press Alt (Option on Mac) for Jisho.</p>
                         </div>
                         ${
                           presentation.mode === "teach"
@@ -1449,7 +1479,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     // The server searched, filtered and paged; this is that page.
     const matching = snapshot?.cards ?? [];
     render(
-      html`<main class="study-shell">
+      html`<main class="study-shell ${display.isMaximised() ? "study-shell--maximised" : ""}">
         <header class="hero">
           <div>
             <p class="eyebrow">Gafu V2 · Study foundation</p>
@@ -1466,6 +1496,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           </div>
         </header>
 
+        <div class="study-session-notices">
         <p class="notice notice--${model.messageKind}" role="status">${model.message}</p>
         ${
           model.sync.pending > 0
@@ -1485,6 +1516,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             : ""
         }
 
+        </div>
         ${
           snapshot === null
             ? model.presentation !== null
@@ -1512,6 +1544,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                   ${
                     model.presentation === null
                       ? html`<div class="button-row">
+                          ${display.isMaximised() ? displayButton() : ""}
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
                             ${model.batch !== null && !model.batch.done ? "Preparing remaining Cards…" : "Prepare batch"}
                           </button>
