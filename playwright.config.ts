@@ -15,12 +15,12 @@ export default defineConfig({
     },
     {
       name: "firefox-critical",
-      testMatch: "**/zzzzz-phase6-compatibility.pw.ts",
+      testMatch: ["**/zzzzz-phase6-compatibility.pw.ts", "**/study-display.pw.ts"],
       use: { ...devices["Desktop Firefox"] },
     },
     {
       name: "mobile-chromium",
-      testMatch: "**/zzzzz-phase6-compatibility.pw.ts",
+      testMatch: ["**/zzzzz-phase6-compatibility.pw.ts", "**/study-display.pw.ts"],
       use: { ...devices["Pixel 7"] },
     },
   ],
