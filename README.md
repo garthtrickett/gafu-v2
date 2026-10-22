@@ -72,6 +72,8 @@ Cards can also be prepared by an agent reading the subtitles, instead of through
 the Preparation page. That route, what it delegates to tooling and what it keeps
 for judgement, is written up in
 [`docs/agent-assisted-preparation.md`](docs/agent-assisted-preparation.md).
+For agent-authored English-context → Japanese conversation playlists, follow
+[`docs/listening-dialogues.md`](docs/listening-dialogues.md).
 The public server refuses to start without its private-access password and
 volume-backed database/Kaishi paths.
 

@@ -10,6 +10,10 @@ preparation](./agent-assisted-preparation.md), covers the fourth: one
 episode of subtitles into Cards. Read its **What the tools get wrong**
 section before trusting any of these — every trap in it applies here too.
 
+For English-context → Japanese listening audio, follow the separate
+[listening-dialogue workflow](./listening-dialogues.md). It produces a playlist
+from the learner's known language, with its own audio and delivery checks.
+
 ## Route: a frequency corpus into Cards
 
 Building a vocabulary list from a corpus rather than from a show. A show's

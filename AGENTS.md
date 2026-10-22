@@ -27,3 +27,11 @@ bun run test:browser
 
 Never commit credentials, subtitle bodies from copyrighted media, generated
 private content, build output, or test reports.
+
+## Agent-authored listening dialogues
+
+For English context followed by Japanese conversations, read
+[`docs/listening-dialogues.md`](docs/listening-dialogues.md). It covers the
+learned-language constraint, scene writing, exact-script audits, resumable speech,
+audio checks, and verified phone delivery. These playlists introduce no planned
+new vocabulary or grammar.
