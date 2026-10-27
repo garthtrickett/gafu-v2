@@ -165,6 +165,46 @@ test("maximised study works when browser fullscreen is denied and stays open thr
   await expect(hero).toBeVisible();
 });
 
+test("maximised review starts at the card when batch messages arrive", async ({
+  page,
+}) => {
+  await openSession(page);
+  await page.getByRole("button", { name: "Maximise study", exact: true }).click();
+
+  // A batch can report failures while a review is already open. Exercise the
+  // real fullscreen CSS without changing the session's own state.
+  await page.evaluate(() => {
+    const panel = document.querySelector(".review-panel");
+    const presentation = panel?.querySelector(".presentation");
+    const notice = document.querySelector(".study-session-notices > .notice");
+    if (!panel || !presentation || !notice) throw new Error("Missing review UI");
+    notice.textContent = "No Cards were prepared.";
+    notice.classList.add("notice--error");
+    const failures = document.createElement("ul");
+    failures.className = "batch-failures";
+    failures.textContent = "A Card stays due.";
+    panel.insertBefore(failures, presentation);
+    const progress = document.createElement("p");
+    progress.dataset["testid"] = "batch-progress";
+    progress.textContent = "Batch ready: 18 to review, 2 failed.";
+    panel.insertBefore(progress, presentation);
+    const sync = document.createElement("p");
+    sync.className = "notice notice--error notice--sync";
+    sync.textContent = "Your sign-in expired.";
+    document.querySelector(".study-session-notices")?.append(sync);
+  });
+  await expect(page.getByText("No Cards were prepared.")).toBeHidden();
+  await expect(page.locator(".batch-failures")).toBeHidden();
+  await expect(page.getByTestId("batch-progress")).toBeHidden();
+  await expect(page.getByText("Your sign-in expired.")).toBeVisible();
+  const positions = await page.evaluate(() => ({
+    header: document.querySelector(".presentation-heading")?.getBoundingClientRect(),
+    sync: document.querySelector(".notice--sync")?.getBoundingClientRect(),
+  }));
+  expect(positions.header?.top).toBeLessThan(80);
+  expect(positions.sync?.top).toBeGreaterThan(positions.header?.bottom ?? 0);
+});
+
 test("native fullscreen and short viewports keep study and its exit reachable", async ({
   page,
 }) => {

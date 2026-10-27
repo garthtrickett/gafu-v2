@@ -1290,6 +1290,16 @@ body:has(.study-shell--maximised) {
   display: none;
 }
 
+.study-shell--maximised:has(.presentation) .study-session-notices {
+  order: 2;
+}
+
+.study-shell--maximised:has(.presentation)
+  .study-session-notices
+  > :not(.notice--sync) {
+  display: none;
+}
+
 .study-shell--maximised .review-panel {
   flex: 1;
   display: flex;
@@ -1303,7 +1313,13 @@ body:has(.study-shell--maximised) {
   background: transparent;
 }
 
-.study-shell--maximised .review-panel:has(.presentation) > .review-heading {
+.study-shell--maximised .review-panel:has(.presentation) {
+  order: 1;
+}
+
+/* Batch progress and preparation errors belong to the dashboard. A review
+   starts with its own heading, even when those messages arrive mid-session. */
+.study-shell--maximised .review-panel:has(.presentation) > :not(.presentation) {
   display: none;
 }
 
