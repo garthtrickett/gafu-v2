@@ -1505,14 +1505,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
         }
         ${
           model.sync.stalledFor === "authentication"
-            ? html`<p class="notice notice--error" data-testid="sync-auth">Your sign-in expired. ${model.sync.pending === 1 ? "1 update is" : `${model.sync.pending} updates are`} saved on this device and will sync after you <a href="/login">sign in again</a>.</p>`
+            ? html`<p class="notice notice--error notice--sync" data-testid="sync-auth">Your sign-in expired. ${model.sync.pending === 1 ? "1 update is" : `${model.sync.pending} updates are`} saved on this device and will sync after you <a href="/login">sign in again</a>.</p>`
             : model.offline || model.sync.stalled
               ? html`<p class="notice notice--neutral" data-testid="offline">Connection unavailable. ${model.sync.pending === 1 ? "1 update" : `${model.sync.pending} updates`} will sync when it returns.</p>`
               : ""
         }
         ${
           model.sync.failed.length > 0
-            ? html`<p class="notice notice--error" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. Check the current Card status before retrying.</p>`
+            ? html`<p class="notice notice--error notice--sync" data-testid="sync-failed">${model.sync.failed.length} updates could not be saved: ${model.sync.failed.join("; ")}. Check the current Card status before retrying.</p>`
             : ""
         }
 
