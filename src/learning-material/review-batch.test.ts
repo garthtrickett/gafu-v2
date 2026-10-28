@@ -599,7 +599,7 @@ describe("review batch job", () => {
     app.material.close();
   });
 
-  test("a Card no sentence can be written for is served as the Card itself", async () => {
+  test("an unwritable Card can be introduced as a word but cannot be reviewed without a sentence", async () => {
     // Some words cannot have an i+1 sentence yet — 頬袋 wants ハムスター,
     // which the learner has not met — and those Cards used to be admitted
     // and then refused every round for ever. The Card's own writing, reading
@@ -614,7 +614,7 @@ describe("review batch job", () => {
         return { ok: false as const, error: { kind: "noValidCandidate", detail: "" } };
       },
     } as unknown as MaterialProvider;
-    const { material, study } = harness(refusing);
+    const { material, study, databasePath } = harness(refusing);
     const created = study.createCard({
       type: "vocabulary",
       content: {
@@ -647,25 +647,26 @@ describe("review batch job", () => {
     const acknowledged = material.acknowledgeTeaching(due.card.id, taught.value.id);
     if (!acknowledged.ok) throw new Error("ack");
 
-    // The review is where the provider is asked and cannot answer. The Card
-    // is served all the same, with its own writing, reading and meaning.
+    // A review needs a sentence. The first-exposure word must not become a
+    // repeated bare-word review when generation fails.
     const served = await material.prepare({
       card: due.card,
       knowledge: knowledge.value,
     });
-    if (!served.ok) throw new Error(`serve: ${served.error.kind}`);
     expect(asked).toBeGreaterThan(0);
-    expect(served.value.mode).toBe("review");
-    expect(served.value.material.japanese).toBe("頬袋");
-    expect(served.value.material.targetKind).toBe("vocabulary");
-    expect(served.value.material.target).toMatchObject({
-      lemma: "頬袋",
-      reading: "ほおぶくろ",
-      meaning: "a cheek pouch",
+    expect(served).toMatchObject({
+      ok: false,
+      error: { kind: "noValidCandidate" },
     });
+    const raw = new Database(databasePath, { readonly: true });
     expect(
-      served.value.material.readingSegments.map((segment) => segment.written).join(""),
-    ).toBe("頬袋");
+      raw
+        .query(
+          "SELECT count(*) AS count FROM validated_presentation WHERE card_id = ? AND mode = 'review' AND provider = 'word-card'",
+        )
+        .get(due.card.id),
+    ).toEqual({ count: 0 });
+    raw.close();
   });
 
   test("a grammar Card with no valid sentence stays due in direct and whole-batch preparation", async () => {

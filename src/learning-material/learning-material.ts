@@ -26,7 +26,7 @@ import { parseBroadPartOfSpeech } from "./generated-decode.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 10;
+export const MATERIAL_SCHEMA_VERSION = 11;
 
 /** Marks a row written for a word Card rather than generated as a sentence. */
 const WORD_CARD_PROVIDER = "word-card";
@@ -375,6 +375,20 @@ const migrate = (
         database
           .query(
             "INSERT INTO learning_material_migration(version, applied_at) VALUES (10, ?)",
+          )
+          .run(appliedAt);
+      }
+      if (current.version < 11) {
+        // A word-only first exposure can introduce a word whose sentence is
+        // not yet writable. A review must exercise it in a sentence. Discard
+        // unshown review fallbacks from older versions; shown rows remain
+        // immutable review history.
+        database.exec(
+          "DELETE FROM validated_presentation WHERE mode = 'review' AND shown_at IS NULL AND provider = 'word-card'",
+        );
+        database
+          .query(
+            "INSERT INTO learning_material_migration(version, applied_at) VALUES (11, ?)",
           )
           .run(appliedAt);
       }
@@ -946,28 +960,20 @@ export const openLearningMaterial = (
     return ok(card.schedulePhase === "new" && !taught.value ? "teach" : "review");
   };
 
-  /**
-   * Whether a round failed because no sentence could be written, rather than
-   * because the provider could not be reached. Only the first is worth
-   * falling back from: the second will answer tomorrow.
-   */
+  /** Whether a first exposure can use the word when no sentence is writable. */
   const unwritable = (kind: string | null): boolean =>
     kind === "noValidCandidate" ||
     kind === "validationRejected" ||
     kind === "malformedResponse";
 
   /**
-   * Banks the Card itself as a presentation, for when no sentence can be
-   * written for it.
+   * Banks the Card itself as a first exposure when no sentence can be written.
    *
    * Some words cannot have an i+1 sentence yet: 頬袋 wants ハムスター, which
    * the learner has not met, so every round refused it and the Card was
-   * admitted and then unservable for ever. The Card's own writing, reading
-   * and meaning are banked instead, as an ordinary reserve — so the batch,
-   * the session hand-over and serving all treat it like any other, with no
-   * special case anywhere. Marked as its own provider, so it is never handed
-   * back to the model as a sentence to avoid repeating: the word is the one
-   * thing a sentence for that Card must contain.
+   * admitted and then unservable for ever. First exposure may show the Card's
+   * own writing, reading and meaning. Reviews stay due until a sentence is
+   * validated; repeating the bare word would never test it in context.
    */
   const bankWordPresentation = (
     card: CardSummary,
@@ -1068,11 +1074,10 @@ export const openLearningMaterial = (
       if (prepared.value !== null)
         return ok(await withAudio(prepared.value, input.signal));
     }
-    // No sentence could be written for this Card. Some words cannot have one
-    // yet — 頬袋 wants ハムスター, which the learner has not met — and those
-    // Cards used to be admitted and then refused every round for ever. The
-    // Card itself is shown instead: its writing, its reading, its meaning.
-    if (input.card.type === "grammar")
+    // A review with no validated sentence stays due. A word-only first
+    // exposure may still introduce a vocabulary Card whose context cannot
+    // yet be written using the learner's known language.
+    if (mode === "review" || input.card.type === "grammar")
       return stocked.ok ? err({ kind: "noValidCandidate" }) : stocked;
     const word = bankWordPresentation(input.card, mode);
     if (!word.ok) return word;
@@ -1404,15 +1409,12 @@ export const openLearningMaterial = (
               item.seq,
             );
         } else {
-          // Out of rounds. If the reason is that no sentence could be
-          // written — every candidate leaned on a word the learner has not
-          // met — the Card is served as itself rather than left due and
-          // unservable for ever. A provider that is down does not come
-          // through here; it fails the whole batch above, and a Card the
-          // learner could have had a sentence for tomorrow should wait for
-          // it. The reasons stay on the row either way.
+          // Out of rounds. Reviews without a validated sentence stay due;
+          // only an unwritable first exposure can show a vocabulary Card as
+          // itself. Keep the rejection hints for the learner and a retry.
           if (
             status === "failed" &&
+            itemMode === "teach" &&
             input?.card.type === "vocabulary" &&
             unwritable(failureKind)
           ) {
@@ -1656,14 +1658,7 @@ export const openLearningMaterial = (
         { card: input.card, knowledge: input.knowledge },
         "review",
       );
-      if (!stocked.ok) {
-        // Same fallback as the whole-batch path: a Card no sentence can be
-        // written for is served as itself rather than staying due for ever.
-        if (input.card.type !== "vocabulary" || !unwritable(stocked.error.kind))
-          return finish("failed", stocked.error.kind);
-        const word = bankWordPresentation(input.card, "review");
-        if (!word.ok) return finish("failed", stocked.error.kind);
-      }
+      if (!stocked.ok) return finish("failed", stocked.error.kind);
       return finish("ready", null);
     },
     acknowledgeTeaching: (cardId, presentationId) => {

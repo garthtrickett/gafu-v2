@@ -1,11 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { createKuromojiAnalyzer } from "./kuromoji-analyzer.ts";
+import { loadKuromojiFromDirectory } from "./loaders.ts";
 import {
   dictionaryFormReading,
   mapNormalizedBoundariesToRaw,
 } from "./normalization.ts";
 
 describe("Japanese analysis boundary", () => {
+  test.each([
+    ["私に関する話", "関する"],
+    ["私に関して話す", "関して"],
+    ["私に関します", "関し"],
+  ])("finds 関する in %s", async (japanese, surface) => {
+    const analyzer = createKuromojiAnalyzer(() =>
+      loadKuromojiFromDirectory("node_modules/@faanau/kuromoji/dict"),
+    );
+    const result = await analyzer.analyze("related", japanese);
+    if (!result.ok) throw new Error(result.error.kind);
+    const verb = result.value.tokens.find((token) => token.surface === surface);
+    expect(verb).toMatchObject({ lemma: "関する", broadPartOfSpeech: "verb" });
+    expect(japanese.slice(verb?.span.start, verb?.span.end)).toBe(surface);
+  });
+
   test("dictionary failure yields no trusted fallback tokens", async () => {
     const analyzer = createKuromojiAnalyzer(async () => {
       throw new Error("dictionary missing");
