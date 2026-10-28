@@ -172,7 +172,7 @@ describe("whole-batch retry rounds", () => {
     });
   });
 
-  test("a Card refused in every round is served as itself after the third", async () => {
+  test("a Card refused in every round stays due after the third", async () => {
     const app = harness({ cat: 99 });
     await teach(app, app.cat);
     const begun = app.material.beginReviewBatch([
@@ -187,21 +187,19 @@ describe("whole-batch retry rounds", () => {
     }
     // Three rounds, each a dispatch and a completion: six advances.
     expect(advances).toBe(6);
-    // Then it stops asking. Three rounds of refusals is a word no sentence
-    // can be written for yet, not a round of bad luck, and a Card that is
-    // only ever reported failed is a Card the learner never meets. It is
-    // served as itself: the writing, the reading, the meaning.
+    // Then it stops asking. A review with no validated sentence must not be
+    // marked ready or silently replaced with the bare word.
     expect(progress).toMatchObject({
       ok: true,
-      value: { done: true, completed: [app.cat.id], failed: [] },
+      value: {
+        done: true,
+        completed: [],
+        failed: [{ cardId: app.cat.id, kind: "validationRejected" }],
+      },
     });
-    const served = await app.material.prepare({
-      card: app.cat,
-      knowledge: app.knowledge,
+    expect(app.material.hasReserve(app.cat.id, "review")).toEqual({
+      ok: true,
+      value: false,
     });
-    if (!served.ok) throw new Error(served.error.kind);
-    expect(served.value.material.japanese).toBe(
-      (app.cat.content as { lemma: string }).lemma,
-    );
   });
 });

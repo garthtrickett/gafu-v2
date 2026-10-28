@@ -142,27 +142,39 @@ test("a banked sentence with no reading over its kanji is dropped, once", () => 
   );
 });
 
-test("unshown bare grammar fallbacks are removed while history and words remain", () => {
+test("unshown bare reviews are removed while history and first exposures remain", () => {
   const directory = mkdtempSync(join(tmpdir(), "gafu-grammar-fallback-"));
   directories.push(directory);
   const databasePath = join(directory, "material.sqlite");
   open(databasePath).close();
   const raw = new Database(databasePath);
-  const banked = (id: string, targetKind: string, shownAt: string | null) => {
+  const banked = (
+    id: string,
+    targetKind: string,
+    mode: "teach" | "review",
+    shownAt: string | null,
+  ) => {
     raw
       .query(
         `INSERT INTO validated_presentation(
          id, card_id, mode, payload_json, normalized_japanese, exact_signature,
          near_signature, generated_at, shown_at, provider, model, prompt_version,
          validation_version
-       ) VALUES (?, ?, 'review', ?, ?, ?, ?, '2026-09-19T00:00:00.000Z', ?,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, '2026-09-19T00:00:00.000Z', ?,
          'word-card', '-', '-', 'v')`,
       )
-      .run(id, id, JSON.stringify({ targetKind }), id, id, id, shownAt);
+      .run(id, id, mode, JSON.stringify({ targetKind }), id, id, id, shownAt);
   };
-  banked("grammar-reserve", "grammar", null);
-  banked("grammar-history", "grammar", "2026-09-19T01:00:00.000Z");
-  banked("vocabulary-reserve", "vocabulary", null);
+  banked("grammar-reserve", "grammar", "review", null);
+  banked("grammar-history", "grammar", "review", "2026-09-19T01:00:00.000Z");
+  banked("vocabulary-review-reserve", "vocabulary", "review", null);
+  banked(
+    "vocabulary-review-history",
+    "vocabulary",
+    "review",
+    "2026-09-19T01:00:00.000Z",
+  );
+  banked("vocabulary-teach-reserve", "vocabulary", "teach", null);
   raw.query("DELETE FROM learning_material_migration WHERE version >= 9").run();
   raw.close();
 
@@ -172,7 +184,9 @@ test("unshown bare grammar fallbacks are removed while history and words remain"
     check.query("SELECT id FROM validated_presentation").all() as { id: string }[]
   ).map((row) => row.id);
   check.close();
-  expect(left.sort()).toEqual(["grammar-history", "vocabulary-reserve"].sort());
+  expect(left.sort()).toEqual(
+    ["grammar-history", "vocabulary-review-history", "vocabulary-teach-reserve"].sort(),
+  );
 });
 
 test("upgrading pauses recent failed Cards, but not Cards prepared afterward", () => {
@@ -189,7 +203,7 @@ test("upgrading pauses recent failed Cards, but not Cards prepared afterward", (
   add.run("two", 0, "recovered", "failed", "2026-09-12T08:00:00.000Z");
   add.run("three", 0, "recovered", "ready", "2026-09-12T08:30:00.000Z");
   add.run("four", 0, "old-failure", "failed", "2026-09-10T08:00:00.000Z");
-  raw.query("DELETE FROM learning_material_migration WHERE version = 10").run();
+  raw.query("DELETE FROM learning_material_migration WHERE version >= 10").run();
   raw.exec("DROP TABLE review_batch_cooldown");
   raw.close();
 

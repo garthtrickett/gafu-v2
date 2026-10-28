@@ -95,6 +95,71 @@ if (!generated.ok || generated.value.candidates[0] === undefined) {
 const valid = generated.value.candidates[0] as GeneratedMaterial;
 
 describe("generated material validation boundary", () => {
+  test("accepts 関する inside its natural に関する construction", async () => {
+    const related: CardSummary = {
+      ...card,
+      id: asCardId("related"),
+      content: {
+        lemma: "関する",
+        reading: "かんする",
+        partOfSpeech: "verb",
+        meaning: "to concern; to be related",
+        usageNotes: "",
+      },
+    };
+    const japanese = "それは私に関する話です。";
+    const material: GeneratedMaterial = {
+      ...valid,
+      mode: "review",
+      japanese,
+      targetSurface: "関する",
+      targetSpan: { ...valid.targetSpan, start: 5, end: 8 },
+      readingSegments: [
+        { written: "それは", reading: "" },
+        { written: "私", reading: "わたし" },
+        { written: "に", reading: "" },
+        { written: "関する", reading: "かんする" },
+        { written: "話", reading: "はなし" },
+        { written: "です。", reading: "" },
+      ],
+      targetKind: "vocabulary",
+      target: {
+        lemma: "関する",
+        reading: "かんする",
+        partOfSpeech: "verb",
+        meaning: "to concern; to be related",
+      },
+    };
+    const knownWords: KnowledgeSnapshot["vocabulary"] = (
+      [
+        ["それ", "それ"],
+        ["私", "わたし"],
+        ["話", "はなし"],
+      ] as const
+    ).map(([lemma, reading]) => ({
+      key: `fixture:${lemma}`,
+      baselineKey: lemma,
+      lemma,
+      reading,
+      partOfSpeech: "noun",
+      meaning: lemma,
+      source: "baseline",
+      senseIds: [],
+    }));
+    const knownGrammar = ["は", "に", "で", "それ", "〜て"].map((canonicalForm) => ({
+      cardId: asCardId(`grammar:${canonicalForm}`),
+      canonicalForm,
+    }));
+    expect(
+      await validate({
+        value: material,
+        mode: "review",
+        card: related,
+        knowledge: { ...knowledge, vocabulary: knownWords, grammar: knownGrammar },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   test("accepts the valid local fixture", async () => {
     expect(
       await validate({ value: valid, mode: "teach", card, knowledge }),

@@ -77,9 +77,11 @@ const mapTokens = (
       lemma:
         token.pos === "名詞" && token.pos_detail_1 === "形容動詞語幹"
           ? `${token.basic_form === "*" ? token.surface_form : token.basic_form}だ`
-          : token.basic_form === "*"
-            ? token.surface_form
-            : token.basic_form,
+          : token.basic_form === "関す" && token.surface_form === "関し"
+            ? "関する"
+            : token.basic_form === "*"
+              ? token.surface_form
+              : token.basic_form,
       reading: token.reading === undefined ? null : katakanaToHiragana(token.reading),
       partOfSpeech: [
         token.pos,
@@ -147,7 +149,38 @@ const mapTokens = (
     }
     if (current !== undefined) reconciled.push(current);
   }
-  return { ok: true, tokens: reconciled };
+  // IPADIC stores に関する and に関して as single case particles. That hides
+  // the verb from a 関する Vocabulary Card. Split after native-token merging
+  // so the existing する and voice reconciliation still sees aligned tokens.
+  const expanded = reconciled.flatMap((token): readonly AnalyzedToken[] => {
+    if (
+      token.broadPartOfSpeech !== "particle" ||
+      (token.surface !== "に関する" && token.surface !== "に関して")
+    ) {
+      return [token];
+    }
+    const verbSurface = token.surface.slice(1);
+    return [
+      {
+        ...token,
+        surface: "に",
+        lemma: "に",
+        reading: "に",
+        span: textSpan(token.span.start, token.span.start + 1),
+      },
+      {
+        ...token,
+        surface: verbSurface,
+        lemma: "関する",
+        reading: verbSurface === "関する" ? "かんする" : "かんして",
+        partOfSpeech: ["動詞", "自立"],
+        broadPartOfSpeech: "verb",
+        conjugation: verbSurface === "関する" ? null : "連用形",
+        span: textSpan(token.span.start + 1, token.span.end),
+      },
+    ];
+  });
+  return { ok: true, tokens: expanded };
 };
 
 export const createKuromojiAnalyzer = (
