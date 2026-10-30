@@ -107,6 +107,24 @@ Staging costs nothing until admission, so importing more than will be
 studied soon is fine. What it does cost is the review pass below, and every
 Card is a row in the bank.
 
+### Reorder an existing conversation queue
+
+`POST /api/study/staging-order` replaces the rows for one `sourceKey` and
+accepts `cardIds` best first. Its optional `priorityStart` lets a corpus-based
+ordering stay below Cards met while reading (9,000) and baseline gaps (10,000).
+For example, 8,999 puts those sources first. Before applying it, check that
+`priorityStart - (cardIds.length - 1)` still exceeds every included Card's
+other active staging priorities; admission uses the maximum priority from
+all sources. Reusing the same `sourceKey` replaces the old ordering, including
+one previously written at the default million-point ceiling. Check the
+effective staged order afterward and keep the learner's daily limit unchanged.
+
+When combining CEJC with show subtitles, match written form **and** reading.
+Count only the form actually used in the subtitle list; a dictionary's
+alternative spelling can share a word identity with a different sense. Screen
+the first promoted Cards for names, recurring title/recap text, and sense
+mismatches before applying the order.
+
 ## Auditing Cards that cannot validate
 
 A Card whose own word the analyser will not recognise can never be studied:

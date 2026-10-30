@@ -124,10 +124,14 @@ export type CardStateCommand = Readonly<{
  * `sourceKey` names the ordering rather than a Card, so re-running one
  * replaces it instead of layering a second opinion on top, and so two
  * orderings from different sources can coexist with the higher winning.
+ * A bounded priorityStart can keep this ordering below higher-priority
+ * sources such as a new baseline gap or a reading capture.
  */
 export type StagingOrder = Readonly<{
   sourceKey: string;
   cardIds: readonly CardId[];
+  /** Highest priority this ordering may assign; omit to lift above other sources. */
+  priorityStart?: number;
 }>;
 
 /**
