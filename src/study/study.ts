@@ -487,6 +487,18 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         detail: `must not exceed ${STAGING_ORDER_CEILING} Cards`,
       });
     }
+    const priorityStart = command.priorityStart ?? STAGING_ORDER_CEILING;
+    if (
+      !Number.isSafeInteger(priorityStart) ||
+      priorityStart < Math.max(0, command.cardIds.length - 1) ||
+      priorityStart > STAGING_ORDER_CEILING
+    ) {
+      return err({
+        kind: "invalidCard",
+        field: "priorityStart",
+        detail: "must fit the ordering in priorities from zero to the staging ceiling",
+      });
+    }
     try {
       // createCard writes each staged Card a source keyed by its own id, so
       // an ordering named after a Card would delete that Card's origin.
@@ -523,12 +535,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           if (placed.has(cardId)) continue;
           if (staged.get(cardId) === null) continue;
           placed.add(cardId);
-          insert.run(
-            cardId,
-            sourceKey,
-            STAGING_ORDER_CEILING - index,
-            now.value.toISOString(),
-          );
+          insert.run(cardId, sourceKey, priorityStart - index, now.value.toISOString());
           ordered += 1;
         }
       });

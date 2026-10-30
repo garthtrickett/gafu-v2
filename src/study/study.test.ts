@@ -829,6 +829,61 @@ describe("Study admission and review", () => {
     study.close();
   });
 
+  test("a bounded ordering stays below baseline gaps and later captures", () => {
+    const { study, clock } = openTestStudy();
+    const word = (lemma: string, reading: string, priority: number): CreateCard => ({
+      type: "vocabulary",
+      content: {
+        lemma,
+        reading,
+        partOfSpeech: "noun",
+        meaning: `${lemma} meaning`,
+        usageNotes: "",
+      },
+      stagingPriority: priority,
+    });
+    const baseline = create(study, word("犬", "いぬ", 10_000)).card;
+    const older = create(study, word("猫", "ねこ", 4_000)).card;
+    const promoted = create(study, word("鳥", "とり", 3_000)).card;
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "conversation",
+        cardIds: [promoted.id, older.id],
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "conversation",
+        cardIds: [promoted.id, older.id],
+        priorityStart: 8_999,
+      }),
+    ).toEqual({ ok: true, value: { ordered: 2, skipped: 0 } });
+    const capture = create(study, word("魚", "さかな", 9_000)).card;
+    study.setPreferences({ newCardsPerDay: 1 });
+
+    const admitted: string[] = [];
+    for (const day of ["08", "09", "10", "11"]) {
+      clock.set(`2026-09-${day}T10:00:00.000Z`);
+      const queue = study.studyQueue();
+      if (!queue.ok) throw new Error(queue.error.kind);
+      for (const item of queue.value.due) {
+        if (!admitted.includes(item.card.id)) admitted.push(item.card.id);
+      }
+    }
+    expect(admitted).toEqual([baseline.id, capture.id, promoted.id, older.id]);
+    expect(
+      study.prioritizeStaging({
+        sourceKey: "conversation",
+        cardIds: [older.id, promoted.id],
+        priorityStart: 0,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalidCard", field: "priorityStart" },
+    });
+    study.close();
+  });
+
   test("an ordering replaces the one before it, and skips what is not staged", () => {
     const { study } = openTestStudy();
     const word = (lemma: string, reading: string): CreateCard => ({

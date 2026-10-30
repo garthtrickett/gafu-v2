@@ -879,6 +879,8 @@ const handleApi = async (
     if (
       !isRecord(body) ||
       typeof body["sourceKey"] !== "string" ||
+      (body["priorityStart"] !== undefined &&
+        typeof body["priorityStart"] !== "number") ||
       !Array.isArray(body["cardIds"]) ||
       body["cardIds"].some((cardId) => typeof cardId !== "string")
     ) {
@@ -888,6 +890,9 @@ const handleApi = async (
       study.prioritizeStaging({
         sourceKey: body["sourceKey"],
         cardIds: (body["cardIds"] as string[]).map(asCardId),
+        ...(body["priorityStart"] === undefined
+          ? {}
+          : { priorityStart: body["priorityStart"] as number }),
       }),
     );
   }
