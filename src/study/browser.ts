@@ -608,6 +608,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   window.addEventListener("online", () => {
     model.offline = false;
     if (model.sync.stalledFor !== "authentication") outbox.resume();
+    if (model.presentation?.audioPending) void trackAudio(model.presentation);
     draw();
   });
   window.addEventListener("offline", () => {
@@ -693,42 +694,52 @@ export const mountStudyApp = (root: HTMLElement): void => {
       draw();
     }
   };
+  const trackingAudio = new Set<string>();
   const trackAudio = async (prepared: PreparedMaterial) => {
-    for (let n = 0; n < 90 && model.presentation?.id === prepared.id; n++) {
-      try {
-        const state = await requestJson<{ state: string; audioUrl: string | null }>(
-          `/api/study/presentations/${encodeURIComponent(prepared.id)}/speech`,
-        );
-        if (model.presentation?.id !== prepared.id) return;
-        audioState = state.state;
-        if (state.audioUrl) {
-          const updated = {
-            ...model.presentation,
-            audioUrl: state.audioUrl,
-            audioPending: false,
-          };
-          model.presentation = updated;
-          if (model.session) {
-            model.session = {
-              ...model.session,
-              items: model.session.items.map((item) =>
-                item.id === updated.id ? updated : item,
-              ),
+    if (trackingAudio.has(prepared.id)) return;
+    trackingAudio.add(prepared.id);
+    try {
+      for (let n = 0; n < 90 && model.presentation?.id === prepared.id; n++) {
+        try {
+          const state = await requestJson<{ state: string; audioUrl: string | null }>(
+            `/api/study/presentations/${encodeURIComponent(prepared.id)}/speech`,
+          );
+          if (model.presentation?.id !== prepared.id) return;
+          audioState = state.state;
+          if (state.audioUrl) {
+            const updated = {
+              ...model.presentation,
+              audioUrl: state.audioUrl,
+              audioPending: false,
             };
-            void store.set(SESSION_KEY, model.session);
+            model.presentation = updated;
+            if (model.session) {
+              model.session = {
+                ...model.session,
+                items: model.session.items.map((item) =>
+                  item.id === updated.id ? updated : item,
+                ),
+              };
+              void store.set(SESSION_KEY, model.session);
+            }
+            if (model.snapshot?.preferences.speechEnabled !== false)
+              playAudio(state.audioUrl);
+            draw();
+            return;
           }
           draw();
+          if (!["queued", "dispatching"].includes(state.state)) return;
+        } catch {
           return;
         }
-        draw();
-        if (!["queued", "dispatching"].includes(state.state)) return;
-      } catch {
-        return;
+        await pause(2000);
       }
-      await pause(2000);
+    } finally {
+      trackingAudio.delete(prepared.id);
     }
   };
   const present = (prepared: PreparedMaterial): void => {
+    audio?.pause();
     audioState = null;
     model.presentation = prepared;
     model.revealed = false;

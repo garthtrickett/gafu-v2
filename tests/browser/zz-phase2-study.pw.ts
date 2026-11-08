@@ -404,7 +404,9 @@ test("configures a key and teaches before the first generated review", async ({
 
   await skipToVocabulary();
 
-  // The next clip is fetched ahead while online, so it plays after the reload.
+  // Text opens before speech. Let this optional clip arrive before going offline;
+  // later pending clips are picked up independently when the network returns.
+  await expect(review.getByTestId("listen")).toBeVisible();
   await page.context().setOffline(true);
   await expect(page.getByTestId("offline")).toBeVisible();
   await reviewOne("Correct");
