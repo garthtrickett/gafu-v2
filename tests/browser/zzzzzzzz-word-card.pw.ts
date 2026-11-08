@@ -18,6 +18,15 @@ const MUTATION = { "X-Gafu-Request": "gafu-v2" };
 test("a Card with no sentence is prepared, handed over, and rendered", async ({
   page,
 }) => {
+  // Exercise the explicit Prepare path independently of earlier journeys' warm cache.
+  await page.route("**/api/study/preparation-status", async (route) => {
+    const response = await route.fetch();
+    const state = await response.json();
+    await route.fulfill({ response, json: { ...state, ready: 0, readyCardIds: [] } });
+  });
+  await page.route("**/api/study/review-batch/active", (route) =>
+    route.fulfill({ contentType: "application/json", body: "null" }),
+  );
   await page.goto("/");
 
   const made = await page.request.post("/api/study/cards", {
