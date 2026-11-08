@@ -29,6 +29,14 @@ const noStoredSession = async (page: Page): Promise<void> => {
   );
 };
 
+test.beforeEach(async ({ page }) => {
+  await noStoredSession(page);
+  // Each journey controls its own session/batch; earlier journeys may leave ready work.
+  await page.route("**/api/study/review-batch/active", (route) =>
+    route.fulfill({ contentType: "application/json", body: "null" }),
+  );
+});
+
 /** What the tiles say, read straight from the route the page reads. */
 const counts = async (page: Page): Promise<{ unpreparedCount: number }> => {
   const body = (await (await page.request.get("/api/study/status")).json()) as {
@@ -256,6 +264,7 @@ test("an open session does not stop background preparation of other due Cards", 
   }, presentation);
   await page.reload();
   await expect(page.locator(".presentation")).toBeVisible();
+  await expect(page.locator(".presentation")).toContainText("棚");
   await reportDueWork(page);
 
   const posts: unknown[] = [];
@@ -394,7 +403,6 @@ test("Prepare batch joins background work without waiting for its progress poll"
  * what is measured is purely the page's pacing.
  */
 test("polls that settle nothing are paced, not chained", async ({ page }) => {
-  await noStoredSession(page);
   let polls = 0;
   await page.route("**/api/study/review-batch", async (route) => {
     await route.fulfill({
@@ -433,7 +441,6 @@ test("polls that settle nothing are paced, not chained", async ({ page }) => {
 test("reload resumes the pending batch instead of asking for another twenty", async ({
   page,
 }) => {
-  await noStoredSession(page);
   let posts = 0;
   await page.route("**/api/study/review-batch/active", async (route) => {
     await route.fulfill({
