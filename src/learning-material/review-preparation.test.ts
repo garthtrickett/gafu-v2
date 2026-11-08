@@ -644,3 +644,27 @@ test("obsolete uncertain work releases claims without deleting remote recovery e
     await app.close();
   }
 });
+
+test("a named cache miss behind an active group is durably queued and finishes without another client request", async () => {
+  const app = setup({ count: 25 });
+  try {
+    const first = await app.runner.request("manual");
+    if (!first.ok) throw Error("No batch");
+    await app.runner.tick();
+    const queue = app.study.duePreparationSnapshot();
+    if (!queue.ok) throw Error("No queue");
+    const target = queue.value.due[24]?.card;
+    if (!target) throw Error("No last Card");
+    const second = await app.runner.requestCard(target.id);
+    if (!second.ok) throw Error(second.error.kind);
+    expect(second.value.batchId).not.toBe(first.value.batchId);
+    const repeated = await app.runner.requestCard(target.id);
+    expect(repeated).toEqual(second);
+    await app.drain(12);
+    expect(app.calls.sizes).toEqual([20, 5]);
+    const ready = await app.material.prepare(app.input(target.id));
+    expect(ready.ok).toBe(true);
+  } finally {
+    await app.close();
+  }
+}, 15_000);

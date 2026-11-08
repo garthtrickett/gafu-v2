@@ -290,7 +290,11 @@ export type LearningMaterial = Readonly<{
   backgroundRetryBlockedCards: () => Result<ReadonlySet<CardId>, MaterialFailure>;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
-    options?: Readonly<{ origin: "manual" | "whileOpen" | "server" }>,
+    options?: Readonly<{
+      origin: "manual" | "whileOpen" | "server";
+      queue?: boolean;
+      focusCardId?: CardId;
+    }>,
   ) => Result<string, MaterialFailure>;
   reviewBatchProgress: (
     batchId: string,

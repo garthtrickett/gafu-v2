@@ -65,6 +65,7 @@ export function createReviewPreparation(o: Options) {
     origin: Origin,
     size = 20,
     excluded: ReadonlySet<string> = new Set(),
+    focusCardId?: CardId,
   ): Promise<Result<{ batchId: string; total: number }, Failure>> => {
     const preferences = study.preferences();
     if (!preferences.ok) return err({ kind: "studyUnavailable" });
@@ -75,7 +76,7 @@ export function createReviewPreparation(o: Options) {
       return err({ kind: "cancelled", detail: "Automatic preparation is disabled" });
     const active = material.pendingReviewBatch();
     if (!active.ok) return active;
-    if (active.value) {
+    if (active.value && focusCardId === undefined) {
       if (origin === "manual") material.promoteReviewBatch(active.value.batchId);
       wake();
       return ok(active.value);
@@ -109,18 +110,36 @@ export function createReviewPreparation(o: Options) {
       ...uncertain.value.uncertainCardIds,
       ...(origin === "manual" ? [] : blocked.value),
     ]);
-    const selected = selectDueBatch(
-      scope.value.due,
-      size,
-      origin === "manual" ? undefined : reserves.value,
-      skip,
-    );
+    if (focusCardId && uncertain.value.uncertainCardIds.includes(focusCardId))
+      return err({ kind: "dispatchUncertain" });
+    const focus = focusCardId
+      ? scope.value.due.review
+          .concat(scope.value.due.untaught)
+          .find((item) => item.card.id === focusCardId)
+      : undefined;
+    if (focusCardId && !focus) return err({ kind: "presentationNotFound" });
+    if (focus) {
+      for (const id of uncertain.value.activeCardIds) skip.add(id);
+      skip.add(focus.card.id);
+    }
+    const selected = [
+      ...(focus ? [focus] : []),
+      ...selectDueBatch(
+        scope.value.due,
+        size - (focus ? 1 : 0),
+        origin === "manual" && !focus ? undefined : reserves.value,
+        skip,
+      ),
+    ];
     if (!selected.length) return err({ kind: "noValidCandidate" });
     const inputs = selected
       .map((x) => scope.value.byCard.get(x.card.id))
       .filter((x): x is PrepareMaterial => x !== undefined && current(x));
     if (!inputs.length) return err({ kind: "noValidCandidate" });
-    const begun = material.beginReviewBatch(inputs, { origin });
+    const begun = material.beginReviewBatch(inputs, {
+      origin,
+      ...(focusCardId ? { queue: true, focusCardId } : {}),
+    });
     if (!begun.ok) return begun;
     wake();
     const joined = material.reviewBatchProgress(begun.value);
@@ -295,6 +314,7 @@ export function createReviewPreparation(o: Options) {
   };
   return {
     request,
+    requestCard: (cardId: CardId) => request("manual", 20, new Set(), cardId),
     tick,
     wake,
     status,

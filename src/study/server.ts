@@ -445,7 +445,7 @@ const finishServe = async (
       prepared.error.kind !== "noValidCandidate"
     )
       return materialResponse(prepared);
-    const queued = await preparation.request("manual");
+    const queued = await preparation.requestCard(card.id);
     if (!queued.ok)
       return materialResponse(
         queued.error.kind === "studyUnavailable"

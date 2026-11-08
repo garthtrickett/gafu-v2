@@ -1035,7 +1035,7 @@ export const openLearningMaterial = (
           .query(`SELECT b.batch_id AS batchId,count(i.seq) AS total
           FROM review_batch b JOIN review_batch_item i ON i.batch_id=b.batch_id
           WHERE EXISTS(SELECT 1 FROM review_batch_item p WHERE p.batch_id=b.batch_id AND p.status='pending')
-          GROUP BY b.batch_id ORDER BY b.created_at,b.batch_id LIMIT 1`)
+          GROUP BY b.batch_id ORDER BY EXISTS(SELECT 1 FROM review_batch_job j WHERE j.batch_id=b.batch_id AND j.phase!='uncertain') DESC,b.created_at,b.batch_id LIMIT 1`)
           .get() as { batchId: string; total: number } | null;
         return ok(row);
       } catch (cause) {
@@ -1054,7 +1054,19 @@ export const openLearningMaterial = (
             WHERE EXISTS(SELECT 1 FROM review_batch_item i WHERE i.batch_id=b.batch_id AND i.status='pending')
             ORDER BY b.created_at,b.batch_id LIMIT 1`)
             .get() as { batch_id: string } | null;
-          if (active) {
+          const focused = batchOptions?.focusCardId
+            ? (database
+                .query("SELECT batch_id FROM review_batch_claim WHERE card_id=?")
+                .get(batchOptions.focusCardId) as { batch_id: string } | null)
+            : null;
+          if (focused) {
+            if (batchOptions?.origin === "manual")
+              database
+                .query("UPDATE review_batch SET origin='manual' WHERE batch_id=?")
+                .run(focused.batch_id);
+            return focused.batch_id;
+          }
+          if (active && !batchOptions?.queue) {
             if (batchOptions?.origin === "manual")
               database
                 .query("UPDATE review_batch SET origin='manual' WHERE batch_id=?")
@@ -1084,6 +1096,7 @@ export const openLearningMaterial = (
             const claim = database
               .query("SELECT batch_id FROM review_batch_claim WHERE card_id=?")
               .get(input.card.id);
+            if (claim && batchOptions?.queue) return;
             if (claim) throw new Error("Card already has preparation work");
             database
               .query("INSERT INTO review_batch_claim VALUES (?,?,?)")

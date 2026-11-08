@@ -129,7 +129,9 @@ export function createMaterialSpeech(o: Options) {
         db.query(
           "UPDATE material_speech_job SET state=?,updated_at=? WHERE presentation_id=? AND voice_identity=?",
         ).run(
-          ["offline", "timeout", "cancelled"].includes(result.error.kind)
+          ["offline", "timeout", "cancelled", "dispatchUncertain"].includes(
+            result.error.kind,
+          )
             ? "uncertain"
             : "failed",
           at,
