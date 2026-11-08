@@ -126,9 +126,9 @@ test("a tab left in the background writes the sentences that are due", async ({
   await expect(page.getByRole("status")).toContainText("New Cards admitted");
 
   // The setting is on by default, and this is the only place it is read.
-  await expect(
-    page.getByLabel("Prepare while this tab is in the background"),
-  ).toBeChecked();
+  await expect(page.getByLabel("Automatic sentence preparation")).toHaveValue(
+    "whileOpen",
+  );
 
   // A due Card with nothing banked for it is one generation away from being
   // servable, and that is what the count means.

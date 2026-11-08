@@ -11,7 +11,7 @@ licence, alias-unification, and onboarding gates pending · 2.1
 **Reviewed follow-up plan (2026-11-08):**
 [Server preparation of due Learning Material](docs/server-review-preparation-plan.md)
 moves due-material generation out of browser polling while preserving the
-existing web app. This is a reviewed plan; runtime implementation is pending.
+existing web app. See the [implementation and operational handoff](docs/server-review-preparation-implementation.md) for runtime ownership, compatibility and rollout requirements.
 
 ## Purpose
 

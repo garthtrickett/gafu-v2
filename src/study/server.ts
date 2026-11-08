@@ -18,6 +18,7 @@ import {
   createJishoDictionary,
 } from "../dictionary/jisho-service.ts";
 import { handleDictionaryApi } from "../dictionary/server.ts";
+import { cachedMaterialInput } from "../learning-material/current-material.ts";
 import {
   declaredGrammarDetector,
   supportsGrammarTarget,
@@ -32,6 +33,10 @@ import { createGoogleSpeechProvider } from "../learning-material/google-speech-p
 import { openLearningMaterial } from "../learning-material/learning-material.ts";
 import { createOpenAiMaterialProvider } from "../learning-material/openai-provider.ts";
 import { createOpenAiSpeechProvider } from "../learning-material/openai-speech-provider.ts";
+import {
+  createReviewPreparation,
+  type ReviewPreparation,
+} from "../learning-material/review-preparation.ts";
 import { createDeterministicMaterialProvider } from "../learning-material/scripted-provider.ts";
 import { createDeterministicSpeechProvider } from "../learning-material/scripted-speech-provider.ts";
 import {
@@ -51,6 +56,10 @@ import { createOpenAiReadingProvider } from "../reading/openai-reading.ts";
 import { handleReadingApi } from "../reading/server.ts";
 import { openReadingStore } from "../reading/store.ts";
 import { acquireDatabaseLock } from "../recovery/database-lock.ts";
+import {
+  preparationIsPaused,
+  resumeRestoredPreparation,
+} from "../recovery/preparation-pause.ts";
 import type { Result } from "../result.ts";
 import { err, ok } from "../result.ts";
 import {
@@ -78,7 +87,6 @@ import { DEFAULT_KAISHI_SEED_PATH, loadKaishiSeedManifest } from "./kaishi-seed.
 import {
   countSessionModes,
   type SessionCounts,
-  selectDueBatch,
   wantsTeaching,
 } from "./session-split.ts";
 import { openStudy, unavailableKaishiSeed } from "./study.ts";
@@ -218,6 +226,7 @@ const materialFailureStatus = (failure: MaterialFailure): number => {
     case "reviewBatchNotFound":
       return 404;
     case "cancelled":
+    case "dispatchUncertain":
       return 409;
     case "offline":
     case "timeout":
@@ -273,7 +282,11 @@ const statusSnapshot = (
   if (!flags.ok) return err(materialResponse(flags));
   // What is banked, so the counts can say how much of the due work would
   // cost a generation. A background tab prepares against this number.
-  const reserved = material.reserveFlags();
+  const knowledge = study.knowledgeSnapshot();
+  if (!knowledge.ok) return err(failureResponse(knowledge.error));
+  const reserved = material.reserveFlags(
+    admitted.value.due.map((item) => ({ card: item.card, knowledge: knowledge.value })),
+  );
   if (!reserved.ok) return err(materialResponse(reserved));
   // The due tile alone cannot show that Seen it did anything: teaching moves
   // a Card between session modes, not between states. Count the modes from
@@ -307,8 +320,7 @@ const snapshot = (
   material: LearningMaterial,
   query: CardQuery,
 ): Response => {
-  // Counts first: reading them admits, and the bank listed below should be
-  // the one the counts describe.
+  // Counts and bank reads never admit Cards.
   const counts = statusSnapshot(study, material);
   if (!counts.ok) return counts.error;
   const total = study.countCards(query);
@@ -390,6 +402,7 @@ const splitDue = (
 const serveFirst = async (
   study: Study,
   material: LearningMaterial,
+  preparation: ReviewPreparation,
 ): Promise<Response> => {
   const queue = study.studyQueue();
   if (!queue.ok) return failureResponse(queue.error);
@@ -398,7 +411,7 @@ const serveFirst = async (
   const first = queue.value.due[0];
   if (first === undefined)
     return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-  return finishServe(study, material, knowledge.value, first.card);
+  return finishServe(study, material, knowledge.value, first.card, preparation);
 };
 
 /**
@@ -406,7 +419,7 @@ const serveFirst = async (
  * mode serving and batch work-through so both hand out the same guarantees.
  */
 const servePrepared = (study: Study, prepared: PreparedMaterial): Response => {
-  const current = study.studyQueue();
+  const current = study.duePreparationSnapshot();
   if (!current.ok) return failureResponse(current.error);
   if (!current.value.due.some((item) => item.card.id === prepared.cardId)) {
     return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
@@ -423,9 +436,27 @@ const finishServe = async (
   material: LearningMaterial,
   knowledge: StudyKnowledgeSnapshot,
   card: CardSummary,
+  preparation: ReviewPreparation,
 ): Promise<Response> => {
-  const prepared = await material.prepare({ card, knowledge });
-  if (!prepared.ok) return materialResponse(prepared);
+  const prepared = await material.prepare(cachedMaterialInput(study, card, knowledge));
+  if (!prepared.ok) {
+    if (
+      prepared.error.kind !== "teachingNotPrepared" &&
+      prepared.error.kind !== "noValidCandidate"
+    )
+      return materialResponse(prepared);
+    const queued = await preparation.request("manual");
+    if (!queued.ok)
+      return materialResponse(
+        queued.error.kind === "studyUnavailable"
+          ? err({ kind: "readFailed", detail: "Study unavailable" })
+          : err(queued.error),
+      );
+    return Response.json(
+      { error: { kind: "materialPreparing" }, ...queued.value },
+      { status: 409 },
+    );
+  }
   return servePrepared(study, prepared.value);
 };
 
@@ -433,8 +464,50 @@ const handleApi = async (
   request: Request,
   study: Study,
   material: LearningMaterial,
+  preparation: ReviewPreparation,
 ): Promise<Response> => {
   const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/api/study/preparation-status") {
+    const state = preparation.status();
+    return state.ok
+      ? Response.json({
+          ...state.value,
+          restorePaused: preparationIsPaused(databasePath),
+        })
+      : Response.json({ error: { kind: "readFailed" } }, { status: 500 });
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/preparation/resume") {
+    const resumed = material.resumePreparation();
+    if (!resumed.ok) return materialResponse(resumed);
+    resumeRestoredPreparation(databasePath);
+    preparation.wake();
+    return Response.json({ ok: true });
+  }
+  if (request.method === "POST" && url.pathname === "/api/study/preparation/recover") {
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (!isRecord(body) || typeof body["batchId"] !== "string")
+      return invalidRequest("Choose a preparation request.");
+    if (body["confirmDuplicateCost"] !== true)
+      return invalidRequest(
+        "Explicitly confirm possible duplicate cost before recovering a request.",
+      );
+    const due = study.duePreparationSnapshot(),
+      known = study.knowledgeSnapshot();
+    if (!due.ok) return failureResponse(due.error);
+    if (!known.ok) return failureResponse(known.error);
+    const recovered = material.retryUncertainBatch(body["batchId"], {
+      currentInputs: due.value.due.map((item) => ({
+        card: item.card,
+        knowledge: known.value,
+      })),
+      allowRepurchase: body["confirmDuplicateCost"] === true,
+      confirmProviderChange: body["confirmProviderChange"] === true,
+      abandonKnownRequest: body["confirmAbandonKnownRequest"] === true,
+    });
+    if (recovered.ok) preparation.wake();
+    return materialResponse(recovered);
+  }
   if (request.method === "GET" && url.pathname === "/api/provider") {
     return Response.json(material.providerStatus());
   }
@@ -477,15 +550,26 @@ const handleApi = async (
           wantsTeaching(card, flags.value.taught.has(card.id)) ? "teach" : "review",
         ]),
     );
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const eligibleIds: string[] = [],
+      restoredItems: PreparedMaterial[] = [];
     const items = body["items"] as { id: string; cardId: string; mode: string }[];
-    return Response.json({
-      eligibleIds: items
-        .filter((item) => modes.get(item.cardId) === item.mode)
-        .map((item) => item.id),
-    });
+    for (const item of items) {
+      const card = cards.value.find((c) => c.id === item.cardId);
+      if (!card || modes.get(item.cardId) !== item.mode) continue;
+      const restored = await material.prepare(
+        cachedMaterialInput(study, card, knowledge.value),
+      );
+      if (restored.ok && restored.value.id === item.id) {
+        eligibleIds.push(item.id);
+        restoredItems.push(restored.value);
+      }
+    }
+    return Response.json({ eligibleIds, items: restoredItems });
   }
   if (request.method === "POST" && url.pathname === "/api/study/session") {
-    return serveFirst(study, material);
+    return serveFirst(study, material, preparation);
   }
   if (request.method === "POST" && url.pathname === "/api/study/admit") {
     const admitted = study.studyQueue();
@@ -508,35 +592,26 @@ const handleApi = async (
     ) {
       return invalidRequest("Card IDs are invalid.");
     }
-    const queue = study.studyQueue();
+    const queue = study.duePreparationSnapshot();
     if (!queue.ok) return failureResponse(queue.error);
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) return failureResponse(knowledge.error);
-    const wanted = new Set(body["cardIds"] as string[]);
-    const cards = queue.value.due
-      .filter((item) => wanted.has(item.card.id))
-      .map((item) => item.card);
-    // Reviews lead, for the reason the batch picks them first: a review is
-    // scheduled and decays while it waits, where a first exposure does not.
-    const banked: CardSummary[] = [];
-    const first: CardSummary[] = [];
-    for (const card of cards) {
-      const taught = material.hasTeaching(card.id);
-      if (!taught.ok) return materialResponse(taught);
-      const teaching = wantsTeaching(card, taught.value);
-      const reserve = material.hasReserve(card.id, teaching ? "teach" : "review");
-      if (!reserve.ok) return materialResponse(reserve);
-      if (!reserve.value) continue;
-      (teaching ? first : banked).push(card);
-    }
-    banked.push(...first);
-    const prepared = await Promise.all(
-      banked.map((card) => material.prepare({ card, knowledge: knowledge.value })),
-    );
-    const items: PreparedMaterial[] = [];
-    for (const result of prepared) {
-      if (!result.ok) return materialResponse(result);
-      items.push(result.value);
+    const wanted = new Set(body["cardIds"] as string[]),
+      items: PreparedMaterial[] = [];
+    const split = splitDue(queue.value.due, material);
+    if (!split.ok) return materialResponse(split);
+    for (const { card } of [...split.value.review, ...split.value.untaught]) {
+      if (!wanted.has(card.id)) continue;
+      const result = await material.prepare(
+        cachedMaterialInput(study, card, knowledge.value),
+      );
+      if (result.ok) items.push(result.value);
+      else if (
+        !["teachingNotPrepared", "presentationNotFound", "noValidCandidate"].includes(
+          result.error.kind,
+        )
+      )
+        return materialResponse(result);
     }
     return Response.json({ items });
   }
@@ -577,52 +652,23 @@ const handleApi = async (
     if (size < 1 || size > 20) {
       return invalidRequest("Batch size must be between 1 and 20.");
     }
-    const pending = material.pendingReviewBatch();
-    if (!pending.ok) return materialResponse(pending);
-    if (pending.value !== null) {
-      return Response.json(pending.value, { status: 202 });
+    if (!unpreparedOnly) {
+      const admitted = study.studyQueue();
+      if (!admitted.ok) return failureResponse(admitted.error);
     }
-    const queue = unpreparedOnly ? study.duePreparationSnapshot() : study.studyQueue();
-    if (!queue.ok) return failureResponse(queue.error);
-    const knowledge = study.knowledgeSnapshot();
-    if (!knowledge.ok) return failureResponse(knowledge.error);
-    // Every due Card, whichever it wants: a first exposure while it is new
-    // and unseen, a review once taught. Nothing is taken from the media the
-    // Card came from; every sentence is generated from what the learner
-    // already knows. Reviews come first because they are scheduled and a
-    // missed one decays, where a new Card waits without cost; with more
-    // untaught Cards than a batch holds, taking those first starved the
-    // reviews completely.
-    const split = splitDue(queue.value.due, material);
-    if (!split.ok) return materialResponse(split);
-    // Background preparation is filling the gaps, not opening a session.
-    // Prepared Cards near the front must not consume twenty slots and
-    // strand the unprepared Cards behind them.
-    const reserved = unpreparedOnly ? material.reserveFlags() : ok(undefined);
-    if (!reserved.ok) return materialResponse(reserved);
-    const blocked = unpreparedOnly
-      ? material.backgroundRetryBlockedCards()
-      : ok(new Set<string>());
-    if (!blocked.ok) return materialResponse(blocked);
-    const batch = selectDueBatch(
-      split.value,
+    const begun = await preparation.request(
+      unpreparedOnly ? "whileOpen" : "manual",
       size,
-      reserved.value,
-      new Set([...excludeCardIds, ...blocked.value]),
+      new Set(excludeCardIds),
     );
-    if (batch.length === 0)
-      return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
-    // Beginning records the batch and returns. The first status poll sends
-    // every Card without a stored sentence in one provider request; later
-    // polls wait for that request and bank its results.
-    const begun = material.beginReviewBatch(
-      batch.map((item) => ({ card: item.card, knowledge: knowledge.value })),
-    );
-    if (!begun.ok) return materialResponse(begun);
-    return Response.json(
-      { batchId: begun.value, total: batch.length },
-      { status: 202 },
-    );
+    if (!begun.ok) {
+      if (begun.error.kind === "noValidCandidate")
+        return Response.json({ error: { kind: "nothingDue" } }, { status: 409 });
+      return begun.error.kind === "studyUnavailable"
+        ? Response.json({ error: { kind: "readFailed" } }, { status: 500 })
+        : materialResponse(err(begun.error));
+    }
+    return Response.json(begun.value, { status: 202 });
   }
   const batchMatch = url.pathname.match(/^\/api\/study\/review-batch\/([^/]+)$/u);
   if (request.method === "GET" && batchMatch !== null) {
@@ -630,7 +676,7 @@ const handleApi = async (
     if (batchId === undefined || batchId === "") {
       return invalidRequest("Missing review batch ID.");
     }
-    const progress = await material.advanceReviewBatch(batchId);
+    const progress = material.reviewBatchProgress(batchId);
     if (!progress.ok) return materialResponse(progress);
     if (progress.value.failed.length === 0) return Response.json(progress.value);
     // A failure names its Card, and the browser used to find the name in the
@@ -677,7 +723,7 @@ const handleApi = async (
     }
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) return failureResponse(knowledge.error);
-    return finishServe(study, material, knowledge.value, found.card);
+    return finishServe(study, material, knowledge.value, found.card, preparation);
   }
   if (request.method === "POST" && url.pathname === "/api/study/session/teach") {
     const body = await readJson(request);
@@ -693,6 +739,14 @@ const handleApi = async (
     const card = queue.value.due.find((item) => item.card.id === body["cardId"]);
     if (card === undefined)
       return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
+    const knowledge = study.knowledgeSnapshot();
+    if (!knowledge.ok) return failureResponse(knowledge.error);
+    const current = await material.prepare(
+      cachedMaterialInput(study, card.card, knowledge.value),
+    );
+    if (!current.ok) return materialResponse(current);
+    if (current.value.mode !== "teach" || current.value.id !== body["presentationId"])
+      return materialResponse(err({ kind: "presentationNotFound" }));
     const acknowledged = material.acknowledgeTeaching(
       asCardId(body["cardId"]),
       body["presentationId"],
@@ -785,6 +839,27 @@ const handleApi = async (
       return !isRecord(body) || body["confirmation"] !== "delete"
         ? invalidRequest("Plan deletion requires confirmation=delete.")
         : jsonResult(study.deletePlan(planId, "delete"));
+    }
+  }
+  const speechMatch = url.pathname.match(
+    /^\/api\/study\/presentations\/([^/]+)\/speech$/u,
+  );
+  if (speechMatch) {
+    const raw = speechMatch[1];
+    if (!raw) return invalidRequest("Missing presentation ID.");
+    const decoded = decodePathSegment(raw);
+    if (!decoded.ok) return invalidRequest("Invalid presentation ID.");
+    if (request.method === "GET")
+      return materialResponse(material.presentationSpeech(decoded.value));
+    if (request.method === "POST") {
+      const body = await readJson(request);
+      if (body instanceof Response) return body;
+      return materialResponse(
+        material.retrySpeech(
+          decoded.value,
+          isRecord(body) && body["confirmDuplicateCost"] === true,
+        ),
+      );
     }
   }
   const audioMatch = url.pathname.match(
@@ -1168,6 +1243,18 @@ const openedMaterial = openLearningMaterial({
     const preferences = studyForSpeech?.preferences();
     return preferences?.ok === true && preferences.value.speechEnabled;
   },
+  automaticSpeechCurrent: (cardId, context) => {
+    const current = studyForSpeech?.materialContext(cardId);
+    return (
+      current?.ok === true &&
+      current.value.card.state === "active" &&
+      current.value.card.dueAt !== null &&
+      current.value.card.dueAt <= new Date().toISOString() &&
+      current.value.card.materialRevision === context.cardRevision &&
+      current.value.knowledgeRevision === context.knowledgeRevision
+    );
+  },
+  providerConfigurationId: process.env["GAFU_PROVIDER_CONFIGURATION_ID"] ?? "default",
   speechDailyLimit: Number.isFinite(speechDailyLimit) ? speechDailyLimit : 200,
 });
 if (!openedMaterial.ok) {
@@ -1187,6 +1274,17 @@ if (!opened.ok) {
   throw new Error(`Study failed to open: ${opened.error.kind}`);
 }
 studyForSpeech = opened.value;
+if (preparationIsPaused(databasePath)) openedMaterial.value.pauseRestoredPreparation();
+const reviewPreparation = createReviewPreparation({
+  study: opened.value,
+  material: openedMaterial.value,
+  clock: () => new Date(),
+  automaticAllowed: () =>
+    process.env["GAFU_AUTOMATIC_PREPARATION_DISABLED"] !== "1" &&
+    !preparationIsPaused(databasePath),
+  dispatchAllowed: () => !preparationIsPaused(databasePath),
+  ...(fakeAi ? { pollMs: 100, idleMs: 1000 } : {}),
+});
 
 const watch = createWatch({
   analyzer,
@@ -1300,20 +1398,33 @@ const server = Bun.serve({
       openedPreparation.value,
       opened.value,
     );
-    return (
-      preparationResponse ?? handleApi(request, opened.value, openedMaterial.value)
-    );
+    const response =
+      preparationResponse ??
+      (await handleApi(request, opened.value, openedMaterial.value, reviewPreparation));
+    if (request.method !== "GET" && request.method !== "HEAD" && response.ok)
+      reviewPreparation.wake();
+    return response;
   },
 });
 
 console.info(`Gafu V2 local server listening on ${server.url}`);
 
-const close = () => {
+reviewPreparation.start();
+let closing = false;
+const close = async () => {
+  if (closing) return;
+  closing = true;
+  await server.stop();
+  await reviewPreparation.stop();
   opened.value.close();
   openedMaterial.value.close();
   openedPreparation.value.close();
+  openedReading.value.close();
   releaseDatabaseLock();
-  void server.stop();
 };
-process.once("SIGINT", close);
-process.once("SIGTERM", close);
+process.once("SIGINT", () => {
+  void close();
+});
+process.once("SIGTERM", () => {
+  void close();
+});

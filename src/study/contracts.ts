@@ -67,6 +67,7 @@ export type CardSummary = Readonly<{
   consecutiveCorrect: number;
   /** Monotonic revision of the target and its material-relevant progress. */
   materialRevision?: number;
+  lastReviewedAt?: string | null;
 }>;
 
 /** Correct answers in a row after which a sentence stops helping. */

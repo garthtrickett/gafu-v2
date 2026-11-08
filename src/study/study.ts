@@ -64,6 +64,7 @@ type CardRow = {
   due_at: string | null;
   phase: CardSummary["schedulePhase"];
   review_count: number;
+  last_reviewed_at: string | null;
   consecutive_failures: number;
   consecutive_correct: number;
 };
@@ -98,7 +99,7 @@ const readCardRow = (database: Database, cardId: string): CardRow | null =>
     .query(
       `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
               c.staged_at, a.admitted_at, s.due_at, s.phase,
-              count(r.id) AS review_count
+              count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
        FROM card c
        JOIN card_progress p ON p.card_id = c.id
        LEFT JOIN admission_event a ON a.card_id = c.id
@@ -121,6 +122,7 @@ const toSummary = (row: CardRow): CardSummary => ({
   dueAt: row.due_at,
   schedulePhase: row.phase,
   reviewCount: row.review_count,
+  lastReviewedAt: row.last_reviewed_at,
   consecutiveFailures: row.consecutive_failures,
   consecutiveCorrect: row.consecutive_correct,
 });
@@ -347,7 +349,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         .query(
           `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
-                  count(r.id) AS review_count
+                  count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
            JOIN card_progress p ON p.card_id = c.id
            LEFT JOIN admission_event a ON a.card_id = c.id
@@ -1089,7 +1091,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         .query(
           `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
-                  count(r.id) AS review_count
+                  count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
            JOIN card_progress p ON p.card_id = c.id
            JOIN admission_event a ON a.card_id = c.id
@@ -1300,6 +1302,17 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         : after.value;
       const eventId = dependencies.nextId();
       const apply = database.transaction(() => {
+        if (
+          context === null ||
+          (context !== undefined &&
+            (context.cardRevision !==
+              readCardRow(database, command.cardId)?.material_revision ||
+              context.knowledgeRevision !== knowledgeRevision()))
+        )
+          return err({
+            kind: "presentationInvalid" as const,
+            detail: "The Card or supporting language changed; refresh this review.",
+          });
         database
           .query(
             `INSERT INTO review_event(
@@ -1379,7 +1392,8 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           }
         }
       });
-      apply.immediate();
+      const applied = apply.immediate();
+      if (applied && !applied.ok) return applied;
       const card = readCard(database, command.cardId);
       return card.ok
         ? ok({

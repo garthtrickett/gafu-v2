@@ -3,14 +3,10 @@ import { err, ok, type Result } from "../result.ts";
 import type {
   CardId,
   CardSummary,
-  PresentationPermit,
-  PresentationPermitFailure,
-  PresentationPermitVerifier,
   KnowledgeSnapshot as StudyKnowledgeSnapshot,
-  VerifiedPresentationPermit,
 } from "../study/contracts.ts";
-import { PRESENTATION_PERMIT_LIFETIME_MS } from "../study/contracts.ts";
 import type { ProviderKeyCustody } from "../topology/provider-key-custody.ts";
+import { createBatchExecution } from "./batch-execution.ts";
 import type {
   GeneratedMaterial,
   LearningMaterial,
@@ -21,23 +17,23 @@ import type {
   ReviewBatchFailure,
   ReviewBatchProgress,
 } from "./generated-contracts.ts";
-import { MAX_REVIEW_BATCH_ROUNDS } from "./generated-contracts.ts";
 import { parseBroadPartOfSpeech } from "./generated-decode.ts";
+import {
+  type MaterialContext,
+  materialContext,
+  readMaterialContext,
+} from "./material-context.ts";
+import { MATERIAL_SCHEMA_VERSION, migrateMaterial } from "./material-migrations.ts";
+import { createMaterialReserves } from "./material-reserves.ts";
+import { createMaterialSpeech } from "./material-speech.ts";
 import type { SpeechProvider } from "./speech-contracts.ts";
 import { exactSignature, isNearCopy, nearSignature } from "./variation.ts";
 
-export const MATERIAL_SCHEMA_VERSION = 11;
+export { MATERIAL_SCHEMA_VERSION };
 
 /** Marks a row written for a word Card rather than generated as a sentence. */
 const WORD_CARD_PROVIDER = "word-card";
-export const MATERIAL_VALIDATION_VERSION = "material-v1";
-// One lifetime, owned by Study's contract, enforced here and there.
-const PRESENTATION_PERMIT_TTL_MS = PRESENTATION_PERMIT_LIFETIME_MS;
-const MAXIMUM_PENDING_PERMITS = 1_024;
-// A batch can contain twenty targets and has taken longer than a single-Card
-// generation in production. Still bound a provider job so a lost response
-// cannot hold its Cards (and the Prepare button) indefinitely.
-const REVIEW_BATCH_JOB_TIMEOUT_MS = 15 * 60_000;
+export const MATERIAL_VALIDATION_VERSION = "material-v2";
 const BACKGROUND_RETRY_COOLDOWN_MS = 24 * 60 * 60_000;
 
 type MaterialRow = Readonly<{
@@ -46,8 +42,6 @@ type MaterialRow = Readonly<{
   mode: "teach" | "review";
   payload_json: string;
 }>;
-
-type StoredPermit = VerifiedPresentationPermit & Readonly<{ token: string }>;
 
 export type OpenLearningMaterialOptions = Readonly<{
   databasePath: string;
@@ -73,6 +67,8 @@ export type OpenLearningMaterialOptions = Readonly<{
   speechEnabled?: () => boolean;
   /** Synthesis attempts per UTC day before new clips stop; default 200. */
   speechDailyLimit?: number;
+  providerConfigurationId?: string;
+  automaticSpeechCurrent?: (cardId: CardId, context: MaterialContext) => boolean;
 }>;
 
 const detail = (cause: unknown): string =>
@@ -86,317 +82,6 @@ const safeNow = (clock: () => Date): Result<Date, MaterialFailure> => {
       : err({ kind: "clockFailed", detail: "clock returned an invalid date" });
   } catch {
     return err({ kind: "clockFailed", detail: "clock failed" });
-  }
-};
-
-const migrate = (
-  database: Database,
-  appliedAt: string,
-): Result<void, MaterialFailure> => {
-  try {
-    const apply = database.transaction(() => {
-      database.exec(`
-        CREATE TABLE IF NOT EXISTS learning_material_migration (
-          version INTEGER PRIMARY KEY,
-          applied_at TEXT NOT NULL
-        );
-      `);
-      const current = database
-        .query(
-          "SELECT coalesce(max(version), 0) AS version FROM learning_material_migration",
-        )
-        .get() as { version: number };
-      if (current.version > MATERIAL_SCHEMA_VERSION) {
-        throw new Error(`unsupported Learning Material schema ${current.version}`);
-      }
-      const applied = database
-        .query("SELECT version FROM learning_material_migration ORDER BY version")
-        .all() as { version: number }[];
-      if (!applied.every(({ version }, index) => version === index + 1)) {
-        throw new Error("Learning Material migration history is not contiguous");
-      }
-      // Each step applies when the database is below its version. No step
-      // returns early: a database at version 2 must still receive 3 and 4.
-      // (An early return here once left production without the tables the
-      // later steps create, while fresh databases in tests had them all.)
-      if (current.version < 1) {
-        database.exec(`
-        CREATE TABLE validated_presentation (
-          id TEXT PRIMARY KEY,
-          card_id TEXT NOT NULL,
-          mode TEXT NOT NULL CHECK (mode IN ('teach', 'review')),
-          payload_json TEXT NOT NULL,
-          normalized_japanese TEXT NOT NULL,
-          exact_signature TEXT NOT NULL,
-          near_signature TEXT NOT NULL,
-          generated_at TEXT NOT NULL,
-          shown_at TEXT,
-          provider TEXT NOT NULL,
-          model TEXT NOT NULL,
-          prompt_version TEXT NOT NULL,
-          validation_version TEXT NOT NULL,
-          UNIQUE(card_id, exact_signature)
-        );
-        CREATE INDEX validated_reserve_idx
-          ON validated_presentation(card_id, mode, shown_at, generated_at);
-        CREATE TABLE teaching_acknowledgement (
-          card_id TEXT PRIMARY KEY,
-          presentation_id TEXT NOT NULL,
-          acknowledged_at TEXT NOT NULL
-        );
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (1, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 2) {
-        // Review batches: one row per card. Generation banks reserves without
-        // taking, so work-through serves with fresh permits through the
-        // normal path.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS review_batch_item (
-          batch_id TEXT NOT NULL,
-          seq INTEGER NOT NULL,
-          card_id TEXT NOT NULL,
-          input_json TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
-          failure_kind TEXT,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (batch_id, seq)
-        );
-        CREATE INDEX IF NOT EXISTS review_batch_pending_idx
-          ON review_batch_item(batch_id, status, seq);
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (2, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 3) {
-        // Spoken sentences, one clip per presentation, and the daily ceiling
-        // that bounds what a runaway session can spend on synthesis.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS presentation_audio (
-          presentation_id TEXT PRIMARY KEY,
-          content_type TEXT NOT NULL,
-          bytes BLOB NOT NULL,
-          provider TEXT NOT NULL,
-          model TEXT NOT NULL,
-          voice TEXT NOT NULL,
-          synthesis_version INTEGER NOT NULL,
-          generated_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS speech_daily_usage (
-          usage_date TEXT PRIMARY KEY,
-          attempted_count INTEGER NOT NULL DEFAULT 0 CHECK (attempted_count >= 0),
-          updated_at TEXT NOT NULL
-        );
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (3, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 4) {
-        // The provider job a review batch dispatched, so polls across
-        // processes find it again instead of generating twice.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS review_batch_job (
-          batch_id TEXT PRIMARY KEY,
-          job_id TEXT NOT NULL,
-          dispatched_at TEXT NOT NULL
-        );
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (4, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 5) {
-        // Retry rounds: how many whole-batch requests a Card has been in, and
-        // why its last candidates were refused, fed back to the next request.
-        const columns = new Set(
-          (
-            database.query("PRAGMA table_info(review_batch_item)").all() as {
-              name: string;
-            }[]
-          ).map((column) => column.name),
-        );
-        if (!columns.has("attempts")) {
-          database.exec(
-            "ALTER TABLE review_batch_item ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
-          );
-        }
-        if (!columns.has("hints_json")) {
-          database.exec("ALTER TABLE review_batch_item ADD COLUMN hints_json TEXT");
-        }
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (5, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 6) {
-        // Permits outlive a process now that a session is downloaded whole:
-        // a deploy mid-session must not strand twenty answers in the outbox.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS presentation_permit (
-          token TEXT PRIMARY KEY,
-          id TEXT NOT NULL,
-          card_id TEXT NOT NULL,
-          presentation_id TEXT NOT NULL,
-          issued_at TEXT NOT NULL,
-          contract_version TEXT NOT NULL
-        );
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (6, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 7) {
-        // The learner's knowledge was copied into every batch item — some
-        // 700 KB each, twenty times a batch, never removed — and became the
-        // bulk of the database. It is stored once per batch now.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS review_batch (
-          batch_id TEXT PRIMARY KEY,
-          knowledge_json TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        );
-      `);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (7, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 8) {
-        // A prompt that asked only for the written fields to reconstruct the
-        // sentence let a model answer with one segment and no reading at
-        // all, and the page then showed a sentence with no furigana over any
-        // of it. The provider refuses that now, but the sentences already
-        // banked would each be served once before going away, so they are
-        // dropped here and written again. Only unshown ones: a sentence
-        // already seen is history, and history is not rewritten.
-        for (const row of database
-          .query(
-            `SELECT id, payload_json FROM validated_presentation WHERE shown_at IS NULL`,
-          )
-          .all() as { id: string; payload_json: string }[]) {
-          let unreadable = false;
-          try {
-            const payload = JSON.parse(row.payload_json) as {
-              readingSegments?: { written?: string; reading?: string }[];
-            };
-            unreadable = (payload.readingSegments ?? []).some(
-              (segment) =>
-                typeof segment.written === "string" &&
-                /[一-鿿々〆]/u.test(segment.written) &&
-                (segment.reading ?? "").trim() === "",
-            );
-          } catch {
-            // A payload that will not parse cannot be served either.
-            unreadable = true;
-          }
-          if (unreadable) {
-            database
-              .query("DELETE FROM validated_presentation WHERE id = ?")
-              .run(row.id);
-          }
-        }
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (8, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 9) {
-        // A word-only fallback was also banked for Grammar Cards. It cannot
-        // demonstrate the construction, so let unshown Cards be generated
-        // again. Already shown presentations remain part of review history.
-        for (const row of database
-          .query(
-            "SELECT id, payload_json FROM validated_presentation WHERE shown_at IS NULL AND provider = 'word-card'",
-          )
-          .all() as { id: string; payload_json: string }[]) {
-          let grammar = false;
-          try {
-            grammar =
-              (JSON.parse(row.payload_json) as { targetKind?: string }).targetKind ===
-              "grammar";
-          } catch {
-            grammar = true;
-          }
-          if (grammar)
-            database
-              .query("DELETE FROM validated_presentation WHERE id = ?")
-              .run(row.id);
-        }
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (9, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 10) {
-        // Keep a small, durable pause for Cards whose last generation failed.
-        // Batch rows are purged after an hour, so they cannot protect a hidden
-        // tab from retrying the same impossible grammar Card all day.
-        database.exec(`
-        CREATE TABLE IF NOT EXISTS review_batch_cooldown (
-          card_id TEXT PRIMARY KEY,
-          failed_at TEXT NOT NULL
-        );
-      `);
-        const since = new Date(
-          Date.parse(appliedAt) - BACKGROUND_RETRY_COOLDOWN_MS,
-        ).toISOString();
-        database
-          .query(
-            `INSERT INTO review_batch_cooldown(card_id, failed_at)
-             SELECT i.card_id, max(i.updated_at)
-             FROM review_batch_item i
-             WHERE i.status = 'failed' AND i.updated_at > ?
-               AND NOT EXISTS (
-                 SELECT 1 FROM review_batch_item newer
-                 WHERE newer.card_id = i.card_id AND newer.status = 'ready'
-                   AND newer.updated_at > i.updated_at
-               )
-             GROUP BY i.card_id`,
-          )
-          .run(since);
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (10, ?)",
-          )
-          .run(appliedAt);
-      }
-      if (current.version < 11) {
-        // A word-only first exposure can introduce a word whose sentence is
-        // not yet writable. A review must exercise it in a sentence. Discard
-        // unshown review fallbacks from older versions; shown rows remain
-        // immutable review history.
-        database.exec(
-          "DELETE FROM validated_presentation WHERE mode = 'review' AND shown_at IS NULL AND provider = 'word-card'",
-        );
-        database
-          .query(
-            "INSERT INTO learning_material_migration(version, applied_at) VALUES (11, ?)",
-          )
-          .run(appliedAt);
-      }
-    });
-    apply.immediate();
-    return ok(undefined);
-  } catch (cause) {
-    return err({ kind: "migrationFailed", detail: detail(cause) });
   }
 };
 
@@ -416,86 +101,40 @@ export const openLearningMaterial = (
     database.close();
     return now;
   }
-  const migrated = migrate(database, now.value.toISOString());
+  const migrated = migrateMaterial(database, now.value.toISOString());
   if (!migrated.ok) {
     database.close();
     return migrated;
   }
 
-  type PermitRow = {
-    token: string;
-    id: string;
-    card_id: CardId;
-    presentation_id: string;
-    issued_at: string;
-    contract_version: string;
-  };
-  const prunePermits = (time: number): void => {
-    database
-      .query("DELETE FROM presentation_permit WHERE issued_at < ?")
-      .run(new Date(time - PRESENTATION_PERMIT_TTL_MS).toISOString());
-    const { count } = database
-      .query("SELECT count(*) AS count FROM presentation_permit")
-      .get() as { count: number };
-    if (count >= MAXIMUM_PENDING_PERMITS) {
-      database
-        .query(
-          `DELETE FROM presentation_permit WHERE token IN (
-             SELECT token FROM presentation_permit ORDER BY issued_at, token LIMIT ?
-           )`,
-        )
-        .run(count - MAXIMUM_PENDING_PERMITS + 1);
-    }
-  };
-  const issuePermit = (permit: StoredPermit): void => {
-    database
-      .query(
-        `INSERT INTO presentation_permit(
-           token, id, card_id, presentation_id, issued_at, contract_version
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        permit.token,
-        permit.id,
-        permit.cardId,
-        permit.presentationId,
-        permit.issuedAt.toISOString(),
-        permit.contractVersion,
+  let closed = false;
+  const reserves = createMaterialReserves({
+    database,
+    clock: options.clock,
+    nextId: options.nextId,
+    nextToken: options.nextToken,
+    validationVersion: MATERIAL_VALIDATION_VERSION,
+    validate: options.validate,
+  });
+  const permitVerifier = reserves.verifier;
+  const speech = createMaterialSpeech({
+    database,
+    clock: options.clock,
+    provider: options.speech,
+    enabled: () => !closed && options.speechEnabled?.() !== false,
+    dailyLimit: options.speechDailyLimit ?? 200,
+    currentAutomatic: (id) => {
+      const row = database
+        .query("SELECT card_id,context_json FROM validated_presentation WHERE id=?")
+        .get(id) as { card_id: CardId; context_json: string | null } | null;
+      const context = row ? readMaterialContext(row.context_json) : null;
+      return (
+        row !== null &&
+        context !== null &&
+        options.automaticSpeechCurrent?.(row.card_id, context) !== false
       );
-  };
-  const permitVerifier: PresentationPermitVerifier = {
-    verify: (
-      permit: PresentationPermit,
-      now: Date,
-    ): Result<VerifiedPresentationPermit, PresentationPermitFailure> => {
-      try {
-        prunePermits(now.getTime());
-        const row = database
-          .query(
-            `SELECT token, id, card_id, presentation_id, issued_at, contract_version
-             FROM presentation_permit WHERE token = ?`,
-          )
-          .get(permit.token) as PermitRow | null;
-        if (row === null) {
-          return err({
-            kind: "presentationInvalid",
-            detail: "unknown presentation permit",
-          });
-        }
-        return ok({
-          token: row.token,
-          id: row.id,
-          cardId: row.card_id,
-          presentationId: row.presentation_id,
-          issuedAt: new Date(row.issued_at),
-          contractVersion: row.contract_version,
-        });
-      } catch {
-        return err({ kind: "presentationInvalid", detail: "permit store unavailable" });
-      }
     },
-  };
-
+  });
   const status = (): ProviderStatus => ({
     provider: options.provider.identity.provider,
     model: options.provider.identity.model,
@@ -540,119 +179,39 @@ export const openLearningMaterial = (
   const audioUrlFor = (presentationId: string): string =>
     `/api/study/presentations/${encodeURIComponent(presentationId)}/audio`;
 
-  const hasAudio = (presentationId: string): boolean =>
+  const hasAudio = (id: string): boolean =>
     database
-      .query("SELECT 1 FROM presentation_audio WHERE presentation_id = ?")
-      .get(presentationId) !== null;
-
-  /**
-   * Whether the stored clip was made by the voice in use now. A clip from
-   * another provider, voice, or synthesis version is stale: the sentence is
-   * re-spoken on its next serve, so a voice change reaches banked material.
-   */
-  const hasCurrentAudio = (presentationId: string, speech: SpeechProvider): boolean => {
-    const row = database
-      .query(
-        `SELECT provider, model, voice, synthesis_version
-         FROM presentation_audio WHERE presentation_id = ?`,
-      )
-      .get(presentationId) as {
-      provider: string;
-      model: string;
-      voice: string;
-      synthesis_version: number;
-    } | null;
-    if (row === null) return false;
-    const identity = speech.identity;
-    return (
-      row.provider === identity.provider &&
-      row.model === identity.model &&
-      row.voice === identity.voice &&
-      row.synthesis_version === identity.synthesisVersion
-    );
-  };
-
-  /**
-   * One synthesis attempt counts against the day, cache hits do not. The
-   * conditional upsert is atomic, so concurrent stocking cannot overshoot.
-   */
-  const reserveSpeechBudget = (now: Date): boolean => {
-    const limit = options.speechDailyLimit ?? 200;
-    const day = now.toISOString().slice(0, 10);
-    const changed = database
-      .query(
-        `INSERT INTO speech_daily_usage(usage_date, attempted_count, updated_at)
-         VALUES (?, 1, ?)
-         ON CONFLICT(usage_date) DO UPDATE SET
-           attempted_count = attempted_count + 1,
-           updated_at = excluded.updated_at
-         WHERE attempted_count < ?`,
-      )
-      .run(day, now.toISOString(), limit);
-    return changed.changes === 1;
-  };
-
-  /**
-   * Best effort: says the sentence and stores the clip. Any failure — no
-   * provider, ceiling reached, provider error — leaves the presentation
-   * without audio and is never surfaced as a material failure.
-   */
+      .query("SELECT 1 FROM presentation_audio WHERE presentation_id=?")
+      .get(id) !== null;
   const synthesizeAudio = async (
-    presentationId: string,
+    id: string,
     japanese: string,
     signal?: AbortSignal,
   ): Promise<void> => {
-    if (options.speechEnabled?.() === false) return;
-    const speech = options.speech;
-    if (speech === undefined) return;
-    try {
-      if (hasCurrentAudio(presentationId, speech)) return;
-      const now = safeNow(options.clock);
-      if (!now.ok) return;
-      if (!reserveSpeechBudget(now.value)) return;
-      const spoken = await speech.synthesize(japanese, signal);
-      if (!spoken.ok) return;
-      // A stale clip from another voice gives way; the old one still served
-      // until this moment, so a failed synthesis above kept it.
-      database
-        .query("DELETE FROM presentation_audio WHERE presentation_id = ?")
-        .run(presentationId);
-      database
-        .query(
-          `INSERT OR IGNORE INTO presentation_audio(
-             presentation_id, content_type, bytes, provider, model, voice,
-             synthesis_version, generated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          presentationId,
-          spoken.value.contentType,
-          spoken.value.bytes,
-          speech.identity.provider,
-          speech.identity.model,
-          speech.identity.voice,
-          speech.identity.synthesisVersion,
-          now.value.toISOString(),
-        );
-    } catch {
-      // Audio is an extra; the sentence still serves.
+    speech.enqueue(id, japanese, false, true);
+    for (let round = 0; round < 8 && !speech.hasCurrent(id); round++) {
+      const before = database
+        .query("SELECT count(*) AS n FROM material_speech_job WHERE state='queued'")
+        .get() as { n: number };
+      await speech.tick(signal);
+      const after = database
+        .query("SELECT count(*) AS n FROM material_speech_job WHERE state='queued'")
+        .get() as { n: number };
+      if (after.n >= before.n) break;
     }
   };
-
-  /** Fills in a missing clip for a taken presentation, then labels it. */
   const withAudio = async (
     prepared: PreparedMaterial,
     signal?: AbortSignal,
+    nonblocking = false,
   ): Promise<PreparedMaterial> => {
+    if (nonblocking) return speech.attach(prepared);
     if (options.speechEnabled?.() === false) return { ...prepared, audioUrl: null };
     await synthesizeAudio(prepared.id, prepared.material.japanese, signal);
-    let present = false;
-    try {
-      present = hasAudio(prepared.id);
-    } catch {
-      present = false;
-    }
-    return { ...prepared, audioUrl: present ? audioUrlFor(prepared.id) : null };
+    return {
+      ...prepared,
+      audioUrl: hasAudio(prepared.id) ? audioUrlFor(prepared.id) : null,
+    };
   };
 
   /**
@@ -745,63 +304,11 @@ export const openLearningMaterial = (
     }
   };
 
-  const takeReserve = (
-    cardId: CardId,
-    mode: "teach" | "review",
-    source: PreparedMaterial["source"],
-  ): Result<PreparedMaterial | null, MaterialFailure> => {
-    const observedAt = safeNow(options.clock);
-    if (!observedAt.ok) return observedAt;
-    try {
-      let selected: MaterialRow | null = null;
-      const take = database.transaction(() => {
-        selected = database
-          .query(`SELECT id, card_id, mode, payload_json
-          FROM validated_presentation WHERE card_id = ? AND mode = ? AND shown_at IS NULL
-          ORDER BY generated_at, id LIMIT 1`)
-          .get(cardId, mode) as MaterialRow | null;
-        if (selected === null) return;
-        const changed = database
-          .query(
-            "UPDATE validated_presentation SET shown_at = ? WHERE id = ? AND shown_at IS NULL",
-          )
-          .run(observedAt.value.toISOString(), selected.id);
-        if (changed.changes !== 1) selected = null;
-      });
-      take.immediate();
-      if (selected === null) return ok(null);
-      const row = selected as MaterialRow;
-      const material = JSON.parse(row.payload_json) as GeneratedMaterial;
-      let permit: PresentationPermit | null = null;
-      if (mode === "review") {
-        prunePermits(observedAt.value.getTime());
-        const token = options.nextToken();
-        issuePermit({
-          token,
-          id: options.nextId(),
-          cardId,
-          presentationId: row.id,
-          issuedAt: observedAt.value,
-          contractVersion: MATERIAL_VALIDATION_VERSION,
-        });
-        permit = {
-          token,
-          expiresAt: new Date(
-            observedAt.value.getTime() + PRESENTATION_PERMIT_LIFETIME_MS,
-          ).toISOString(),
-        };
-      }
-      return ok({ id: row.id, cardId, mode, material, permit, source, audioUrl: null });
-    } catch (cause) {
-      return err({ kind: "writeFailed", detail: detail(cause) });
-    }
-  };
-
   const signatures = (cardId: CardId): Result<readonly string[], MaterialFailure> => {
     try {
       const rows = database
         .query(`SELECT near_signature FROM validated_presentation
-        WHERE card_id = ? AND (shown_at IS NULL OR id IN (
+        WHERE card_id = ? AND ((shown_at IS NULL AND coalesce(context_json,'')!='rejected') OR id IN (
           SELECT id FROM validated_presentation WHERE card_id = ? AND shown_at IS NOT NULL
           ORDER BY shown_at DESC LIMIT 5))`)
         .all(cardId, cardId) as { near_signature: string }[];
@@ -817,6 +324,8 @@ export const openLearningMaterial = (
     mode: "teach" | "review",
     material: GeneratedMaterial,
     generatedAt: Date,
+    input: Parameters<LearningMaterial["prepare"]>[0],
+    queueAudio = false,
   ): Result<string | null, MaterialFailure> => {
     const prior = signatures(cardId);
     if (!prior.ok) return prior;
@@ -827,8 +336,8 @@ export const openLearningMaterial = (
       database
         .query(`INSERT INTO validated_presentation(
         id, card_id, mode, payload_json, normalized_japanese, exact_signature,
-        near_signature, generated_at, provider, model, prompt_version, validation_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        near_signature, generated_at, provider, model, prompt_version, validation_version, context_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           id,
           cardId,
@@ -842,7 +351,9 @@ export const openLearningMaterial = (
           options.provider.identity.model,
           options.provider.identity.promptVersion,
           MATERIAL_VALIDATION_VERSION,
+          JSON.stringify(materialContext(input)),
         );
+      if (queueAudio) speech.enqueue(id, material.japanese, input.automatic ?? false);
       return ok(id);
     } catch (cause) {
       if (String(cause).includes("validated_presentation.card_id")) return ok(null);
@@ -850,24 +361,8 @@ export const openLearningMaterial = (
     }
   };
 
-  const reserveFlags: LearningMaterial["reserveFlags"] = () => {
-    try {
-      const teach = new Set<CardId>();
-      const review = new Set<CardId>();
-      for (const row of database
-        .query(
-          `SELECT DISTINCT card_id, mode FROM validated_presentation
-           WHERE shown_at IS NULL`,
-        )
-        .all() as { card_id: CardId; mode: string }[]) {
-        (row.mode === "teach" ? teach : review).add(row.card_id);
-      }
-      return ok({ teach, review });
-    } catch (cause) {
-      return err({ kind: "readFailed", detail: detail(cause) });
-    }
-  };
-
+  const reserveFlags: LearningMaterial["reserveFlags"] = (inputs) =>
+    reserves.flags(inputs);
   const hasReserve = (
     cardId: CardId,
     mode: "teach" | "review",
@@ -923,11 +418,14 @@ export const openLearningMaterial = (
           else return validated;
           continue;
         }
+        if (input.isCurrent?.() === false) return err({ kind: "presentationNotFound" });
         const saved = storeCandidate(
           input.card.id,
           mode,
           validated.value,
           generatedAt.value,
+          input,
+          true,
         );
         if (!saved.ok) return saved;
         if (saved.value !== null)
@@ -937,9 +435,8 @@ export const openLearningMaterial = (
         // Say every banked sentence now, concurrently, so a later serve is
         // instant. Each is best effort; none can fail the material.
         if (mode === "review") {
-          await Promise.all(
-            banked.map((item) => synthesizeAudio(item.id, item.japanese, input.signal)),
-          );
+          for (const item of banked)
+            await synthesizeAudio(item.id, item.japanese, input.signal);
         }
         return ok(undefined);
       }
@@ -961,7 +458,7 @@ export const openLearningMaterial = (
   };
 
   /** Whether a first exposure can use the word when no sentence is writable. */
-  const unwritable = (kind: string | null): boolean =>
+  const _unwritable = (kind: string | null): boolean =>
     kind === "noValidCandidate" ||
     kind === "validationRejected" ||
     kind === "malformedResponse";
@@ -1050,9 +547,11 @@ export const openLearningMaterial = (
     const wanted = modeFor(input.card);
     if (!wanted.ok) return wanted;
     const mode = wanted.value;
-    const reserve = takeReserve(input.card.id, mode, "reserve");
+    const reserve = await reserves.take(input, mode, "reserve");
     if (!reserve.ok) return reserve;
-    if (reserve.value !== null) return ok(await withAudio(reserve.value, input.signal));
+    if (reserve.value !== null)
+      return ok(await withAudio(reserve.value, input.signal, input.cachedOnly));
+    if (input.cachedOnly) return err({ kind: "teachingNotPrepared" });
     if (mode === "teach") {
       // A first exposure already shown is shown again rather than rewritten:
       // the Card is met once, and meeting it twice in different words is a
@@ -1069,10 +568,10 @@ export const openLearningMaterial = (
     // the fallback exists to avoid, not a first exposure it should produce.
     const stocked = await stockReserve(input, mode);
     if (stocked.ok) {
-      const prepared = takeReserve(input.card.id, mode, "generated");
+      const prepared = await reserves.take(input, mode, "generated");
       if (!prepared.ok) return prepared;
       if (prepared.value !== null)
-        return ok(await withAudio(prepared.value, input.signal));
+        return ok(await withAudio(prepared.value, input.signal, input.cachedOnly));
     }
     // A review with no validated sentence stays due. A word-only first
     // exposure may still introduce a vocabulary Card whose context cannot
@@ -1081,21 +580,18 @@ export const openLearningMaterial = (
       return stocked.ok ? err({ kind: "noValidCandidate" }) : stocked;
     const word = bankWordPresentation(input.card, mode);
     if (!word.ok) return word;
-    const fallback = takeReserve(input.card.id, mode, "reserve");
+    const fallback = await reserves.take(input, mode, "reserve");
     if (!fallback.ok) return fallback;
     if (fallback.value !== null)
       return ok(await withAudio(fallback.value, input.signal));
     return err({ kind: "noValidCandidate" });
   };
 
-  type PendingItem = {
-    seq: number;
-    card_id: CardId;
-    input_json: string;
-    attempts: number;
-    hints_json: string | null;
+  type BatchInput = {
+    card: CardSummary;
+    knowledge: StudyKnowledgeSnapshot;
+    automatic?: boolean;
   };
-  type BatchInput = { card: CardSummary; knowledge: StudyKnowledgeSnapshot };
 
   /** Deletes every batch with nothing pending and no change since the cutoff. */
   const deleteFinishedBatches = (now: Date, olderThanMs: number): number => {
@@ -1111,6 +607,16 @@ export const openLearningMaterial = (
         .all(cutoff) as { batch_id: string }[]
     ).map((row) => row.batch_id);
     for (const old of finished) {
+      if (
+        database
+          .query(
+            "SELECT 1 FROM review_batch_job WHERE batch_id=? AND phase='uncertain'",
+          )
+          .get(old)
+      )
+        continue;
+      database.query("DELETE FROM review_batch_claim WHERE batch_id=?").run(old);
+      database.query("DELETE FROM review_batch_attempt WHERE batch_id=?").run(old);
       database.query("DELETE FROM review_batch_item WHERE batch_id = ?").run(old);
       database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(old);
       database.query("DELETE FROM review_batch WHERE batch_id = ?").run(old);
@@ -1150,13 +656,14 @@ export const openLearningMaterial = (
     if (parsed.knowledge !== undefined)
       return { card: parsed.card, knowledge: parsed.knowledge };
     const row = database
-      .query("SELECT knowledge_json FROM review_batch WHERE batch_id = ?")
-      .get(batchId) as { knowledge_json: string } | null;
+      .query("SELECT knowledge_json,origin FROM review_batch WHERE batch_id = ?")
+      .get(batchId) as { knowledge_json: string; origin: string } | null;
     if (row === null) return null;
     try {
       return {
         card: parsed.card,
         knowledge: JSON.parse(row.knowledge_json) as StudyKnowledgeSnapshot,
+        automatic: row.origin !== "manual",
       };
     } catch {
       return null;
@@ -1195,269 +702,314 @@ export const openLearningMaterial = (
     }
   };
 
-  /** Speaks the banked sentences a few at a time, as V1 did. */
-  const speakAll = async (
-    banked: readonly { id: string; japanese: string }[],
-    concurrency = 3,
-  ): Promise<void> => {
-    if (options.speechEnabled?.() === false) return;
-    for (let index = 0; index < banked.length; index += concurrency) {
-      await Promise.all(
-        banked
-          .slice(index, index + concurrency)
-          .map((item) => synthesizeAudio(item.id, item.japanese)),
-      );
-    }
-  };
-
-  /**
-   * One provider request for every pending Card. The first advance dispatches
-   * it and records the job; later advances poll; the completing advance
-   * validates and banks every Card's candidates, marks each ready or failed,
-   * then speaks the banked sentences. A Card the provider returned nothing
-   * usable for fails alone. A provider-level failure fails every pending Card
-   * with its kind, so the learner can batch again; nothing is retried here.
-   */
-  const advanceWholeBatch = async (
-    batchId: string,
-    batch: NonNullable<MaterialProvider["batch"]>,
-  ): Promise<Result<void, MaterialFailure>> => {
-    let pending: PendingItem[];
-    let job: { job_id: string; dispatched_at: string } | null;
-    let created: { created_at: string } | null;
+  const executor = createBatchExecution({
+    database,
+    clock: options.clock,
+    nextId: options.nextId,
+    ownerToken: options.nextToken(),
+    provider: options.provider,
+    providerBinding: JSON.stringify({
+      ...options.provider.identity,
+      configuration: options.providerConfigurationId ?? "default",
+    }),
+    input: batchInput,
+    mode: (input) => modeFor(input.card),
+    hasReserve: (input, mode) => {
+      const flags = reserves.flags([input]);
+      return flags.ok ? ok(flags.value[mode].has(input.card.id)) : flags;
+    },
+    recent: recentJapanese,
+    validate: options.validate,
+    store: (input, mode, value, at) =>
+      storeCandidate(input.card.id, mode, value, at, input, true),
+    word: (input, mode) => {
+      const saved = bankWordPresentation(input.card, mode);
+      if (saved.ok)
+        database
+          .query(
+            "UPDATE validated_presentation SET context_json=? WHERE card_id=? AND mode=? AND provider='word-card' AND context_json IS NULL AND shown_at IS NULL",
+          )
+          .run(JSON.stringify(materialContext(input)), input.card.id, mode);
+      return saved;
+    },
+    cooldown: setBackgroundRetryCooldown,
+    ready: () => {},
+  });
+  const reviewBatchProgress: LearningMaterial["reviewBatchProgress"] = (batchId) => {
     try {
-      pending = database
+      const rows = database
         .query(
-          `SELECT seq, card_id, input_json, attempts, hints_json FROM review_batch_item
-           WHERE batch_id = ? AND status = 'pending' ORDER BY seq`,
+          "SELECT card_id,status,failure_kind,attempts,hints_json FROM review_batch_item WHERE batch_id=? ORDER BY seq",
         )
-        .all(batchId) as PendingItem[];
-      job = database
-        .query("SELECT job_id, dispatched_at FROM review_batch_job WHERE batch_id = ?")
-        .get(batchId) as typeof job;
-      created = database
-        .query("SELECT created_at FROM review_batch WHERE batch_id = ?")
-        .get(batchId) as typeof created;
+        .all(batchId) as {
+        card_id: CardId;
+        status: string;
+        failure_kind: ReviewBatchFailure["kind"] | null;
+        attempts: number;
+        hints_json: string | null;
+      }[];
+      if (!rows.length) return err({ kind: "reviewBatchNotFound", batchId });
+      const pending = rows.filter((r) => r.status === "pending");
+      return ok({
+        batchId,
+        done: !pending.length,
+        pending: pending.length,
+        completed: rows.filter((r) => r.status === "ready").map((r) => r.card_id),
+        failed: rows
+          .filter((r) => r.status === "failed")
+          .map((r) => ({
+            cardId: r.card_id,
+            kind: r.failure_kind ?? "noValidCandidate",
+            reasons: JSON.parse(r.hints_json ?? "[]") as string[],
+          })),
+        round: Math.max(1, ...pending.map((r) => r.attempts + 1)),
+        requestInFlight:
+          pending.length > 0 &&
+          database
+            .query("SELECT 1 FROM review_batch_job WHERE batch_id=?")
+            .get(batchId) !== null,
+      });
     } catch (cause) {
       return err({ kind: "readFailed", detail: detail(cause) });
     }
-    if (pending.length === 0) return ok(undefined);
-    const observedAt = safeNow(options.clock);
-    if (!observedAt.ok) return observedAt;
-    const at = observedAt.value.toISOString();
-    const inputs = new Map<number, BatchInput>();
-    for (const item of pending) {
-      const input = batchInput(batchId, item.input_json);
-      if (input === null) {
-        return err({ kind: "writeFailed", detail: "review batch input is corrupt" });
-      }
-      inputs.set(item.seq, input);
-    }
-    const failAll = (kind: string): Result<void, MaterialFailure> => {
-      try {
-        const apply = database.transaction(() => {
-          for (const item of pending) {
-            setItemStatus(batchId, item.seq, "failed", kind, at);
-            setBackgroundRetryCooldown(item.card_id, "failed", at);
-          }
-          database
-            .query("DELETE FROM review_batch_job WHERE batch_id = ?")
-            .run(batchId);
-        });
-        apply.immediate();
-        return ok(undefined);
-      } catch (cause) {
-        return err({ kind: "writeFailed", detail: detail(cause) });
-      }
-    };
-
-    const startedAt = job?.dispatched_at ?? created?.created_at;
-    const startedAtMs = startedAt === undefined ? NaN : Date.parse(startedAt);
-    if (
-      startedAt !== undefined &&
-      (!Number.isFinite(startedAtMs) ||
-        observedAt.value.getTime() - startedAtMs >= REVIEW_BATCH_JOB_TIMEOUT_MS)
-    ) {
-      return failAll("timeout");
-    }
-
-    if (job === null) {
-      // A Card that already holds a reserve in the mode it wants needs no
-      // generation; the rest are asked for together.
-      const targets: {
-        item: PendingItem;
-        input: BatchInput;
-        mode: "teach" | "review";
-      }[] = [];
-      for (const item of pending) {
-        const input = inputs.get(item.seq);
-        if (input === undefined) continue;
-        const wanted = modeFor(input.card);
-        if (!wanted.ok) return wanted;
-        // A Card that already holds one is ready without being asked for,
-        // and stays in the batch rather than being kept out of it: the batch
-        // is also how Cards are handed to the session, and a day of Cards
-        // left out of it looked like nothing due.
-        const reserve = hasReserve(item.card_id, wanted.value);
-        if (!reserve.ok) return reserve;
-        if (reserve.value) {
-          try {
-            const apply = database.transaction(() => {
-              setItemStatus(batchId, item.seq, "ready", null, at);
-              setBackgroundRetryCooldown(item.card_id, "ready", at);
-            });
-            apply.immediate();
-          } catch (cause) {
-            return err({ kind: "writeFailed", detail: detail(cause) });
-          }
-          continue;
-        }
-        targets.push({ item, input, mode: wanted.value });
-      }
-      const first = targets[0];
-      if (first === undefined) return ok(undefined);
-      const batchTargets = [];
-      for (const target of targets) {
-        const recent = recentJapanese(target.item.card_id);
-        if (!recent.ok) return recent;
-        let previousRejections: readonly string[] = [];
-        try {
-          const parsed: unknown =
-            target.item.hints_json === null ? [] : JSON.parse(target.item.hints_json);
-          if (Array.isArray(parsed))
-            previousRejections = parsed.filter(
-              (hint): hint is string => typeof hint === "string",
-            );
-        } catch {
-          previousRejections = [];
-        }
-        batchTargets.push({
-          mode: target.mode,
-          card: target.input.card,
-          recentJapanese: recent.value,
-          previousRejections,
-        });
-      }
-      const dispatched = await batch.dispatch(batchTargets, first.input.knowledge);
-      if (!dispatched.ok) return failAll(dispatched.error.kind);
-      try {
-        database
-          .query(
-            "INSERT INTO review_batch_job(batch_id, job_id, dispatched_at) VALUES (?, ?, ?)",
-          )
-          .run(batchId, dispatched.value.jobId, at);
-      } catch (cause) {
-        return err({ kind: "writeFailed", detail: detail(cause) });
-      }
-      return ok(undefined);
-    }
-
-    const polled = await batch.poll(job.job_id);
-    if (!polled.ok) return failAll(polled.error.kind);
-    if (polled.value.status === "pending") return ok(undefined);
-    const byCard = new Map(
-      polled.value.items.map((item) => [item.cardId, item.candidates]),
-    );
-    const banked: { id: string; japanese: string }[] = [];
-    for (const item of pending) {
-      const input = inputs.get(item.seq);
-      const candidates = byCard.get(item.card_id);
-      let status: "ready" | "failed" = "failed";
-      let failureKind: string | null = "noValidCandidate";
-      const hints: string[] = [];
-      const wanted = input === undefined ? null : modeFor(input.card);
-      if (wanted !== null && !wanted.ok) return wanted;
-      const itemMode = wanted === null ? "review" : wanted.value;
-      if (input !== undefined && candidates !== undefined) {
-        for (const value of candidates) {
-          const validated = await options.validate({ ...input, value, mode: itemMode });
-          if (!validated.ok) {
-            failureKind = validated.error.kind;
-            if (validated.error.kind === "validationRejected")
-              hints.push(...validated.error.reasons);
-            continue;
-          }
-          const saved = storeCandidate(
-            item.card_id,
-            itemMode,
-            validated.value,
-            observedAt.value,
-          );
-          if (!saved.ok) return saved;
-          if (saved.value !== null)
-            banked.push({ id: saved.value, japanese: validated.value.japanese });
-          status = "ready";
-          failureKind = null;
-        }
-      }
-      try {
-        const attempts = item.attempts + 1;
-        if (status === "failed" && attempts < MAX_REVIEW_BATCH_ROUNDS) {
-          // Back into the next round, carrying why this one was refused.
-          database
-            .query(
-              `UPDATE review_batch_item
-               SET attempts = ?, hints_json = ?, failure_kind = ?, updated_at = ?
-               WHERE batch_id = ? AND seq = ?`,
-            )
-            .run(
-              attempts,
-              JSON.stringify([...new Set(hints)]),
-              failureKind,
-              at,
-              batchId,
-              item.seq,
-            );
-        } else {
-          // Out of rounds. Reviews without a validated sentence stay due;
-          // only an unwritable first exposure can show a vocabulary Card as
-          // itself. Keep the rejection hints for the learner and a retry.
-          if (
-            status === "failed" &&
-            itemMode === "teach" &&
-            input?.card.type === "vocabulary" &&
-            unwritable(failureKind)
-          ) {
-            const word = bankWordPresentation(input.card, itemMode);
-            if (!word.ok) return word;
-            status = "ready";
-            failureKind = null;
-          }
-          const settle = database.transaction(() => {
-            database
-              .query(
-                `UPDATE review_batch_item
-                 SET status = ?, attempts = ?, failure_kind = ?, hints_json = ?, updated_at = ?
-                 WHERE batch_id = ? AND seq = ?`,
-              )
-              .run(
-                status,
-                attempts,
-                failureKind,
-                JSON.stringify([...new Set(hints)]),
-                at,
-                batchId,
-                item.seq,
-              );
-            setBackgroundRetryCooldown(item.card_id, status, at);
-          });
-          settle.immediate();
-        }
-      } catch (cause) {
-        return err({ kind: "writeFailed", detail: detail(cause) });
-      }
-    }
-    try {
-      database.query("DELETE FROM review_batch_job WHERE batch_id = ?").run(batchId);
-    } catch (cause) {
-      return err({ kind: "writeFailed", detail: detail(cause) });
-    }
-    await speakAll(banked);
-    return ok(undefined);
   };
 
   return ok({
     prepare,
+    reviewBatchProgress,
+    checkReserves: async (input) => {
+      const mode = modeFor(input.card);
+      return mode.ok ? reserves.check(input, mode.value) : mode;
+    },
+    presentationSpeech: (id) => {
+      try {
+        return ok(speech.status(id));
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
+    },
+    retrySpeech: (id, confirmed) => {
+      try {
+        return speech.retry(id, confirmed)
+          ? ok(undefined)
+          : err({ kind: "presentationNotFound" });
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    },
+    advanceSpeech: (signal, allowAutomatic) => speech.tick(signal, allowAutomatic),
+    promoteReviewBatch: (batchId) => {
+      database
+        .query("UPDATE review_batch SET origin='manual' WHERE batch_id=?")
+        .run(batchId);
+      return ok(undefined);
+    },
+    resumePreparation: () => {
+      executor.resume();
+      return ok(undefined);
+    },
+    pauseRestoredPreparation: () => {
+      database
+        .query(
+          "UPDATE review_batch_job SET phase='uncertain' WHERE job_id='' OR phase='dispatching'",
+        )
+        .run();
+      return ok(undefined);
+    },
+    reconcilePreparation: (obsolete) => {
+      try {
+        const items = database
+          .query(`SELECT batch_id,seq,card_id,input_json FROM review_batch_item
+          WHERE status='pending' OR failure_kind='dispatchUncertain'`)
+          .all() as {
+          batch_id: string;
+          seq: number;
+          card_id: CardId;
+          input_json: string;
+        }[];
+        const stale = items.filter((item) => {
+          try {
+            const card = JSON.parse(item.input_json).card as CardSummary | undefined;
+            return (
+              card !== undefined &&
+              typeof card.id === "string" &&
+              typeof card.reviewCount === "number" &&
+              card.content !== null &&
+              typeof card.content === "object" &&
+              obsolete(card)
+            );
+          } catch {
+            return false;
+          }
+        });
+        database
+          .transaction(() => {
+            for (const item of stale) {
+              database
+                .query(
+                  "UPDATE review_batch_item SET status='failed',failure_kind='presentationNotFound',updated_at=? WHERE batch_id=? AND seq=?",
+                )
+                .run(options.clock().toISOString(), item.batch_id, item.seq);
+              database
+                .query("DELETE FROM review_batch_claim WHERE batch_id=? AND card_id=?")
+                .run(item.batch_id, item.card_id);
+            }
+            // Retain remote IDs as evidence even when every local target is obsolete.
+            database.exec(`UPDATE review_batch_job SET phase='uncertain' WHERE NOT EXISTS(
+            SELECT 1 FROM review_batch_item i WHERE i.batch_id=review_batch_job.batch_id AND i.status='pending');
+            INSERT OR IGNORE INTO review_batch_claim(card_id,batch_id,context_json)
+            SELECT card_id,batch_id,'{}' FROM review_batch_item
+            WHERE status='pending' OR failure_kind='dispatchUncertain' ORDER BY updated_at,batch_id;`);
+          })
+          .immediate();
+        return ok(stale.length);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    },
+    preparationState: () => {
+      try {
+        const state = executor.state();
+        const uncertain = database
+          .query(
+            "SELECT j.batch_id FROM review_batch_job j WHERE phase='uncertain' AND EXISTS(SELECT 1 FROM review_batch_claim c WHERE c.batch_id=j.batch_id)",
+          )
+          .all() as { batch_id: string }[];
+        const claims = database
+          .query(
+            "SELECT c.card_id,j.phase FROM review_batch_claim c LEFT JOIN review_batch_job j ON j.batch_id=c.batch_id",
+          )
+          .all() as { card_id: CardId; phase: string | null }[];
+        return ok({
+          blockedReason: state.blocked_reason || null,
+          retryAt: state.retry_at,
+          activeCardIds: claims
+            .filter((c) => c.phase !== "uncertain")
+            .map((c) => c.card_id),
+          uncertainCardIds: claims
+            .filter((c) => c.phase === "uncertain")
+            .map((c) => c.card_id),
+          uncertainBatches: uncertain.map((b) => b.batch_id),
+        });
+      } catch (cause) {
+        return err({ kind: "readFailed", detail: detail(cause) });
+      }
+    },
+    batchExecution: (batchId) => {
+      const row = database
+        .query(
+          "SELECT b.origin,b.blocked_reason,b.retry_at,j.phase FROM review_batch b LEFT JOIN review_batch_job j ON j.batch_id=b.batch_id WHERE b.batch_id=?",
+        )
+        .get(batchId) as {
+        origin: "manual" | "whileOpen" | "server";
+        blocked_reason: string | null;
+        retry_at: string | null;
+        phase: string | null;
+      } | null;
+      return row
+        ? ok({
+            origin: row.origin,
+            phase: row.phase ?? "queued",
+            blockedReason: row.blocked_reason,
+            retryAt: row.retry_at,
+          })
+        : err({ kind: "reviewBatchNotFound", batchId });
+    },
+    retryUncertainBatch: (batchId, recovery = {}) => {
+      try {
+        const row = database
+          .query(
+            "SELECT phase,job_id,provider_identity FROM review_batch_job WHERE batch_id=?",
+          )
+          .get(batchId) as {
+          phase: string;
+          job_id: string;
+          provider_identity: string | null;
+        } | null;
+        if (row?.phase !== "uncertain")
+          return err({ kind: "reviewBatchNotFound", batchId });
+        const binding = JSON.stringify({
+          ...options.provider.identity,
+          configuration: options.providerConfigurationId ?? "default",
+        });
+        if (row.provider_identity !== binding && !recovery.confirmProviderChange)
+          return err({ kind: "dispatchUncertain" });
+        if ((!row.job_id || recovery.abandonKnownRequest) && !recovery.allowRepurchase)
+          return err({ kind: "dispatchUncertain" });
+        database.transaction(() => {
+          database
+            .query(
+              "UPDATE review_batch_attempt SET disposition='explicitly-retried' WHERE batch_id=? AND disposition!='settled'",
+            )
+            .run(batchId);
+          if (row.job_id && !recovery.abandonKnownRequest)
+            database
+              .query(
+                "UPDATE review_batch_job SET phase='recovering',provider_identity=? WHERE batch_id=?",
+              )
+              .run(binding, batchId);
+          else
+            database
+              .query("DELETE FROM review_batch_job WHERE batch_id=?")
+              .run(batchId);
+          database
+            .query(
+              "UPDATE review_batch SET origin='manual',blocked_reason=NULL,retry_at=NULL WHERE batch_id=?",
+            )
+            .run(batchId);
+          if (recovery.currentInputs) {
+            const fresh = new Map(
+              recovery.currentInputs.map((input) => [input.card.id, input]),
+            );
+            const rows = database
+              .query(
+                "SELECT seq,card_id FROM review_batch_item WHERE batch_id=? AND failure_kind='dispatchUncertain'",
+              )
+              .all(batchId) as { seq: number; card_id: CardId }[];
+            let knowledge: StudyKnowledgeSnapshot | undefined;
+            for (const item of rows) {
+              const input = fresh.get(item.card_id);
+              if (input) {
+                knowledge = input.knowledge;
+                database
+                  .query(
+                    "UPDATE review_batch_item SET input_json=? WHERE batch_id=? AND seq=?",
+                  )
+                  .run(JSON.stringify({ card: input.card }), batchId, item.seq);
+                database
+                  .query(
+                    "UPDATE review_batch_claim SET context_json=? WHERE batch_id=? AND card_id=?",
+                  )
+                  .run(JSON.stringify(materialContext(input)), batchId, item.card_id);
+              } else {
+                database
+                  .query(
+                    "UPDATE review_batch_item SET failure_kind='presentationNotFound' WHERE batch_id=? AND seq=?",
+                  )
+                  .run(batchId, item.seq);
+                database
+                  .query(
+                    "DELETE FROM review_batch_claim WHERE batch_id=? AND card_id=?",
+                  )
+                  .run(batchId, item.card_id);
+              }
+            }
+            if (knowledge)
+              database
+                .query("UPDATE review_batch SET knowledge_json=? WHERE batch_id=?")
+                .run(JSON.stringify(knowledge), batchId);
+          }
+          database
+            .query(
+              "UPDATE review_batch_item SET status='pending',failure_kind=NULL WHERE batch_id=? AND failure_kind='dispatchUncertain'",
+            )
+            .run(batchId);
+        })();
+        return ok(undefined);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
+      }
+    },
     hasTeaching,
     hasReserve,
     backgroundRetryBlockedCards: () => {
@@ -1479,53 +1031,49 @@ export const openLearningMaterial = (
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
       try {
-        // A stale job cannot be resumed. Use the dispatch time so a later
-        // retry round stays resumable even when the batch itself is older.
-        const since = new Date(
-          observedAt.value.getTime() - REVIEW_BATCH_JOB_TIMEOUT_MS,
-        );
         const row = database
-          .query(`SELECT b.batch_id AS batchId, count(i.seq) AS total
-            FROM review_batch b
-            JOIN review_batch_item i ON i.batch_id = b.batch_id
-            WHERE coalesce((
-              SELECT j.dispatched_at FROM review_batch_job j
-              WHERE j.batch_id = b.batch_id
-            ), b.created_at) > ?
-              AND EXISTS (
-                SELECT 1 FROM review_batch_item pending
-                WHERE pending.batch_id = b.batch_id AND pending.status = 'pending'
-              )
-            GROUP BY b.batch_id
-            ORDER BY EXISTS (
-              SELECT 1 FROM review_batch_job j WHERE j.batch_id = b.batch_id
-            ) DESC, b.created_at DESC
-            LIMIT 1`)
-          .get(since.toISOString()) as { batchId: string; total: number } | null;
+          .query(`SELECT b.batch_id AS batchId,count(i.seq) AS total
+          FROM review_batch b JOIN review_batch_item i ON i.batch_id=b.batch_id
+          WHERE EXISTS(SELECT 1 FROM review_batch_item p WHERE p.batch_id=b.batch_id AND p.status='pending')
+          GROUP BY b.batch_id ORDER BY b.created_at,b.batch_id LIMIT 1`)
+          .get() as { batchId: string; total: number } | null;
         return ok(row);
       } catch (cause) {
         return err({ kind: "readFailed", detail: detail(cause) });
       }
     },
-    beginReviewBatch: (cards) => {
+    beginReviewBatch: (cards, batchOptions) => {
       const observedAt = safeNow(options.clock);
       if (!observedAt.ok) return observedAt;
       const batchId = options.nextId();
       const first = cards[0];
       try {
         const insert = database.transaction(() => {
+          const active = database
+            .query(`SELECT b.batch_id FROM review_batch b
+            WHERE EXISTS(SELECT 1 FROM review_batch_item i WHERE i.batch_id=b.batch_id AND i.status='pending')
+            ORDER BY b.created_at,b.batch_id LIMIT 1`)
+            .get() as { batch_id: string } | null;
+          if (active) {
+            if (batchOptions?.origin === "manual")
+              database
+                .query("UPDATE review_batch SET origin='manual' WHERE batch_id=?")
+                .run(active.batch_id);
+            return active.batch_id;
+          }
           // Housekeeping: a batch finished more than an hour ago has been
           // worked through or abandoned; its rows only take space.
           deleteFinishedBatches(observedAt.value, 60 * 60 * 1_000);
           if (first !== undefined) {
             database
               .query(
-                "INSERT INTO review_batch(batch_id, knowledge_json, created_at) VALUES (?, ?, ?)",
+                "INSERT INTO review_batch(batch_id, knowledge_json, created_at,origin) VALUES (?, ?, ?, ?)",
               )
               .run(
                 batchId,
                 JSON.stringify(first.knowledge),
                 observedAt.value.toISOString(),
+                batchOptions?.origin ?? "manual",
               );
           }
           const add = database.query(
@@ -1533,6 +1081,13 @@ export const openLearningMaterial = (
              VALUES (?, ?, ?, ?, 'pending', ?)`,
           );
           cards.forEach((input, index) => {
+            const claim = database
+              .query("SELECT batch_id FROM review_batch_claim WHERE card_id=?")
+              .get(input.card.id);
+            if (claim) throw new Error("Card already has preparation work");
+            database
+              .query("INSERT INTO review_batch_claim VALUES (?,?,?)")
+              .run(input.card.id, batchId, JSON.stringify(materialContext(input)));
             add.run(
               batchId,
               index,
@@ -1541,78 +1096,24 @@ export const openLearningMaterial = (
               observedAt.value.toISOString(),
             );
           });
+          return batchId;
         });
-        insert.immediate();
-        return ok(batchId);
+        return ok(insert.immediate());
       } catch (cause) {
         return err({ kind: "writeFailed", detail: detail(cause) });
       }
     },
     advanceReviewBatch: async (
       batchId: string,
+      policy = {},
     ): Promise<Result<ReviewBatchProgress, MaterialFailure>> => {
-      const progress = (): Result<ReviewBatchProgress, MaterialFailure> => {
-        try {
-          const rows = database
-            .query(
-              `SELECT card_id, status, failure_kind, attempts, hints_json FROM review_batch_item
-               WHERE batch_id = ? ORDER BY seq`,
-            )
-            .all(batchId) as {
-            card_id: CardId;
-            status: string;
-            failure_kind: string | null;
-            attempts: number;
-            hints_json: string | null;
-          }[];
-          const reasonsOf = (hints: string | null): string[] => {
-            try {
-              const parsed: unknown = hints === null ? [] : JSON.parse(hints);
-              return Array.isArray(parsed)
-                ? parsed.filter((item): item is string => typeof item === "string")
-                : [];
-            } catch {
-              return [];
-            }
-          };
-          if (rows.length === 0) return err({ kind: "reviewBatchNotFound", batchId });
-          const completed: CardId[] = [];
-          const failed: ReviewBatchFailure[] = [];
-          let pending = 0;
-          let round = 1;
-          for (const row of rows) {
-            if (row.status === "ready") completed.push(row.card_id);
-            else if (row.status === "failed")
-              failed.push({
-                cardId: row.card_id,
-                kind: (row.failure_kind ?? "offline") as ReviewBatchFailure["kind"],
-                reasons: reasonsOf(row.hints_json),
-              });
-            else {
-              pending += 1;
-              round = Math.max(round, row.attempts + 1);
-            }
-          }
-          const snapshot: ReviewBatchProgress = {
-            batchId,
-            done: pending === 0,
-            pending,
-            completed,
-            failed,
-            round,
-            requestInFlight:
-              pending > 0 &&
-              database
-                .query("SELECT 1 FROM review_batch_job WHERE batch_id = ?")
-                .get(batchId) !== null,
-          };
-          return ok(snapshot);
-        } catch (cause) {
-          return err({ kind: "readFailed", detail: detail(cause) });
-        }
-      };
+      const progress = () => reviewBatchProgress(batchId);
       if (options.provider.batch !== undefined) {
-        const advanced = await advanceWholeBatch(batchId, options.provider.batch);
+        const advanced = await executor.advance(
+          batchId,
+          options.provider.batch,
+          policy,
+        );
         if (!advanced.ok) return advanced;
         return progress();
       }
@@ -1643,6 +1144,9 @@ export const openLearningMaterial = (
           const at = observedAt.value.toISOString();
           const settle = database.transaction(() => {
             setItemStatus(batchId, item.seq, status, failureKind, at);
+            database
+              .query("DELETE FROM review_batch_claim WHERE card_id=? AND batch_id=?")
+              .run(item.card_id, batchId);
             setBackgroundRetryCooldown(item.card_id, status, at);
           });
           settle.immediate();
@@ -1715,6 +1219,7 @@ export const openLearningMaterial = (
         "teach",
         validated.value,
         authoredAt.value,
+        { card, knowledge },
       );
       return stored.ok ? ok(undefined) : stored;
     },
@@ -1729,6 +1234,9 @@ export const openLearningMaterial = (
     reserveFlags,
     purgeFinishedBatches,
     permitVerifier,
-    close: () => database.close(),
+    close: () => {
+      closed = true;
+      database.close();
+    },
   });
 };

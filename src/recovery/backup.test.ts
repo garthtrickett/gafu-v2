@@ -1,6 +1,13 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { declaredGrammarDetector } from "../learning-material/declared-grammar.ts";
@@ -136,6 +143,7 @@ describe("backup recovery", () => {
       });
       if (!restored.ok) throw new Error(restored.error.kind);
       expect(restored.value.safetyCopyPath).not.toBeNull();
+      expect(existsSync(`${destination}.preparation-paused`)).toBe(true);
       expect(inspectBackup(destination)).toEqual(inspected);
       expect(inspectBackup(restored.value.safetyCopyPath ?? "")).toMatchObject({
         ok: true,

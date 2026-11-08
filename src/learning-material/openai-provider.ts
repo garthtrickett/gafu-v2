@@ -556,7 +556,26 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
         signal: controller.signal,
       });
       if (response.status === 404) return ok({ notFound: true });
-      if (!response.ok) return err(httpFailure(response.status));
+      if (!response.ok) {
+        const failure = httpFailure(response.status);
+        if (failure.kind === "rateLimit") {
+          const header = response.headers.get("Retry-After");
+          const delay =
+            header === null
+              ? 60000
+              : Number.isFinite(Number(header))
+                ? Number(header) * 1000
+                : Date.parse(header) - Date.now();
+          return err({
+            ...failure,
+            retryAfterMs: Math.max(
+              1000,
+              Math.min(24 * 60 * 60_000, Number.isFinite(delay) ? delay : 60000),
+            ),
+          });
+        }
+        return err(failure);
+      }
       const responseBody = await readBoundedBody(
         response,
         maximumProviderResponseBytes,
@@ -710,8 +729,9 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
         if (!polled.ok) return polled;
         if ("notFound" in polled.value) {
           return err({
-            kind: "offline",
-            detail: "OpenAI discarded the dispatched batch before it was read",
+            kind: "dispatchUncertain",
+            detail:
+              "The saved provider response is no longer available; explicit recovery is required",
           });
         }
         const decoded = decodeTerminalJson(polled.value.value);

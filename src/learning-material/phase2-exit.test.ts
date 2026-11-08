@@ -82,7 +82,7 @@ const harness = (provider = createDeterministicMaterialProvider()) => {
 };
 
 describe("Phase 2 generated study lifecycle", () => {
-  test("teaches, reviews once, varies, and retains an outage reserve", async () => {
+  test("teaches, replays an issued review, and refuses obsolete outage reserves", async () => {
     const app = harness();
     const created = app.study.createCard({
       type: "vocabulary",
@@ -213,7 +213,7 @@ describe("Phase 2 generated study lifecycle", () => {
           grade: "good",
           permit: concurrent.value.permit,
         }),
-      ).toMatchObject({ ok: false, error: { kind: "cardNotAnswerable" } });
+      ).toMatchObject({ ok: true, value: { card: { reviewCount: 1 } } });
     }
     if (!answered.ok) return;
 
@@ -264,10 +264,8 @@ describe("Phase 2 generated study lifecycle", () => {
       card: nextQueue.value.due[0].card,
       knowledge: restartedKnowledge.value,
     });
-    expect(reserve).toMatchObject({
-      ok: true,
-      value: { source: "reserve", mode: "review" },
-    });
+    // The saved reserves predate the answer epoch. An outage cannot restore their old authority.
+    expect(reserve).toMatchObject({ ok: false, error: { kind: "timeout" } });
     if (reserve.ok)
       expect(reserve.value.material.japanese).not.toBe(
         recalled.value.material.japanese,
