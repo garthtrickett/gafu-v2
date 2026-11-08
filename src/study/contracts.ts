@@ -65,6 +65,8 @@ export type CardSummary = Readonly<{
    * it to zero, so the help comes straight back.
    */
   consecutiveCorrect: number;
+  /** Monotonic revision of the target and its material-relevant progress. */
+  materialRevision?: number;
 }>;
 
 /** Correct answers in a row after which a sentence stops helping. */
@@ -168,6 +170,7 @@ export type StudyPreferences = Readonly<{
    * tab left open the day a hundred Cards come due is not.
    */
   prepareInBackground: boolean;
+  automaticPreparation: "off" | "whileOpen" | "server";
   /** Whether generated sentences should be spoken during study. */
   speechEnabled: boolean;
 }>;
@@ -178,6 +181,7 @@ export type PreferenceChange = Readonly<{
   firstReviewAfterMinutes?: number;
   dayStartsAtHour?: number;
   prepareInBackground?: boolean;
+  automaticPreparation?: StudyPreferences["automaticPreparation"];
   speechEnabled?: boolean;
 }>;
 
@@ -224,6 +228,8 @@ export type VerifiedPresentationPermit = Readonly<{
   presentationId: string;
   issuedAt: Date;
   contractVersion: string;
+  /** Production verifier always supplies this; null means an untrusted legacy permit. */
+  context?: Readonly<{ cardRevision: number; knowledgeRevision: number }> | null;
 }>;
 
 export type PresentationPermitFailure =
@@ -267,6 +273,7 @@ export type KnownGrammar = Readonly<{
 }>;
 
 export type KnowledgeSnapshot = Readonly<{
+  correctionRevision?: number;
   vocabulary: readonly KnownVocabulary[];
   grammar: readonly KnownGrammar[];
   baseline: Readonly<{
@@ -391,6 +398,15 @@ export type Study = Readonly<{
     command: StagingOrder,
   ) => Result<Readonly<{ ordered: number; skipped: number }>, StudyFailure>;
   studyQueue: () => Result<StudyQueue, StudyFailure>;
+  /** Same due ordering without admission, quota-window writes or progress changes. */
+  duePreparationSnapshot: () => Result<StudyQueue, StudyFailure>;
+  materialContext: (cardId: CardId) => Result<
+    Readonly<{
+      card: CardSummary;
+      knowledgeRevision: number;
+    }>,
+    StudyFailure
+  >;
   status: () => Result<StudyStatus, StudyFailure>;
   answer: (command: AnswerCard) => Result<AnswerOutcome, StudyFailure>;
   recordTeaching: (cardId: CardId) => Result<CardSummary, StudyFailure>;

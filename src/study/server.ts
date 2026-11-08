@@ -262,11 +262,8 @@ const statusSnapshot = (
   study: Study,
   material: LearningMaterial,
 ): Result<{ status: StudyStatus; session: SessionCounts }, Response> => {
-  // Admission is what turns a staged Card into a due one, and it happens
-  // when the queue is read. Reading it here means the tiles answer for the
-  // daily limit as it stands: raising the limit used to change nothing on
-  // screen until something else happened to read the queue.
-  const admitted = study.studyQueue();
+  // Status reads, including legacy hidden tabs, must never admit Cards.
+  const admitted = study.duePreparationSnapshot();
   if (!admitted.ok) return err(failureResponse(admitted.error));
   const cards = study.listCards();
   if (!cards.ok) return err(failureResponse(cards.error));
@@ -490,6 +487,12 @@ const handleApi = async (
   if (request.method === "POST" && url.pathname === "/api/study/session") {
     return serveFirst(study, material);
   }
+  if (request.method === "POST" && url.pathname === "/api/study/admit") {
+    const admitted = study.studyQueue();
+    if (!admitted.ok) return failureResponse(admitted.error);
+    const counts = statusSnapshot(study, material);
+    return counts.ok ? Response.json(counts.value) : counts.error;
+  }
   if (request.method === "POST" && url.pathname === "/api/study/session/review-all") {
     // The whole session at once, for the Cards a batch banked, each in the
     // mode it wants: a first exposure for a new Card, a review for one
@@ -579,7 +582,7 @@ const handleApi = async (
     if (pending.value !== null) {
       return Response.json(pending.value, { status: 202 });
     }
-    const queue = study.studyQueue();
+    const queue = unpreparedOnly ? study.duePreparationSnapshot() : study.studyQueue();
     if (!queue.ok) return failureResponse(queue.error);
     const knowledge = study.knowledgeSnapshot();
     if (!knowledge.ok) return failureResponse(knowledge.error);
@@ -926,6 +929,15 @@ const handleApi = async (
         return invalidRequest("prepareInBackground must be a boolean.");
       }
       Object.assign(change, { prepareInBackground: body["prepareInBackground"] });
+    }
+    if (body["automaticPreparation"] !== undefined) {
+      if (
+        !["off", "whileOpen", "server"].includes(String(body["automaticPreparation"]))
+      )
+        return invalidRequest(
+          "Choose off, whileOpen or server for automaticPreparation.",
+        );
+      Object.assign(change, { automaticPreparation: body["automaticPreparation"] });
     }
     if (body["speechEnabled"] !== undefined) {
       if (typeof body["speechEnabled"] !== "boolean") {

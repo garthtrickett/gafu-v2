@@ -29,6 +29,23 @@ afterEach(() => {
   }
 });
 
+const removePreparationMigration = (database: Database): void => {
+  for (const name of [
+    "material_card_edit",
+    "material_progress_edit",
+    "material_schedule_insert",
+    "material_schedule_edit",
+    "material_schedule_delete",
+    "material_baseline_edit",
+    "material_baseline_delete",
+  ])
+    database.exec(`DROP TRIGGER IF EXISTS ${name}`);
+  database.exec(`ALTER TABLE card DROP COLUMN material_revision;
+    ALTER TABLE study_preferences DROP COLUMN automatic_preparation;
+    ALTER TABLE study_preferences DROP COLUMN knowledge_revision;
+    DELETE FROM schema_migration WHERE version=15`);
+};
+
 const grammar: CreateCard = {
   type: "grammar",
   content: {
@@ -1005,6 +1022,7 @@ describe("Study persistence and recovery", () => {
         firstReviewAfterMinutes: 30,
         dayStartsAtHour: 4,
         prepareInBackground: true,
+        automaticPreparation: "whileOpen",
         speechEnabled: true,
       },
     });
@@ -1108,6 +1126,7 @@ describe("Study persistence and recovery", () => {
     ).toBe(true);
     current.value.close();
     const database = new Database(path, { strict: true });
+    removePreparationMigration(database);
     database.exec(`
       PRAGMA foreign_keys = OFF;
       DROP TABLE legacy_quarantine;
@@ -1178,6 +1197,7 @@ describe("Study persistence and recovery", () => {
     // step again over the history that is already there. Remove the later
     // speech preference column so its migration can replay too.
     const database = new Database(path, { strict: true });
+    removePreparationMigration(database);
     database.exec("UPDATE card_progress SET consecutive_correct = 0");
     database.exec("ALTER TABLE study_preferences DROP COLUMN speech_enabled");
     database.exec("DELETE FROM schema_migration WHERE version IN (13, 14)");
@@ -1232,7 +1252,9 @@ describe("compacting the database", () => {
     const raw = new Database(databasePath);
     raw.exec("CREATE TABLE scratch(id INTEGER PRIMARY KEY, blob BLOB)");
     const insert = raw.query("INSERT INTO scratch(blob) VALUES (?)");
-    for (let index = 0; index < 400; index += 1) insert.run(new Uint8Array(4_096));
+    raw.transaction(() => {
+      for (let index = 0; index < 400; index += 1) insert.run(new Uint8Array(4_096));
+    })();
     raw.exec("DELETE FROM scratch");
     raw.close();
     const compacted = study.compact();

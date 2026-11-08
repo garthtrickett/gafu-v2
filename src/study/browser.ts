@@ -512,6 +512,13 @@ export const mountStudyApp = (root: HTMLElement): void => {
     });
   };
 
+  const admitNewCards = (): void => {
+    void run(async () => {
+      await requestJson("/api/study/admit", { method: "POST", body: "{}" });
+      return "New Cards admitted under your daily limit.";
+    });
+  };
+
   const setBaselineWord = (key: string, enabled: boolean): void => {
     void run(async () => {
       const outcome = await requestJson<{ staged: { id: string } | null }>(
@@ -1548,6 +1555,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
                             ${model.batch !== null && !model.batch.done ? "Preparing remaining Cards…" : "Prepare batch"}
                           </button>
+                          ${
+                            snapshot.status.stagedCount > 0 &&
+                            snapshot.preferences.newCardsPerDay > 0
+                              ? html`<button type="button" @click=${admitNewCards} ?disabled=${model.busy}>Admit new Cards</button>`
+                              : ""
+                          }
                         </div>`
                       : ""
                   }

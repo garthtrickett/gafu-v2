@@ -10,6 +10,7 @@ import {
   testSeed,
 } from "../../tests/support/study.ts";
 import type { CreateCard } from "./contracts.ts";
+import { STUDY_SCHEMA_VERSION } from "./migrations.ts";
 import { openStudy } from "./study.ts";
 
 test("Phase 1 exit journey preserves one schedule per Card across restart", () => {
@@ -94,7 +95,10 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
     });
     const beforeRestart = study.listCards();
     const backup = study.exportBackup();
-    expect(backup).toMatchObject({ ok: true, value: { schemaVersion: 14 } });
+    expect(backup).toMatchObject({
+      ok: true,
+      value: { schemaVersion: STUDY_SCHEMA_VERSION },
+    });
     study.close();
 
     const reopened = openStudy({ ...shared, nextId: sequentialIds() });
@@ -108,6 +112,7 @@ test("Phase 1 exit journey preserves one schedule per Card across restart", () =
         firstReviewAfterMinutes: 30,
         dayStartsAtHour: 4,
         prepareInBackground: true,
+        automaticPreparation: "whileOpen",
         speechEnabled: true,
       },
     });

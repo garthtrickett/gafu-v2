@@ -122,6 +122,8 @@ test("a tab left in the background writes the sentences that are due", async ({
   await page.getByLabel("New Cards per Day").fill("100");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Study settings saved");
+  await page.getByRole("button", { name: "Admit new Cards", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("New Cards admitted");
 
   // The setting is on by default, and this is the only place it is read.
   await expect(
