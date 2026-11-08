@@ -26,6 +26,7 @@ import type {
 } from "./contracts.ts";
 import { MAXIMUM_BACKUP_BYTES } from "./contracts.ts";
 import { acquireDatabaseLock } from "./database-lock.ts";
+import { pauseRestoredPreparation } from "./preparation-pause.ts";
 
 export type BackupRecoveryDependencies = Readonly<{
   clock: () => Date;
@@ -114,6 +115,15 @@ const requiredTables = [
   "validated_presentation",
   "teaching_acknowledgement",
   "review_batch_cooldown",
+  "review_batch",
+  "review_batch_item",
+  "review_batch_job",
+  "review_batch_claim",
+  "review_batch_attempt",
+  "review_preparation_control",
+  "material_speech_job",
+  "presentation_permit",
+  "presentation_audio",
 ] as const;
 
 const hasCompleteSchema = (database: Database): boolean => {
@@ -347,6 +357,7 @@ export const createBackupRecovery = (
         }
       }
       try {
+        pauseRestoredPreparation(command.destinationPath);
         renameSync(temporaryPath, command.destinationPath);
       } catch {
         removeTemporary(temporaryPath);

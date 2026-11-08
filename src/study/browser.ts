@@ -21,6 +21,10 @@ import { createStudyDisplay } from "./display.ts";
 import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
+import {
+  createPreparationStatus,
+  type PreparationStatus,
+} from "./preparation-status.ts";
 import { isStuck, type SessionCounts } from "./session-split.ts";
 import { isDrawableSnapshot } from "./snapshot-cache.ts";
 
@@ -300,6 +304,17 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
   const store = openIndexedDbStore();
   const display = createStudyDisplay(root, () => draw());
+  const preparationStatus = createPreparationStatus({
+    read: () => requestJson<PreparationStatus>("/api/study/preparation-status"),
+    recover: (body) =>
+      requestJson("/api/study/preparation/recover", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    resume: () =>
+      requestJson("/api/study/preparation/resume", { method: "POST", body: "{}" }),
+    changed: () => draw(),
+  });
   const SESSION_KEY = "session";
   const SNAPSHOT_KEY = "snapshot";
   /** Foreground preparation waits for requests a hidden tab already paid for. */
@@ -324,6 +339,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
     [model.snapshot, model.provider] = await Promise.all([
       requestJson<BrowserSnapshot>(bankQuery()),
       requestJson<ProviderStatus>("/api/provider"),
+      preparationStatus.refresh(),
     ]);
     // The last good bank paints the next load instantly, online or not.
     void store.set(SNAPSHOT_KEY, model.snapshot);
@@ -358,6 +374,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       await requestJson<Pick<BrowserSnapshot, "status" | "session">>(
         "/api/study/status",
       );
+    await preparationStatus.refresh();
     const before = model.snapshot.status;
     // A moved staged or active count means admission changed Card states,
     // which the bank listing also shows; only then is the full fetch owed.
@@ -502,13 +519,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
           newCardsPerDay: Number(value(fields, "newCardsPerDay")),
           firstReviewAfterMinutes: Number(value(fields, "firstReviewAfterMinutes")),
           dayStartsAtHour: Number(value(fields, "dayStartsAtHour")),
-          prepareInBackground: fields.get("prepareInBackground") !== null,
+          automaticPreparation: value(fields, "automaticPreparation"),
           speechEnabled: fields.get("speechEnabled") !== null,
           timeZone: value(fields, "timeZone"),
         }),
       });
       if (fields.get("speechEnabled") === null) audio?.pause();
       return "Study settings saved. Earlier admissions and reviews were not changed.";
+    });
+  };
+
+  const admitNewCards = (): void => {
+    void run(async () => {
+      await requestJson("/api/study/admit", { method: "POST", body: "{}" });
+      return "New Cards admitted under your daily limit.";
     });
   };
 
@@ -584,6 +608,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   window.addEventListener("online", () => {
     model.offline = false;
     if (model.sync.stalledFor !== "authentication") outbox.resume();
+    if (model.presentation?.audioPending) void trackAudio(model.presentation);
     draw();
   });
   window.addEventListener("offline", () => {
@@ -644,9 +669,81 @@ export const mountStudyApp = (root: HTMLElement): void => {
   };
 
   /** Shows a presentation and, when it has audio, says the sentence once. */
+  let audioState: string | null = null;
+  const retryAudio = async () => {
+    const item = model.presentation;
+    if (!item) return;
+    const uncertain = audioState === "uncertain";
+    if (
+      uncertain &&
+      !window.confirm(
+        "The previous speech request may have been charged. Retry with possible duplicate cost?",
+      )
+    )
+      return;
+    try {
+      await requestJson(
+        `/api/study/presentations/${encodeURIComponent(item.id)}/speech`,
+        { method: "POST", body: JSON.stringify({ confirmDuplicateCost: uncertain }) },
+      );
+      audioState = "queued";
+      void trackAudio(item);
+      draw();
+    } catch {
+      audioState = "unavailable";
+      draw();
+    }
+  };
+  const trackingAudio = new Set<string>();
+  const trackAudio = async (prepared: PreparedMaterial) => {
+    if (trackingAudio.has(prepared.id)) return;
+    trackingAudio.add(prepared.id);
+    try {
+      for (let n = 0; n < 90 && model.presentation?.id === prepared.id; n++) {
+        try {
+          const state = await requestJson<{ state: string; audioUrl: string | null }>(
+            `/api/study/presentations/${encodeURIComponent(prepared.id)}/speech`,
+          );
+          if (model.presentation?.id !== prepared.id) return;
+          audioState = state.state;
+          if (state.audioUrl) {
+            const updated = {
+              ...model.presentation,
+              audioUrl: state.audioUrl,
+              audioPending: false,
+            };
+            model.presentation = updated;
+            if (model.session) {
+              model.session = {
+                ...model.session,
+                items: model.session.items.map((item) =>
+                  item.id === updated.id ? updated : item,
+                ),
+              };
+              void store.set(SESSION_KEY, model.session);
+            }
+            if (model.snapshot?.preferences.speechEnabled !== false)
+              playAudio(state.audioUrl);
+            draw();
+            return;
+          }
+          draw();
+          if (!["queued", "dispatching"].includes(state.state)) return;
+        } catch {
+          return;
+        }
+        await pause(2000);
+      }
+    } finally {
+      trackingAudio.delete(prepared.id);
+    }
+  };
   const present = (prepared: PreparedMaterial): void => {
+    audio?.pause();
+    audioState = null;
     model.presentation = prepared;
     model.revealed = false;
+    if (prepared.audioPending) void trackAudio(prepared);
     if (
       model.snapshot?.preferences.speechEnabled !== false &&
       prepared.audioUrl !== null
@@ -798,9 +895,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const handOver = (cardIds: readonly string[]): void => {
     const batch = model.batch;
     if (batch === null || cardIds.length === 0) return;
-    const offered = cardIds.filter(
-      (id) => !batch.handedIds.includes(id) && !openingIds.has(id),
-    );
+    const offered = cardIds
+      .filter((id) => !batch.handedIds.includes(id) && !openingIds.has(id))
+      .slice(0, Math.max(0, 20 - batch.handedIds.length - openingIds.size));
     if (offered.length === 0) return;
     for (const id of offered) openingIds.add(id);
     const live = model.session !== null;
@@ -877,9 +974,8 @@ export const mountStudyApp = (root: HTMLElement): void => {
   /**
    * Advances a batch to completion, reporting each answer.
    *
-   * Each status poll advances the batch one Card, so polling is the pump: no
-   * daemon, resumable across processes, every call bounded by one
-   * generation. The next poll goes out the moment the last one lands, with
+   * Status polls read server progress; execution continues without this tab.
+   * Each request returns immediately from durable local state. The next poll goes out the moment the last one lands, with
    * no timer between them, and that is deliberate twice over. The request
    * itself is the pacing — a Card needing generation holds it for seconds —
    * so a fixed wait only slowed the Cards that needed nothing, which is most
@@ -992,27 +1088,31 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const startReviewBatch = (): void => {
     if (model.batch !== null && !model.batch.done) return;
+    let intent: {
+      batch: { batchId: string; total: number };
+      ready: readonly string[];
+    } | null = null;
     void run(
       async () => {
-        // A hidden run may have dispatched the same due Cards just before
-        // the learner returned. Let it bank its answers before selecting the
-        // interactive twenty, so they are served rather than bought twice.
-        await Promise.allSettled([...backgroundRounds]);
-        const dispatched = await requestJson<{ batchId: string; total: number }>(
-          "/api/study/review-batch",
-          { method: "POST", body: JSON.stringify({}) },
+        const stored = await requestJson<{ readyCardIds: readonly string[] }>(
+          "/api/study/preparation-status",
         );
-        attachReviewBatch(dispatched);
-        return `Preparing ${dispatched.total} Cards.`;
+        const batch = await requestJson<{ batchId: string; total: number }>(
+          "/api/study/review-batch",
+          { method: "POST", body: "{}" },
+        );
+        intent = { batch, ready: stored.readyCardIds };
+        return `Preparing ${batch.total} Cards.`;
       },
-      {
-        label:
-          backgroundRounds.size > 0
-            ? "Finishing background preparation…"
-            : "Starting a batch…",
-      },
+      { label: "Starting a batch…" },
       "status",
-    );
+    ).then(() => {
+      // Opening has its own progress state, after the intent request has settled.
+      if (intent) {
+        attachReviewBatch(intent.batch);
+        handOver(intent.ready);
+      }
+    });
   };
 
   /**
@@ -1119,7 +1219,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
     await pause(BACKGROUND_SETTLE_MS);
     const ignored = new Set<string>();
     while (running()) {
-      if (model.snapshot?.preferences.prepareInBackground !== true) return;
+      if (
+        (model.snapshot?.preferences.automaticPreparation ??
+          (model.snapshot?.preferences.prepareInBackground ? "whileOpen" : "off")) !==
+        "whileOpen"
+      )
+        return;
       if (model.batch !== null && !model.batch.done) {
         // The foreground batch is already making the next request. Once it
         // finishes, fill the Cards beyond its twenty even if a session opened.
@@ -1221,6 +1326,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
       return;
     }
     reportBackgroundPrepared();
+    void refreshStatus().then(draw, () => {});
   });
 
   // Running out of Cards ends the session, however its last Card was
@@ -1229,6 +1335,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // session itself is restored from the device; only a batch still known to
   // be producing changes the ending, and then only to say so.
   const endOfSession = (): string => {
+    if (model.batch && model.batch.handedIds.length >= 20) {
+      model.batch = null;
+      return "Batch complete.";
+    }
     if (model.batch !== null && !model.batch.done) {
       return "Reviewed everything that has landed so far. The rest are still being prepared and will open as they arrive.";
     }
@@ -1294,7 +1404,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
       { action: "suspend", cardId: current.cardId },
     );
     const more = advanceSession();
-    model.message = more ? `Suspended ${name}. Next Card.` : endOfSession();
+    model.message = more
+      ? `Suspended ${name}. Next Card.`
+      : `Suspended ${name}. ${endOfSession()}`;
     model.messageKind = "success";
     draw();
     if (!more) void refreshStatus().then(draw, draw);
@@ -1387,7 +1499,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             presentation.audioUrl !== null
                               ? html`<button type="button" class="secondary listen" @click=${replayAudio} title="Replay pronunciation (R)" aria-keyshortcuts="R" data-testid="listen" data-audio-url=${presentation.audioUrl}>🔊 Listen <kbd>R</kbd></button>`
                               : ""
-                          }
+                          }${presentation.audioUrl === null && model.snapshot?.preferences.speechEnabled !== false && (presentation.audioPending || audioState === "failed" || audioState === "uncertain") ? html`<button class="secondary" @click=${() => void (audioState === "failed" || audioState === "uncertain" ? retryAudio() : trackAudio(presentation))}>${audioState === "failed" || audioState === "uncertain" ? "Retry audio" : "Check audio"}</button>` : ""}
                         </div>
                         ${
                           presentation.mode === "teach"
@@ -1531,6 +1643,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
               </section>
 
               <section class="panel review-panel" data-testid="review-panel">
+                ${display.isMaximised() ? "" : preparationStatus.view()}
                 <div class="review-heading">
                   <div>
                     <p class="eyebrow">Fresh validated material</p>
@@ -1548,6 +1661,12 @@ export const mountStudyApp = (root: HTMLElement): void => {
                           <button type="button" @click=${startReviewBatch} ?disabled=${model.busy || (model.batch !== null && !model.batch.done)}>
                             ${model.batch !== null && !model.batch.done ? "Preparing remaining Cards…" : "Prepare batch"}
                           </button>
+                          ${
+                            snapshot.status.stagedCount > 0 &&
+                            snapshot.preferences.newCardsPerDay > 0
+                              ? html`<button type="button" @click=${admitNewCards} ?disabled=${model.busy}>Admit new Cards</button>`
+                              : ""
+                          }
                         </div>`
                       : ""
                   }
@@ -1678,19 +1797,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
                       Time zone
                       <input name="timeZone" required .value=${snapshot.preferences.timeZone} />
                     </label>
-                    <label class="check-setting">
-                      <input
-                        name="prepareInBackground"
-                        type="checkbox"
-                        .checked=${snapshot.preferences.prepareInBackground}
-                      />
-                      Prepare while this tab is in the background
-                      <small
-                        >A tab left open writes the sentences for whatever is due, so
-                        coming back to it finds them ready. Up to twenty Cards
-                        needing sentences share each request. Cards already
-                        prepared are skipped; an idle tab spends nothing.</small
-                      >
+                    <label>
+                      Automatic sentence preparation
+                      <select name="automaticPreparation" .value=${snapshot.preferences.automaticPreparation ?? (snapshot.preferences.prepareInBackground ? "whileOpen" : "off")}>
+                        <option value="off">Off</option>
+                        <option value="whileOpen">While a tab is open in the background</option>
+                        <option value="server">On the server, even with the app closed</option>
+                      </select>
+                      <small>Prepares admitted due Cards in groups of up to twenty, using your configured AI provider. Prepared Cards are skipped. Automatic preparation can incur generation and optional speech costs; it never admits new Cards.</small>
                     </label>
                     <label class="check-setting">
                       <input
@@ -1908,6 +2022,17 @@ export const mountStudyApp = (root: HTMLElement): void => {
     );
   };
 
+  const pollPreparation = async () => {
+    if (!tabIsHidden()) {
+      await preparationStatus.refresh();
+      const state = preparationStatus.get();
+      if (state && (state.preparing > 0 || state.mode === "server"))
+        await refreshStatus().catch(() => {});
+      draw();
+    }
+    window.setTimeout(() => void pollPreparation(), 5000);
+  };
+  window.setTimeout(() => void pollPreparation(), 5000);
   draw();
   void (async () => {
     // Paint from what this device saved, then pick up the session and the
@@ -1924,17 +2049,19 @@ export const mountStudyApp = (root: HTMLElement): void => {
       try {
         await refresh();
         if (remaining.length > 0) {
-          const checked = await requestJson<{ eligibleIds: string[] }>(
-            "/api/study/session/resume",
-            {
-              method: "POST",
-              body: JSON.stringify({
-                items: remaining.map(({ id, cardId, mode }) => ({ id, cardId, mode })),
-              }),
-            },
-          );
+          const checked = await requestJson<{
+            eligibleIds: string[];
+            items?: readonly PreparedMaterial[];
+          }>("/api/study/session/resume", {
+            method: "POST",
+            body: JSON.stringify({
+              items: remaining.map(({ id, cardId, mode }) => ({ id, cardId, mode })),
+            }),
+          });
           const eligible = new Set(checked.eligibleIds);
-          const current = remaining.filter((item) => eligible.has(item.id));
+          const current = (checked.items ?? remaining).filter((item) =>
+            eligible.has(item.id),
+          );
           if (current.length > 0) {
             beginSession(current);
             return "Picking up where you left off.";
@@ -1973,6 +2100,27 @@ export const mountStudyApp = (root: HTMLElement): void => {
       }
     } catch {
       // The next Prepare batch press also asks the server to resume it.
+    }
+    const stored = preparationStatus.get();
+    if (
+      !tabIsHidden() &&
+      model.presentation === null &&
+      stored &&
+      stored.readyCardIds.length > 0
+    ) {
+      try {
+        const response = await requestJson<{ items: readonly PreparedMaterial[] }>(
+          "/api/study/session/review-all",
+          {
+            method: "POST",
+            body: JSON.stringify({ cardIds: stored.readyCardIds.slice(0, 20) }),
+          },
+        );
+        if (response.items.length) beginSession(response.items);
+        draw();
+      } catch {
+        /* Prepare batch can retry retrieval. */
+      }
     }
     // Opened into a background tab: there is no visibility change to wait
     // for, so the run starts here.

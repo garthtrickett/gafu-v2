@@ -7,6 +7,36 @@ test.setTimeout(90_000);
 
 const MUTATION = { "X-Gafu-Request": "gafu-v2" };
 
+/** These protocol-only fixtures exercise polling, independent of the shared server's ready cache. */
+const noStoredSession = async (page: Page): Promise<void> => {
+  await page.route("**/api/study/preparation-status", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "whileOpen",
+        enabled: true,
+        ready: 0,
+        readyCardIds: [],
+        preparing: 1,
+        waiting: 1,
+        blocked: 0,
+        blockedReason: null,
+        uncertainBatches: [],
+        lastError: null,
+        restorePaused: false,
+      }),
+    }),
+  );
+};
+
+test.beforeEach(async ({ page }) => {
+  await noStoredSession(page);
+  // Each journey controls its own session/batch; earlier journeys may leave ready work.
+  await page.route("**/api/study/review-batch/active", (route) =>
+    route.fulfill({ contentType: "application/json", body: "null" }),
+  );
+});
+
 /** What the tiles say, read straight from the route the page reads. */
 const counts = async (page: Page): Promise<{ unpreparedCount: number }> => {
   const body = (await (await page.request.get("/api/study/status")).json()) as {
@@ -122,11 +152,13 @@ test("a tab left in the background writes the sentences that are due", async ({
   await page.getByLabel("New Cards per Day").fill("100");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Study settings saved");
+  await page.getByRole("button", { name: "Admit new Cards", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("New Cards admitted");
 
   // The setting is on by default, and this is the only place it is read.
-  await expect(
-    page.getByLabel("Prepare while this tab is in the background"),
-  ).toBeChecked();
+  await expect(page.getByLabel("Automatic sentence preparation")).toHaveValue(
+    "whileOpen",
+  );
 
   // A due Card with nothing banked for it is one generation away from being
   // servable, and that is what the count means.
@@ -188,10 +220,32 @@ test("an open session does not stop background preparation of other due Cards", 
     meaning: "shelf for the open background session",
     usageNotes: "",
   });
-  const prepared = await page.request.post("/api/study/session/prepare", {
+  let prepared = await page.request.post("/api/study/session/prepare", {
     headers: MUTATION,
     data: { cardId: openCardId },
   });
+  if (prepared.status() === 409) {
+    const queued = (await prepared.json()) as {
+      error: { kind: string };
+      batchId: string;
+    };
+    expect(queued.error.kind).toBe("materialPreparing");
+    await expect
+      .poll(
+        async () => {
+          const progress = (await (
+            await page.request.get(`/api/study/review-batch/${queued.batchId}`)
+          ).json()) as { completed: string[] };
+          return progress.completed.includes(openCardId);
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    prepared = await page.request.post("/api/study/session/prepare", {
+      headers: MUTATION,
+      data: { cardId: openCardId },
+    });
+  }
   expect(prepared.ok(), await prepared.text()).toBe(true);
   const presentation = await prepared.json();
   await page.evaluate(async (item) => {
@@ -210,6 +264,7 @@ test("an open session does not stop background preparation of other due Cards", 
   }, presentation);
   await page.reload();
   await expect(page.locator(".presentation")).toBeVisible();
+  await expect(page.locator(".presentation")).toContainText("棚");
   await reportDueWork(page);
 
   const posts: unknown[] = [];
@@ -253,7 +308,7 @@ test("an open session does not stop background preparation of other due Cards", 
   await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
   expect(posts[0]).toMatchObject({
     unpreparedOnly: true,
-    excludeCardIds: [openCardId],
+    excludeCardIds: expect.arrayContaining([openCardId]),
   });
 
   await page.evaluate(() => {
@@ -267,7 +322,7 @@ test("an open session does not stop background preparation of other due Cards", 
   expect(posts).toHaveLength(1);
 });
 
-test("Prepare batch waits for a request already sent in the background", async ({
+test("Prepare batch joins background work without waiting for its progress poll", async ({
   page,
 }) => {
   await page.clock.install();
@@ -282,7 +337,7 @@ test("Prepare batch waits for a request already sent in the background", async (
   let backgroundPollStarted = false;
   await page.route("**/api/study/review-batch", async (route) => {
     posts.push(route.request().postDataJSON());
-    const batchId = posts.length === 1 ? "held-background" : "interactive";
+    const batchId = "held-background";
     await route.fulfill({
       status: 202,
       contentType: "application/json",
@@ -330,10 +385,11 @@ test("Prepare batch waits for a request already sent in the background", async (
   await expect.poll(() => backgroundPollStarted, { timeout: 30_000 }).toBe(true);
   await setVisibility("visible");
   await page.getByRole("button", { name: "Prepare batch" }).click();
-  await page.waitForTimeout(500);
-  expect(posts).toHaveLength(1);
-  releasePoll();
+  // Intent attaches immediately. The server, not this held GET, owns execution.
   await expect.poll(() => posts.length).toBe(2);
+  expect(posts[0]).toMatchObject({ unpreparedOnly: true });
+  expect(posts[1]).toEqual({});
+  releasePoll();
 });
 
 /**

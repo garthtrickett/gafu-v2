@@ -24,7 +24,7 @@ OPENAI_API_KEY=<the server-held provider key>
 
 Railway supplies `PORT` and `RAILWAY_VOLUME_MOUNT_PATH`; do not override them.
 If the image cannot write the root-owned volume, set `RAILWAY_RUN_UID=0` on the
-service. Keep serverless sleep optional, but never configure multiple replicas
+service. Serverless sleep is incompatible with enabled server preparation; never configure multiple replicas
 or overlapping deployments against this SQLite volume.
 
 The service deliberately refuses to start if its database or Kaishi path is
@@ -143,3 +143,48 @@ stopped or maintenance-only rollback service until the rollback window closes.
 - Download and inspect a backup before every manual database replacement.
 - Never place the access password, OpenAI key, snapshot, reports, SQLite file, or
   Kaishi manifest in Git or deployment logs.
+
+## Server preparation of due study material
+
+The app has three **Automatic sentence preparation** modes: `off`, `whileOpen`
+(the existing background-tab behavior), and explicitly selected `server`.
+An upgrade maps the previous checkbox to `off` or `whileOpen`; it never opts a
+learner into server spending. All modes share one durable execution lane. Batch
+progress GETs and preparation-status GETs only read SQLite.
+
+For `server`, disable Railway serverless sleeping/scale-to-zero and keep exactly
+one replica with the existing exclusive database lock. The app cannot generate
+while its server is asleep. Set `GAFU_AUTOMATIC_PREPARATION_DISABLED=1` to stop new
+automatic generation and speech dispatches. Already accepted requests can still
+finish and incur cost; manual study remains available.
+
+Set a non-secret `GAFU_PROVIDER_CONFIGURATION_ID` and change it whenever changing
+provider credentials. Saved provider jobs are bound to the provider, model,
+prompt version and this configuration ID. A mismatch requires authenticated
+recovery; never copy credentials into SQLite or logs to identify a configuration.
+Authentication failures pause the provider lane. Rate limits use Retry-After;
+resume does not bypass an unexpired rate-limit delay.
+
+After deployment, verify `/healthz` plus the authenticated
+`GET /api/study/preparation-status`. With automatic mode still off/whileOpen,
+rehearse the migrated backup on isolated storage using fake providers, then
+explicitly select server mode. The worker only prepares admitted Cards due now;
+it never consumes the daily new-Card allowance. Admission remains an explicit
+Study action. Text becomes ready independently of optional speech.
+
+### Restoring or replacing the volume database
+
+`bun run backup:restore` durably creates
+`<databasePath>.preparation-paused` **before** replacing SQLite. Bootstrap-only
+startup creates the same marker before an external upload. Keep this file beside
+the database; it is intentionally outside the SQLite backup. Do not remove it
+as backup clutter. Ordinary restarts without a marker resume identified work.
+
+For raw offline volume replacement, stop the app, acquire its database lock,
+create and fsync that marker and its directory **before** copying the database,
+then restart. A raw copy without the marker cannot be detected reliably.
+Use the authenticated **Reconcile and resume preparation** control after checking
+provider configuration and saved requests. Unknown dispatch outcomes stay
+blocked; recovery requires an explicit acknowledgement of possible duplicate
+cost. A known ID is retrieved before any request can be repurchased. Never
+reset the original 15-minute deadline to hide an old accepted job.

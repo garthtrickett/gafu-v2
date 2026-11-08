@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startBootstrapOnlyServer } from "./bootstrap-only.ts";
 
 const availablePort = (): number => {
@@ -24,7 +27,15 @@ const validConfiguration = () => ({
 
 describe("private volume bootstrap server", () => {
   test("serves only its health check while learner data is being installed", async () => {
-    const started = startBootstrapOnlyServer(validConfiguration());
+    const directory = mkdtempSync(join(tmpdir(), "gafu-bootstrap-"));
+    const databasePath = join(directory, "gafu.sqlite");
+    const started = startBootstrapOnlyServer({
+      ...validConfiguration(),
+      databasePath,
+      kaishiPath: join(directory, "seed.json"),
+      volumeMountPath: directory,
+    });
+    expect(existsSync(`${databasePath}.preparation-paused`)).toBe(true);
     if (!started.ok) throw new Error(started.error.detail);
     const origin = `http://127.0.0.1:${started.value.port}`;
     try {
@@ -41,6 +52,7 @@ describe("private volume bootstrap server", () => {
       }
     } finally {
       started.value.stop();
+      rmSync(directory, { recursive: true });
     }
   });
 

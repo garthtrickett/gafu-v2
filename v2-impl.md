@@ -8,6 +8,11 @@ licence, alias-unification, and onboarding gates pending · 2.1
 **Domain language:** `CONTEXT.md`
 **Last updated:** 2026-09-08
 
+**Reviewed follow-up plan (2026-11-08):**
+[Server preparation of due Learning Material](docs/server-review-preparation-plan.md)
+moves due-material generation out of browser polling while preserving the
+existing web app. See the [implementation and operational handoff](docs/server-review-preparation-implementation.md) for runtime ownership, compatibility and rollout requirements.
+
 ## Purpose
 
 Build Gafu V2 as a replacement for V1, not as a compatibility layer around it.

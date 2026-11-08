@@ -10,6 +10,11 @@ test("restoring a saved session checks current eligibility before showing materi
   await page.route("**/api/study/review-batch/active", async (route) => {
     await route.fulfill({ contentType: "application/json", body: "null" });
   });
+  await page.route("**/api/study/preparation-status", async (route) => {
+    const response = await route.fetch();
+    const state = await response.json();
+    await route.fulfill({ response, json: { ...state, ready: 0, readyCardIds: [] } });
+  });
   const preferences = (await (await page.request.get("/api/study")).json()).preferences;
   const ids: string[] = [];
   const create = async (lemma: string, reading: string): Promise<string> => {
@@ -32,10 +37,32 @@ test("restoring a saved session checks current eligibility before showing materi
     return id;
   };
   const prepare = async (cardId: string): Promise<PreparedMaterial> => {
-    const response = await page.request.post("/api/study/session/prepare", {
+    let response = await page.request.post("/api/study/session/prepare", {
       headers,
       data: { cardId },
     });
+    if (response.status() === 409) {
+      const queued = (await response.json()) as {
+        error: { kind: string };
+        batchId: string;
+      };
+      expect(queued.error.kind).toBe("materialPreparing");
+      await expect
+        .poll(
+          async () => {
+            const progress = (await (
+              await page.request.get(`/api/study/review-batch/${queued.batchId}`)
+            ).json()) as { completed: string[] };
+            return progress.completed.includes(cardId);
+          },
+          { timeout: 20_000 },
+        )
+        .toBe(true);
+      response = await page.request.post("/api/study/session/prepare", {
+        headers,
+        data: { cardId },
+      });
+    }
     expect(response.ok(), await response.text()).toBe(true);
     return response.json();
   };
@@ -77,7 +104,7 @@ test("restoring a saved session checks current eligibility before showing materi
       data: { items },
     });
     expect(check.ok()).toBe(true);
-    expect(await check.json()).toEqual({ eligibleIds: [valid.id] });
+    expect(await check.json()).toEqual({ eligibleIds: [valid.id], items: [valid] });
     // Checking a saved session must not admit the staged Card, even with
     // admission slots available. Lower the limit before reading the bank.
     await page.request.put("/api/study/preferences", {

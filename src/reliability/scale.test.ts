@@ -143,6 +143,9 @@ describe("Phase 6 release scale", () => {
       const status = await duration(() => opened.value.status());
       expect(listed.value).toMatchObject({ ok: true, value: { length: ROWS } });
       expect(status.value).toMatchObject({ ok: true, value: { activeCount: ROWS } });
+      const readOnly = await duration(() => opened.value.duePreparationSnapshot());
+      expect(readOnly.value.ok).toBe(true);
+      expect(readOnly.elapsedMs).toBeLessThan(CEILING_MS);
       expect(listed.elapsedMs).toBeLessThan(CEILING_MS);
       expect(status.elapsedMs).toBeLessThan(CEILING_MS);
       opened.value.close();

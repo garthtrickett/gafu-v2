@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
+import { pauseRestoredPreparation } from "../recovery/preparation-pause.ts";
 import { err, ok, type Result } from "../result.ts";
 
 export type BootstrapOnlyFailure = Readonly<{
@@ -52,6 +53,8 @@ export const startBootstrapOnlyServer = (
   }
 
   try {
+    // Bootstrap uses an external offline upload; fence it before that upload starts.
+    pauseRestoredPreparation(configuration.databasePath);
     const server = Bun.serve({
       hostname: "0.0.0.0",
       port: configuration.port,

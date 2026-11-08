@@ -166,12 +166,15 @@ describe("review batch job", () => {
       value: { batchId: begun.value, total: 1 },
     });
     app.clock.set("2026-09-08T09:15:00.000Z");
-    expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
+    expect(app.material.pendingReviewBatch()).toMatchObject({
+      ok: true,
+      value: { batchId: begun.value },
+    });
     app.study.close();
     app.material.close();
   });
 
-  test("expires a provider job that stays pending and frees its Cards for another batch", async () => {
+  test("an expired accepted request requires recovery before another purchase", async () => {
     let polls = 0;
     const inner = createDeterministicMaterialProvider();
     const app = harness({
@@ -208,23 +211,26 @@ describe("review batch job", () => {
     expect(polls).toBe(1);
 
     app.clock.set("2026-09-08T09:15:00.000Z");
-    expect(app.material.pendingReviewBatch()).toEqual({ ok: true, value: null });
+    expect(app.material.pendingReviewBatch()).toMatchObject({
+      ok: true,
+      value: { batchId: begun.value },
+    });
     expect(await app.material.advanceReviewBatch(begun.value)).toMatchObject({
       ok: true,
       value: {
         done: true,
         pending: 0,
         completed: [],
-        failed: [{ cardId: card.id, kind: "timeout" }],
+        failed: [{ cardId: card.id, kind: "dispatchUncertain" }],
         requestInFlight: false,
       },
     });
     expect(polls).toBe(1);
     const next = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
-    if (!next.ok) throw new Error(next.error.kind);
-    expect(app.material.pendingReviewBatch()).toMatchObject({
+    expect(next).toMatchObject({ ok: false });
+    expect(app.material.preparationState()).toMatchObject({
       ok: true,
-      value: { batchId: next.value },
+      value: { uncertainBatches: [begun.value] },
     });
     app.study.close();
     app.material.close();
@@ -501,7 +507,7 @@ describe("review batch job", () => {
       value: {
         done: true,
         completed: [],
-        failed: [{ cardId: card.id, kind: "offline" }],
+        failed: [{ cardId: card.id, kind: "dispatchUncertain" }],
       },
     });
     expect(app.material.hasReserve(card.id, "review")).toEqual({
@@ -509,13 +515,20 @@ describe("review batch job", () => {
       value: false,
     });
     const blocked = app.material.backgroundRetryBlockedCards();
-    expect(blocked.ok && blocked.value.has(card.id)).toBe(true);
+    expect(blocked.ok && blocked.value.has(card.id)).toBe(false);
+    expect(app.material.preparationState()).toMatchObject({
+      ok: true,
+      value: { uncertainCardIds: [card.id] },
+    });
 
     // A deliberate retry can still use the Card, and success lifts the
     // background pause without waiting for the next day.
     offline = false;
-    const retry = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
-    if (!retry.ok) throw new Error(retry.error.kind);
+    const recovered = app.material.retryUncertainBatch(begun.value, {
+      allowRepurchase: true,
+    });
+    expect(recovered.ok).toBe(true);
+    const retry = { ok: true as const, value: begun.value };
     await app.material.advanceReviewBatch(retry.value);
     expect(await app.material.advanceReviewBatch(retry.value)).toMatchObject({
       ok: true,

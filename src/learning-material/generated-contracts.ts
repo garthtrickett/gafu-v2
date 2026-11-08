@@ -48,10 +48,15 @@ export type GrammarMaterial = SharedMaterial &
 export type GeneratedMaterial = VocabularyMaterial | GrammarMaterial;
 
 export type MaterialProviderFailure =
+  | { readonly kind: "dispatchUncertain" }
   | { readonly kind: "providerNotConfigured" }
   | { readonly kind: "authentication"; readonly detail: string }
   | { readonly kind: "permission"; readonly detail: string }
-  | { readonly kind: "rateLimit"; readonly detail: string }
+  | {
+      readonly kind: "rateLimit";
+      readonly detail: string;
+      readonly retryAfterMs?: number;
+    }
   | { readonly kind: "offline"; readonly detail: string }
   | { readonly kind: "timeout"; readonly detail: string }
   | { readonly kind: "cancelled"; readonly detail: string }
@@ -176,6 +181,7 @@ export type PreparedMaterial = Readonly<{
    * failed. Material never waits on audio and never fails for lack of it.
    */
   audioUrl: string | null;
+  audioPending?: boolean;
 }>;
 
 export type PresentationAudio = Readonly<{
@@ -186,6 +192,17 @@ export type PresentationAudio = Readonly<{
 export type PrepareMaterial = Readonly<{
   card: CardSummary;
   knowledge: StudyKnowledgeSnapshot;
+  signal?: AbortSignal;
+  /** Application supplies a synchronous final context fence after validation. */
+  isCurrent?: () => boolean;
+  /** Production serving cannot dispatch outside the shared preparation lane. */
+  cachedOnly?: boolean;
+  automatic?: boolean;
+}>;
+
+export type BatchAdvanceOptions = Readonly<{
+  allowDispatch?: boolean;
+  isCurrent?: (input: PrepareMaterial) => boolean;
   signal?: AbortSignal;
 }>;
 
@@ -240,7 +257,7 @@ export type LearningMaterial = Readonly<{
    * Card with one needs no generation to be served, so this is what says
    * whether preparing would cost anything.
    */
-  reserveFlags: () => Result<
+  reserveFlags: (inputs?: readonly PrepareMaterial[]) => Result<
     Readonly<{
       teach: ReadonlySet<CardSummary["id"]>;
       review: ReadonlySet<CardSummary["id"]>;
@@ -255,9 +272,8 @@ export type LearningMaterial = Readonly<{
     MaterialFailure
   >;
   /**
-   * Records a review batch without generating anything. Each status poll
-   * advances one card (banking reserves, never taking), so progress is
-   * client-pumped and resumable with no daemon.
+   * Records shared durable preparation intent. The server executor advances it;
+   * progress reads never dispatch provider work or consume material.
    */
   /**
    * Removes batches with nothing pending whose last change is older than the
@@ -274,9 +290,58 @@ export type LearningMaterial = Readonly<{
   backgroundRetryBlockedCards: () => Result<ReadonlySet<CardId>, MaterialFailure>;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
+    options?: Readonly<{
+      origin: "manual" | "whileOpen" | "server";
+      queue?: boolean;
+      focusCardId?: CardId;
+    }>,
   ) => Result<string, MaterialFailure>;
+  reviewBatchProgress: (
+    batchId: string,
+  ) => Result<ReviewBatchProgress, MaterialFailure>;
+  batchExecution: (batchId: string) => Result<
+    Readonly<{
+      origin: "manual" | "whileOpen" | "server";
+      phase: string;
+      blockedReason: string | null;
+      retryAt: string | null;
+    }>,
+    MaterialFailure
+  >;
+  retryUncertainBatch: (
+    batchId: string,
+    options?: {
+      allowRepurchase?: boolean;
+      confirmProviderChange?: boolean;
+      abandonKnownRequest?: boolean;
+      currentInputs?: readonly PrepareMaterial[];
+    },
+  ) => Result<void, MaterialFailure>;
+  promoteReviewBatch: (batchId: string) => Result<void, MaterialFailure>;
+  presentationSpeech: (
+    id: string,
+  ) => Result<{ state: string; audioUrl: string | null }, MaterialFailure>;
+  retrySpeech: (id: string, confirmUncertain: boolean) => Result<void, MaterialFailure>;
+  advanceSpeech: (signal?: AbortSignal, allowAutomatic?: boolean) => Promise<void>;
+  resumePreparation: () => Result<void, MaterialFailure>;
+  pauseRestoredPreparation: () => Result<void, MaterialFailure>;
+  reconcilePreparation: (
+    obsolete: (card: CardSummary) => boolean,
+  ) => Result<number, MaterialFailure>;
+  preparationState: () => Result<
+    Readonly<{
+      blockedReason: string | null;
+      retryAt: string | null;
+      activeCardIds: readonly CardId[];
+      uncertainCardIds: readonly CardId[];
+      uncertainBatches: readonly string[];
+    }>,
+    MaterialFailure
+  >;
+  checkReserves: (input: PrepareMaterial) => Promise<Result<boolean, MaterialFailure>>;
   advanceReviewBatch: (
     batchId: string,
+    options?: BatchAdvanceOptions,
   ) => Promise<Result<ReviewBatchProgress, MaterialFailure>>;
   acknowledgeTeaching: (
     cardId: CardSummary["id"],

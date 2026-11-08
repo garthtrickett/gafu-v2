@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 14;
+export const STUDY_SCHEMA_VERSION = 15;
 
 const migrations: readonly Migration[] = [
   {
@@ -440,6 +440,43 @@ const migrations: readonly Migration[] = [
     sql: `
       ALTER TABLE study_preferences ADD COLUMN speech_enabled INTEGER NOT NULL DEFAULT 1
         CHECK (speech_enabled IN (0, 1));
+    `,
+  },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE study_preferences ADD COLUMN automatic_preparation TEXT NOT NULL DEFAULT 'off'
+        CHECK(automatic_preparation IN ('off','whileOpen','server'));
+      UPDATE study_preferences SET automatic_preparation=CASE prepare_in_background WHEN 1 THEN 'whileOpen' ELSE 'off' END;
+      ALTER TABLE study_preferences ADD COLUMN knowledge_revision INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE card ADD COLUMN material_revision INTEGER NOT NULL DEFAULT 0;
+      CREATE TRIGGER material_card_edit AFTER UPDATE OF content_json ON card
+      WHEN old.content_json!=new.content_json BEGIN
+        UPDATE card SET material_revision=material_revision+1 WHERE id=new.id;
+        UPDATE study_preferences SET knowledge_revision=knowledge_revision+1
+          WHERE EXISTS(SELECT 1 FROM card_progress WHERE card_id=new.id AND support_ready_at IS NOT NULL);
+      END;
+      CREATE TRIGGER material_progress_edit AFTER UPDATE ON card_progress BEGIN
+        UPDATE card SET material_revision=material_revision+1 WHERE id=new.card_id;
+        UPDATE study_preferences SET knowledge_revision=knowledge_revision+1
+          WHERE old.support_ready_at IS NOT NULL AND new.support_ready_at IS NULL;
+      END;
+      CREATE TRIGGER material_schedule_insert AFTER INSERT ON schedule BEGIN
+        UPDATE card SET material_revision=material_revision+1 WHERE id=new.card_id;
+      END;
+      CREATE TRIGGER material_schedule_edit AFTER UPDATE ON schedule BEGIN
+        UPDATE card SET material_revision=material_revision+1 WHERE id=new.card_id;
+      END;
+      CREATE TRIGGER material_schedule_delete AFTER DELETE ON schedule BEGIN
+        UPDATE card SET material_revision=material_revision+1 WHERE id=old.card_id;
+      END;
+      CREATE TRIGGER material_baseline_edit AFTER UPDATE ON known_word
+      WHEN old.enabled=1 AND (new.enabled=0 OR old.lemma!=new.lemma OR old.reading!=new.reading OR old.meaning!=new.meaning) BEGIN
+        UPDATE study_preferences SET knowledge_revision=knowledge_revision+1;
+      END;
+      CREATE TRIGGER material_baseline_delete AFTER DELETE ON known_word WHEN old.enabled=1 BEGIN
+        UPDATE study_preferences SET knowledge_revision=knowledge_revision+1;
+      END;
     `,
   },
 ];

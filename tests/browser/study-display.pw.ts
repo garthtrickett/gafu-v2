@@ -42,6 +42,12 @@ const openSession = async (page: Page): Promise<void> => {
       usageNote: "A familiar, conversational question.",
     },
   }));
+  // This display fixture owns its saved session, independent of the shared ready cache.
+  await page.route("**/api/study/preparation-status", async (route) => {
+    const response = await route.fetch();
+    const state = await response.json();
+    await route.fulfill({ response, json: { ...state, ready: 0, readyCardIds: [] } });
+  });
   await page.route("**/api/study/review-batch/active", (route) =>
     route.fulfill({ json: null }),
   );

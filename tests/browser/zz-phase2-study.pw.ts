@@ -218,10 +218,13 @@ test("configures a key and teaches before the first generated review", async ({
       // is made the way a drag ends: a range over the target's kanji with the
       // furigana excluded. The highlight alone does nothing; Alt does.
       await page.evaluate(() => {
-        const target = document.querySelector("[data-japanese-sentence] .target");
-        if (target === null) throw new Error("no target span");
+        const targets = document.querySelectorAll("[data-japanese-sentence] .target");
+        const first = targets[0],
+          last = targets[targets.length - 1];
+        if (!first || !last) throw new Error("no target span");
         const range = document.createRange();
-        range.selectNodeContents(target);
+        range.setStartBefore(first);
+        range.setEndAfter(last);
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(range);
@@ -401,7 +404,9 @@ test("configures a key and teaches before the first generated review", async ({
 
   await skipToVocabulary();
 
-  // The next clip is fetched ahead while online, so it plays after the reload.
+  // Text opens before speech. Let this optional clip arrive before going offline;
+  // later pending clips are picked up independently when the network returns.
+  await expect(review.getByTestId("listen")).toBeVisible();
   await page.context().setOffline(true);
   await expect(page.getByTestId("offline")).toBeVisible();
   await reviewOne("Correct");

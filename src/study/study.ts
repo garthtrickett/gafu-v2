@@ -56,6 +56,7 @@ type CardRow = {
   id: string;
   type: "grammar" | "vocabulary";
   content_json: string;
+  material_revision: number;
   state: CardState;
   support_ready_at: string | null;
   staged_at: string;
@@ -63,6 +64,7 @@ type CardRow = {
   due_at: string | null;
   phase: CardSummary["schedulePhase"];
   review_count: number;
+  last_reviewed_at: string | null;
   consecutive_failures: number;
   consecutive_correct: number;
 };
@@ -74,6 +76,7 @@ type PreferenceRow = {
   day_starts_at_hour: number;
   prepare_in_background: number;
   speech_enabled: number;
+  automatic_preparation: StudyPreferences["automaticPreparation"];
 };
 
 const detail = (cause: unknown): string =>
@@ -94,9 +97,9 @@ const safeNow = (clock: () => Date): Result<Date, StudyFailure> => {
 const readCardRow = (database: Database, cardId: string): CardRow | null =>
   database
     .query(
-      `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+      `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
               c.staged_at, a.admitted_at, s.due_at, s.phase,
-              count(r.id) AS review_count
+              count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
        FROM card c
        JOIN card_progress p ON p.card_id = c.id
        LEFT JOIN admission_event a ON a.card_id = c.id
@@ -111,6 +114,7 @@ const toSummary = (row: CardRow): CardSummary => ({
   id: asCardId(row.id),
   type: row.type,
   content: JSON.parse(row.content_json) as CardContent,
+  materialRevision: row.material_revision,
   state: row.state,
   supportReadyAt: row.support_ready_at,
   stagedAt: row.staged_at,
@@ -118,6 +122,7 @@ const toSummary = (row: CardRow): CardSummary => ({
   dueAt: row.due_at,
   schedulePhase: row.phase,
   reviewCount: row.review_count,
+  lastReviewedAt: row.last_reviewed_at,
   consecutiveFailures: row.consecutive_failures,
   consecutiveCorrect: row.consecutive_correct,
 });
@@ -138,7 +143,7 @@ const readPreferences = (database: Database): StudyPreferences => {
   const row = database
     .query(
       `SELECT new_cards_per_day, time_zone, first_review_after_minutes,
-              day_starts_at_hour, prepare_in_background, speech_enabled
+              day_starts_at_hour, prepare_in_background, speech_enabled, automatic_preparation
        FROM study_preferences WHERE singleton = 1`,
     )
     .get() as PreferenceRow;
@@ -147,7 +152,8 @@ const readPreferences = (database: Database): StudyPreferences => {
     timeZone: row.time_zone,
     firstReviewAfterMinutes: row.first_review_after_minutes,
     dayStartsAtHour: row.day_starts_at_hour,
-    prepareInBackground: row.prepare_in_background === 1,
+    prepareInBackground: row.automatic_preparation !== "off",
+    automaticPreparation: row.automatic_preparation,
     speechEnabled: row.speech_enabled === 1,
   };
 };
@@ -341,9 +347,9 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     try {
       const rows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+          `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
-                  count(r.id) AS review_count
+                  count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
            JOIN card_progress p ON p.card_id = c.id
            LEFT JOIN admission_event a ON a.card_id = c.id
@@ -647,8 +653,27 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         detail: "must be a whole hour from 0 through 23",
       });
     }
-    const nextBackground =
-      change.prepareInBackground ?? current.value.prepareInBackground;
+    const nextMode =
+      change.automaticPreparation ??
+      (change.prepareInBackground === undefined
+        ? current.value.automaticPreparation
+        : change.prepareInBackground
+          ? current.value.automaticPreparation === "server"
+            ? "server"
+            : "whileOpen"
+          : "off");
+    if (
+      !["off", "whileOpen", "server"].includes(nextMode) ||
+      (change.automaticPreparation !== undefined &&
+        change.prepareInBackground !== undefined &&
+        change.prepareInBackground !== (nextMode !== "off"))
+    )
+      return err({
+        kind: "invalidPreference",
+        field: "automaticPreparation",
+        detail: "Choose off, whileOpen or server without conflicting legacy settings",
+      });
+    const nextBackground = nextMode !== "off";
     if (typeof nextBackground !== "boolean") {
       return err({
         kind: "invalidPreference",
@@ -674,7 +699,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           .query(
             `UPDATE study_preferences
              SET new_cards_per_day = ?, time_zone = ?, first_review_after_minutes = ?,
-                 day_starts_at_hour = ?, prepare_in_background = ?, speech_enabled = ?
+                 day_starts_at_hour = ?, prepare_in_background = ?, speech_enabled = ?, automatic_preparation = ?
              WHERE singleton = 1`,
           )
           .run(
@@ -684,6 +709,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             nextStart,
             nextBackground ? 1 : 0,
             nextSpeech ? 1 : 0,
+            nextMode,
           );
         if (zone.value !== current.value.timeZone) {
           database
@@ -702,6 +728,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         firstReviewAfterMinutes: nextGap,
         dayStartsAtHour: nextStart,
         prepareInBackground: nextBackground,
+        automaticPreparation: nextMode,
         speechEnabled: nextSpeech,
       });
     } catch (cause) {
@@ -930,7 +957,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     preferences,
   });
 
-  const studyQueue = (): Result<StudyQueue, StudyFailure> => {
+  const studyQueue = (admitNew = true): Result<StudyQueue, StudyFailure> => {
     const now = safeNow(dependencies.clock);
     if (!now.ok) return now;
     const preference = preferences();
@@ -1030,7 +1057,8 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         );
         for (const row of staged) {
           const result = activate.run(row.id);
-          if (result.changes !== 1) continue;
+          // Bun includes trigger writes in changes; the revision trigger is intentional.
+          if (result.changes < 1) continue;
           const schedule = newSchedule(now.value);
           addAdmission.run(
             row.id,
@@ -1048,12 +1076,22 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           newlyAdmitted += 1;
         }
       });
-      admit.immediate();
+      if (admitNew) admit.immediate();
+      else {
+        const day = localDayKey(
+          now.value,
+          preference.value.timeZone,
+          preference.value.dayStartsAtHour,
+        );
+        if (!day.ok) return day;
+        admissionDay = day.value;
+        admissionTimeZone = preference.value.timeZone;
+      }
       const dueRows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+          `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
-                  count(r.id) AS review_count
+                  count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
            JOIN card_progress p ON p.card_id = c.id
            JOIN admission_event a ON a.card_id = c.id
@@ -1239,6 +1277,17 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       if (new Date(scheduleRow.due_at).getTime() > now.value.getTime()) {
         return err({ kind: "cardNotAnswerable", state: current.value.state });
       }
+      const context = verified.value.context;
+      if (
+        context === null ||
+        (context !== undefined &&
+          (context.cardRevision !== current.value.materialRevision ||
+            context.knowledgeRevision !== knowledgeRevision()))
+      )
+        return err({
+          kind: "presentationInvalid",
+          detail: "The Card or supporting language changed; refresh this review.",
+        });
       const before = JSON.parse(scheduleRow.schedule_json) as StoredSchedule;
       const after = scheduleAnswer(before, command.grade, now.value);
       if (!after.ok) return after;
@@ -1253,6 +1302,17 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         : after.value;
       const eventId = dependencies.nextId();
       const apply = database.transaction(() => {
+        if (
+          context === null ||
+          (context !== undefined &&
+            (context.cardRevision !==
+              readCardRow(database, command.cardId)?.material_revision ||
+              context.knowledgeRevision !== knowledgeRevision()))
+        )
+          return err({
+            kind: "presentationInvalid" as const,
+            detail: "The Card or supporting language changed; refresh this review.",
+          });
         database
           .query(
             `INSERT INTO review_event(
@@ -1332,7 +1392,8 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           }
         }
       });
-      apply.immediate();
+      const applied = apply.immediate();
+      if (applied && !applied.ok) return applied;
       const card = readCard(database, command.cardId);
       return card.ok
         ? ok({
@@ -1346,6 +1407,24 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         return err({ kind: "presentationAlreadyUsed" });
       }
       return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
+  const knowledgeRevision = (): number =>
+    (
+      database
+        .query(
+          "SELECT knowledge_revision AS revision FROM study_preferences WHERE singleton=1",
+        )
+        .get() as { revision: number }
+    ).revision;
+  const materialContext: Study["materialContext"] = (cardId) => {
+    const card = readCard(database, cardId);
+    if (!card.ok) return card;
+    try {
+      return ok({ card: card.value, knowledgeRevision: knowledgeRevision() });
+    } catch (cause) {
+      return err({ kind: "readFailed", detail: detail(cause) });
     }
   };
 
@@ -1449,6 +1528,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
         availability: "available" | "unavailable";
       } | null;
       return ok({
+        correctionRevision: knowledgeRevision(),
         vocabulary: [
           ...baselineRows.map((row) => ({
             key: `${row.seed_id}:${row.seed_key}`,
@@ -1671,7 +1751,9 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     updateCard,
     setCardState,
     prioritizeStaging,
-    studyQueue,
+    studyQueue: () => studyQueue(),
+    duePreparationSnapshot: () => studyQueue(false),
+    materialContext,
     status,
     answer,
     recordTeaching,

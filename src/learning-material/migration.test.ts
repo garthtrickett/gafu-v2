@@ -43,6 +43,25 @@ const tables = (databasePath: string): Set<string> => {
   return new Set(rows.map((row) => row.name));
 };
 
+const removePreparationMigration = (db: Database) => {
+  for (const table of [
+    "review_batch_claim",
+    "review_batch_attempt",
+    "review_preparation_control",
+    "material_speech_job",
+  ])
+    db.exec(`DROP TABLE ${table}`);
+  db.exec(`ALTER TABLE validated_presentation DROP COLUMN context_json;
+ ALTER TABLE presentation_permit DROP COLUMN context_json;
+ ALTER TABLE review_batch DROP COLUMN origin;
+ ALTER TABLE review_batch DROP COLUMN blocked_reason;
+ ALTER TABLE review_batch DROP COLUMN retry_at;
+ ALTER TABLE review_batch_job DROP COLUMN phase;
+ ALTER TABLE review_batch_job DROP COLUMN owner_token;
+ ALTER TABLE review_batch_job DROP COLUMN response_json;
+ ALTER TABLE review_batch_job DROP COLUMN provider_identity;`);
+};
+
 const later = [
   "presentation_audio",
   "speech_daily_usage",
@@ -62,6 +81,7 @@ test("a database already at version 2 still receives every later step", () => {
   // Roll the file back to what production looked like before today: the
   // version-2 tables only, and a migration history that ends at 2.
   const database = new Database(databasePath);
+  removePreparationMigration(database);
   for (const name of later) database.exec(`DROP TABLE ${name}`);
   database.exec("DELETE FROM learning_material_migration WHERE version > 2");
   database.close();
@@ -126,6 +146,7 @@ test("a banked sentence with no reading over its kanji is dropped, once", () => 
 
   // Force the step to run again over the rows just inserted.
   const reset = new Database(databasePath);
+  removePreparationMigration(reset);
   reset.query("DELETE FROM learning_material_migration WHERE version >= 8").run();
   reset.close();
   open(databasePath).close();
@@ -175,6 +196,7 @@ test("unshown bare reviews are removed while history and first exposures remain"
     "2026-09-19T01:00:00.000Z",
   );
   banked("vocabulary-teach-reserve", "vocabulary", "teach", null);
+  removePreparationMigration(raw);
   raw.query("DELETE FROM learning_material_migration WHERE version >= 9").run();
   raw.close();
 
@@ -203,6 +225,7 @@ test("upgrading pauses recent failed Cards, but not Cards prepared afterward", (
   add.run("two", 0, "recovered", "failed", "2026-09-12T08:00:00.000Z");
   add.run("three", 0, "recovered", "ready", "2026-09-12T08:30:00.000Z");
   add.run("four", 0, "old-failure", "failed", "2026-09-10T08:00:00.000Z");
+  removePreparationMigration(raw);
   raw.query("DELETE FROM learning_material_migration WHERE version >= 10").run();
   raw.exec("DROP TABLE review_batch_cooldown");
   raw.close();
@@ -211,4 +234,45 @@ test("upgrading pauses recent failed Cards, but not Cards prepared afterward", (
   const blocked = upgraded.backgroundRetryBlockedCards();
   expect(blocked.ok && [...blocked.value].join(",")).toBe("still-failed");
   upgraded.close();
+});
+
+test("pre-v7 orphan work remains claimed and identified provider jobs survive upgrade", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "gafu-legacy-work-"));
+  directories.push(directory);
+  const path = join(directory, "material.sqlite");
+  open(path).close();
+  const raw = new Database(path);
+  removePreparationMigration(raw);
+  raw.exec("DELETE FROM learning_material_migration WHERE version=12");
+  const add = raw.query(
+    "INSERT INTO review_batch_item(batch_id,seq,card_id,input_json,status,updated_at) VALUES (?,0,?,'{}','pending','2026-09-12T08:59:00.000Z')",
+  );
+  add.run("lost-id", "card-lost");
+  add.run("known-id", "card-known");
+  raw
+    .query(
+      "INSERT INTO review_batch_job(batch_id,job_id,dispatched_at) VALUES ('known-id','response-to-retrieve','2026-09-12T08:59:00.000Z')",
+    )
+    .run();
+  raw.close();
+  const upgraded = open(path);
+  try {
+    expect(upgraded.pendingReviewBatch()).toMatchObject({ ok: true });
+    await upgraded.advanceReviewBatch("lost-id");
+    await upgraded.advanceReviewBatch("known-id");
+    expect(upgraded.preparationState()).toMatchObject({
+      ok: true,
+      value: { uncertainCardIds: { length: 2 }, uncertainBatches: { length: 2 } },
+    });
+    const check = new Database(path, { readonly: true });
+    expect(
+      check
+        .query("SELECT job_id FROM review_batch_job WHERE batch_id='known-id'")
+        .get(),
+    ).toEqual({ job_id: "response-to-retrieve" });
+    expect(check.query("SELECT * FROM review_batch").all()).toHaveLength(2);
+    check.close();
+  } finally {
+    upgraded.close();
+  }
 });
