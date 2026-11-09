@@ -506,7 +506,7 @@ const handleApi = async (
       abandonKnownRequest: body["confirmAbandonKnownRequest"] === true,
     });
     if (recovered.ok) preparation.wake();
-    return materialResponse(recovered);
+    return recovered.ok ? Response.json({ ok: true }) : materialResponse(recovered);
   }
   if (request.method === "GET" && url.pathname === "/api/provider") {
     return Response.json(material.providerStatus());
