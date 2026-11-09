@@ -182,3 +182,13 @@ test("an unrelated word is still unknown", async () => {
   const text = await analyzed("私はびっくりしました。");
   expect(statusOf(text, "びっくりし", [noun("約束", "やくそく")])).toBe("unresolved");
 });
+
+test("an adverb-capable noun still matches its learned noun identity", async () => {
+  const text = await analyzed("次回は昼に会います。");
+  expect(statusOf(text, "次回", [noun("次回", "じかい")])).toBe("known");
+  expect(statusOf(text, "昼", [noun("昼", "ひる")])).toBe("known");
+  const adverb = await analyzed("ゆっくり歩きます。");
+  expect(statusOf(adverb, "ゆっくり", [noun("ゆっくり", "ゆっくり")])).toBe(
+    "unresolved",
+  );
+});

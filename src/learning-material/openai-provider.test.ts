@@ -413,7 +413,7 @@ describe("whole-batch generation", () => {
     if (dispatched?.ok !== true) throw new Error("dispatch");
     expect(await material.batch?.poll("batch-1")).toEqual({
       ok: true,
-      value: { status: "pending" },
+      value: { status: "pending", phase: "in_progress" },
     });
     expect(await material.batch?.poll("batch-1")).toEqual({
       ok: true,
@@ -456,5 +456,39 @@ describe("whole-batch generation", () => {
     const polled = await material.batch?.poll("batch-1");
     expect(polled?.ok).toBe(false);
     if (polled?.ok === false) expect(polled.error.kind).toBe("refusal");
+  });
+
+  test("cancels a saved request only through the cancellation endpoint", async () => {
+    const calls: { url: string; method: string | undefined }[] = [];
+    const material = provider(async (url, init) => {
+      calls.push({ url: String(url), method: init?.method });
+      return Response.json(batchResponse("cancelled", []));
+    });
+    expect(await material.batch?.cancel?.("batch-1")).toEqual({
+      ok: true,
+      value: { status: "cancelled" },
+    });
+    expect(calls).toEqual([
+      { url: "https://api.openai.com/v1/responses/batch-1/cancel", method: "POST" },
+    ]);
+  });
+
+  test("cancellation preserves a raced completion and refuses mismatched response IDs", async () => {
+    const completed = provider(async () =>
+      Response.json(
+        batchResponse("completed", [{ cardId: "card-1", materials: [{}] }]),
+      ),
+    );
+    expect(await completed.batch?.cancel?.("batch-1")).toEqual({
+      ok: true,
+      value: {
+        status: "complete",
+        items: [{ cardId: asCardId("card-1"), candidates: [{}] }],
+      },
+    });
+    expect(await completed.batch?.cancel?.("wrong-id")).toMatchObject({
+      ok: false,
+      error: { kind: "dispatchUncertain" },
+    });
   });
 });

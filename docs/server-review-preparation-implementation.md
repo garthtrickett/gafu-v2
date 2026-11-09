@@ -14,10 +14,15 @@ an explicit opt-in; migration preserves the prior off/background-tab choice.
 - `batch-execution.ts` persists dispatch intent before the provider call, then
   its response ID and terminal output. Unique claims prevent competing work;
   per-target transactions make staged output replayable after interruption.
-- Missing dispatch IDs and expired/unavailable identified requests require
-  recovery. A known ID gets a retrieval attempt without extending its original
-  deadline. Abandoning an ID and buying again requires explicit duplicate-cost
-  confirmation. Provider authentication pauses the lane; Retry-After defers it.
+- Missing dispatch IDs and unavailable identified requests require recovery.
+  At the 15-minute deadline, retrieve a known ID before deciding it is stuck:
+  completed output is validated without another purchase. A request still
+  confirmed queued can be cancelled and retried after one minute, only after
+  the provider confirms cancellation. Three queue cancellations exhaust that
+  batch's automatic retry allowance and apply the normal failure cooldown.
+  Ambiguous cancellation and overdue in-progress work require recovery;
+  abandoning an ID and buying again requires explicit duplicate-cost confirmation.
+  Provider authentication pauses the lane; Retry-After defers it.
 - `material-reserves.ts` owns current-context validation, reserve consumption
   and permit issuance. Warming neither marks material shown nor changes Study
   progress. Foreground serving replays an existing current review and its
@@ -39,6 +44,16 @@ serve path uses cache-only material access; a miss submits preparation intent.
 The app opens ready material on entry, refreshes visible progress, and exposes
 `off`, `whileOpen` and `server` settings plus recovery controls. Optional audio
 appears independently. A study batch opens at most twenty Cards.
+An active retry counts as preparing even if an earlier attempt's cooldown is
+still present. A validated reserve takes precedence over either state.
+
+Vocabulary identity accepts IPADIC's `名詞/副詞可能` words as their noun
+identity as well as their adverbial use; arbitrary adverbs do not become nouns.
+`Particle + の` also detects noun modifiers such as `からの`, `への`, and
+`との`. Imported spelling or part-of-speech errors are corrected through
+Study's Card update boundary, retaining the same Card, progress, and schedule.
+A successful content correction clears that Card's generation cooldown and
+wakes preparation; other Cards' failure pauses remain intact.
 
 ## Deployment and recovery
 

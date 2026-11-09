@@ -413,7 +413,7 @@ const patterns: readonly GrammarPattern[] = [
   {
     canonicalForm: "Particle + の",
     expression:
-      /(?:私|僕|俺|君|彼|彼女|あなた|これ|それ|あれ|ここ|そこ|あそこ|どこ|だれ|なに|なん|何|みんな)の/g,
+      /(?:私|僕|俺|君|彼|彼女|あなた|これ|それ|あれ|ここ|そこ|あそこ|どこ|だれ|なに|なん|何|みんな|から|まで|へ|で|と)の/g,
   },
   { canonicalForm: "ところが / ところで", expression: /ところが|ところで/g },
   { canonicalForm: "ほど / ほど〜ない", expression: /ほど/g },

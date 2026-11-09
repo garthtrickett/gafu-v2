@@ -225,7 +225,9 @@ describe("review batch job", () => {
         requestInFlight: false,
       },
     });
-    expect(polls).toBe(1);
+    // One final retrieval can recover completed work at the deadline. A still
+    // pending request remains uncertain and cannot authorize another purchase.
+    expect(polls).toBe(2);
     const next = app.material.beginReviewBatch([{ card, knowledge: knowledge.value }]);
     expect(next).toMatchObject({ ok: false });
     expect(app.material.preparationState()).toMatchObject({

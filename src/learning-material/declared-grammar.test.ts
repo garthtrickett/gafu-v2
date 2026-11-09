@@ -6,6 +6,24 @@ import {
   supportsGrammarTarget,
 } from "./declared-grammar.ts";
 
+test("Particle + の includes a particle connecting a noun modifier", () => {
+  for (const [sentence, surface] of [
+    ["友達からの手紙です。", "からの"],
+    ["東京までの電車です。", "までの"],
+    ["学校への道です。", "への"],
+    ["店での仕事です。", "での"],
+    ["友達との約束です。", "との"],
+  ]) {
+    if (!sentence || !surface) throw Error("Missing grammar fixture");
+    const found = declaredGrammarDetector
+      .detect(sentence)
+      .find((item) => item.canonicalForm === "Particle + の");
+    expect(found).toBeDefined();
+    const span = found?.spans[0];
+    expect(span && sentence.slice(span.start, span.end)).toBe(surface);
+  }
+});
+
 test("the declared detector covers every frozen grammar construction", () => {
   expect(new Set(declaredGrammarForms).size).toBe(315);
   for (const fixture of holdoutFixtures) {

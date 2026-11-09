@@ -218,6 +218,59 @@ describe("a word is the word however the sentence uses it", () => {
     ).toMatchObject({ ok: true });
   });
 
+  test("adverb-capable temporal nouns can be the target of a sentence", async () => {
+    for (const [lemma, reading] of [
+      ["次回", "じかい"],
+      ["昼", "ひる"],
+    ]) {
+      if (!lemma || !reading) throw Error("Missing fixture word");
+      const card = vocabularyCard(lemma, reading, "noun", "time of an event");
+      expect(
+        await validate({
+          value: material(`${lemma}です。`, lemma, card),
+          mode: "teach",
+          card,
+          knowledge: knowing([], BACKGROUND),
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  test("a correctly typed rounded-eye adjective and particle noun modifier validate", async () => {
+    const adjective = vocabularyCard(
+      "つぶらだ",
+      "つぶら",
+      "adjective",
+      "round and cute eyes",
+    );
+    expect(
+      await validate({
+        value: material("つぶらな目です。", "つぶら", adjective),
+        mode: "teach",
+        card: adjective,
+        knowledge: knowing(
+          [{ lemma: "目", reading: "め", partOfSpeech: "noun" }],
+          BACKGROUND,
+        ),
+      }),
+    ).toMatchObject({ ok: true });
+    const grammar = grammarCard("Particle + の");
+    expect(
+      await validate({
+        value: material("友達からの手紙です。", "からの", grammar),
+        mode: "teach",
+        card: grammar,
+        knowledge: knowing(
+          [
+            { lemma: "友達", reading: "ともだち", partOfSpeech: "noun" },
+            { lemma: "手紙", reading: "てがみ", partOfSpeech: "noun" },
+          ],
+          [...BACKGROUND, "から", "の"],
+        ),
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   test("a な-adjective Card matches whether or not it writes the copula", async () => {
     // Kuromoji lemmatizes 真剣 in 真剣な as 真剣だ, and the token side has
     // always been stripped to meet a Card claiming the bare stem. Cards

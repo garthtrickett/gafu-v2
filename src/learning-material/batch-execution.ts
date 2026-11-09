@@ -131,16 +131,8 @@ export function createBatchExecution(o: Options) {
         terminal(batchId, "dispatchUncertain", at, true);
         return ok(undefined);
       }
-      if (
-        job &&
-        job.phase !== "recovering" &&
-        job.response_json === null &&
-        now.getTime() - Date.parse(job.dispatched_at) >= DEADLINE
-      ) {
-        // A timeout does not prove the accepted remote request stopped or was never charged.
-        terminal(batchId, "dispatchUncertain", at, true);
-        return ok(undefined);
-      }
+      const overdue =
+        job !== null && now.getTime() - Date.parse(job.dispatched_at) >= DEADLINE;
       const lane = control();
       if (lane.provider_identity === o.providerBinding && lane.blocked_reason) {
         if (!lane.retry_at || lane.retry_at > at) return ok(undefined);
@@ -248,7 +240,11 @@ export function createBatchExecution(o: Options) {
       if (job.response_json === null) {
         const polled = await batch.poll(job.job_id, policy.signal);
         if (!polled.ok) {
-          if (job.phase === "recovering" || polled.error.kind === "dispatchUncertain") {
+          if (
+            job.phase === "recovering" ||
+            polled.error.kind === "dispatchUncertain" ||
+            (overdue && transient.has(polled.error.kind))
+          ) {
             terminal(batchId, "dispatchUncertain", at, true);
             return ok(undefined);
           }
@@ -278,7 +274,51 @@ export function createBatchExecution(o: Options) {
           return ok(undefined);
         }
         if (polled.value.status === "pending") {
-          if (job.phase === "recovering")
+          if (
+            overdue &&
+            polled.value.phase === "queued" &&
+            batch.cancel &&
+            policy.allowDispatch !== false
+          ) {
+            const cancelled = await batch.cancel(job.job_id, policy.signal);
+            if (!cancelled.ok || cancelled.value.status === "pending") {
+              terminal(batchId, "dispatchUncertain", at, true);
+              return ok(undefined);
+            }
+            if (cancelled.value.status === "cancelled") {
+              const cancelledJobId = job.job_id;
+              db.transaction(() => {
+                db.query(
+                  "UPDATE review_batch_attempt SET disposition='cancelled' WHERE batch_id=? AND provider_job_id=?",
+                ).run(batchId, cancelledJobId);
+                const count = db
+                  .query(
+                    "SELECT count(*) AS count FROM review_batch_attempt WHERE batch_id=? AND disposition='cancelled'",
+                  )
+                  .get(batchId) as { count: number };
+                if (count.count >= MAX_REVIEW_BATCH_ROUNDS) {
+                  terminal(batchId, "timeout", at);
+                } else {
+                  db.query("DELETE FROM review_batch_job WHERE batch_id=?").run(
+                    batchId,
+                  );
+                  db.query(
+                    "UPDATE review_batch SET retry_at=?,blocked_reason=NULL WHERE batch_id=?",
+                  ).run(new Date(o.clock().getTime() + 60_000).toISOString(), batchId);
+                }
+              })();
+              return ok(undefined);
+            }
+            db.query(
+              "UPDATE review_batch_job SET response_json=?,phase='validating' WHERE batch_id=? AND owner_token=?",
+            ).run(JSON.stringify(cancelled.value.items), batchId, o.ownerToken);
+            // Continue through the same durable validation path next tick.
+            return ok(undefined);
+          }
+          // Check the saved ID before declaring a timeout. It may have finished
+          // while the app was offline; completed work can be validated for free.
+          // A still-pending request remains uncertain and is never bought twice.
+          if (job.phase === "recovering" || overdue)
             terminal(batchId, "dispatchUncertain", at, true);
           return ok(undefined);
         }

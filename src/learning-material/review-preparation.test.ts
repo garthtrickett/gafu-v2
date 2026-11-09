@@ -613,6 +613,259 @@ test("known provider IDs get one recovery retrieval instead of a new dispatch af
   }
 });
 
+test("an overdue completed provider request is retrieved before it can be marked uncertain", async () => {
+  const app = setup({ count: 1 });
+  try {
+    await app.drain(2);
+    expect(app.calls.sizes).toEqual([1]);
+    app.clock.set("2026-11-08T10:16:00.000Z");
+    await app.drain(5);
+    expect(app.calls.sizes).toEqual([1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 1, blocked: 0, preparing: 0 },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("an overdue queued request is replaced only after confirmed cancellation", async () => {
+  const base = providerFixture(),
+    batch = base.provider.batch;
+  if (!batch) throw Error("No batch");
+  let queued = true,
+    cancelled = 0;
+  const app = setup({
+    count: 1,
+    provider: {
+      ...base.provider,
+      batch: {
+        ...batch,
+        poll: (...args) =>
+          queued
+            ? Promise.resolve(ok({ status: "pending", phase: "queued" }))
+            : batch.poll(...args),
+        cancel: async () => {
+          cancelled++;
+          queued = false;
+          return ok({ status: "cancelled" });
+        },
+      },
+    },
+  });
+  try {
+    await app.drain(2);
+    app.clock.set("2026-11-08T10:16:00.000Z");
+    await app.runner.tick();
+    expect(cancelled).toBe(1);
+    expect(base.calls.sizes).toEqual([1]);
+    app.clock.set("2026-11-08T10:17:01.000Z");
+    await app.drain(5);
+    expect(base.calls.sizes).toEqual([1, 1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 1, blocked: 0 },
+    });
+    const raw = new Database(app.path, { readonly: true });
+    expect(
+      raw
+        .query(
+          "SELECT provider_job_id FROM review_batch_attempt WHERE disposition='cancelled'",
+        )
+        .all(),
+    ).toHaveLength(1);
+    raw.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test("an ambiguous cancellation never authorizes a replacement", async () => {
+  const base = providerFixture(),
+    batch = base.provider.batch;
+  if (!batch) throw Error("No batch");
+  const app = setup({
+    count: 1,
+    provider: {
+      ...base.provider,
+      batch: {
+        ...batch,
+        poll: async () => ok({ status: "pending", phase: "queued" }),
+        cancel: async () =>
+          err({ kind: "timeout", detail: "Cancellation response lost" }),
+      },
+    },
+  });
+  try {
+    await app.drain(2);
+    app.clock.set("2026-11-08T10:16:00.000Z");
+    await app.drain(6);
+    expect(base.calls.sizes).toEqual([1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 0, blocked: 1, preparing: 0 },
+    });
+    expect(app.material.preparationState()).toMatchObject({
+      ok: true,
+      value: { uncertainCardIds: { length: 1 } },
+    });
+    const state = app.material.preparationState();
+    if (!state.ok || !state.value.uncertainBatches[0])
+      throw Error("No uncertain request");
+    const batchId = state.value.uncertainBatches[0];
+    const raw = new Database(app.path);
+    raw
+      .query(
+        "INSERT INTO review_batch_attempt(id,batch_id,created_at,disposition,provider_job_id) VALUES ('prior-cancel',?,?,'cancelled','old-queued-id')",
+      )
+      .run(batchId, app.clock.now().toISOString());
+    expect(app.material.retryUncertainBatch(batchId).ok).toBe(true);
+    expect(
+      raw
+        .query("SELECT disposition FROM review_batch_attempt WHERE id='prior-cancel'")
+        .get(),
+    ).toEqual({ disposition: "cancelled" });
+    raw.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test("queue cancellations are bounded and automatic opt-out prevents cancellation and replacement", async () => {
+  const base = providerFixture(),
+    batch = base.provider.batch;
+  if (!batch) throw Error("No batch");
+  let cancelled = 0;
+  const provider: MaterialProvider = {
+    ...base.provider,
+    batch: {
+      ...batch,
+      poll: async () => ok({ status: "pending", phase: "queued" }),
+      cancel: async () => {
+        cancelled++;
+        return ok({ status: "cancelled" });
+      },
+    },
+  };
+  const app = setup({ count: 1, provider });
+  try {
+    await app.drain(2);
+    for (let i = 0; i < 3; i++) {
+      app.clock.set(new Date(app.clock.now().getTime() + 16 * 60_000).toISOString());
+      await app.runner.tick();
+      app.clock.set(new Date(app.clock.now().getTime() + 61_000).toISOString());
+      await app.drain(2);
+    }
+    expect(cancelled).toBe(3);
+    expect(base.calls.sizes).toEqual([1, 1, 1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { blocked: 1, preparing: 0 },
+    });
+  } finally {
+    await app.close();
+  }
+  const off = setup({ count: 1, provider });
+  try {
+    await off.drain(2);
+    off.study.setPreferences({ automaticPreparation: "off" });
+    off.clock.set("2026-11-08T10:16:00.000Z");
+    await off.drain(4);
+    expect(cancelled).toBe(3);
+    expect(base.calls.sizes).toEqual([1, 1, 1, 1]);
+  } finally {
+    await off.close();
+  }
+});
+
+test("completion racing queued cancellation preserves the result without another dispatch", async () => {
+  const base = providerFixture(),
+    batch = base.provider.batch;
+  if (!batch) throw Error("No batch");
+  const app = setup({
+    count: 1,
+    provider: {
+      ...base.provider,
+      batch: {
+        ...batch,
+        poll: async () => ok({ status: "pending", phase: "queued" }),
+        cancel: (...args) => batch.poll(...args),
+      },
+    },
+  });
+  try {
+    await app.drain(2);
+    app.clock.set("2026-11-08T10:16:00.000Z");
+    await app.drain(5);
+    expect(base.calls.sizes).toEqual([1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 1, blocked: 0 },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("a manual retry counts as preparing while its previous cooldown is still present", async () => {
+  const app = setup({ count: 1 });
+  try {
+    const id = app.input().card.id;
+    const raw = new Database(app.path);
+    raw
+      .query("INSERT INTO review_batch_cooldown(card_id,failed_at) VALUES (?,?)")
+      .run(id, app.clock.now().toISOString());
+    raw.close();
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { blocked: 1, preparing: 0 },
+    });
+    expect((await app.runner.request("manual")).ok).toBe(true);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { blocked: 0, preparing: 1 },
+    });
+    await app.drain(5);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { blocked: 0, preparing: 0, ready: 1 },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("corrected Card content can clear only that Card's prior failure cooldown", async () => {
+  const app = setup({ count: 2 });
+  try {
+    const due = app.study.duePreparationSnapshot();
+    if (!due.ok || !due.value.due[0] || !due.value.due[1])
+      throw Error("No fixture cards");
+    const first = due.value.due[0].card,
+      second = due.value.due[1].card;
+    const raw = new Database(app.path);
+    for (const card of [first, second])
+      raw
+        .query("INSERT INTO review_batch_cooldown(card_id,failed_at) VALUES (?,?)")
+        .run(card.id, app.clock.now().toISOString());
+    raw.close();
+    expect(
+      app.study.updateCard(first.id, { ...first.content, meaning: "corrected meaning" })
+        .ok,
+    ).toBe(true);
+    expect(app.material.resetPreparationFailure(first.id).ok).toBe(true);
+    await app.drain(5);
+    expect(app.calls.sizes).toEqual([1]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 1, blocked: 1 },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("obsolete uncertain work releases claims without deleting remote recovery evidence", async () => {
   const app = setup({ count: 1 });
   try {
