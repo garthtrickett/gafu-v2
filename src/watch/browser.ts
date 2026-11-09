@@ -3,6 +3,7 @@ import { live } from "lit-html/directives/live.js";
 import coreLicenseUrl from "../../licenses/ffmpeg-core-gpl-2.0.txt?url";
 import wrapperLicenseUrl from "../../licenses/ffmpeg-wrapper-mit.txt?url";
 import { mutationHeaders } from "../local-api.ts";
+import { themeToggle } from "../theme.ts";
 import type {
   CaptureCandidate,
   CaptureOutcome,
@@ -733,6 +734,7 @@ export const mountWatchApp = (root: HTMLElement): (() => void) => {
             </p>
           </div>
           <div class="button-row">
+            ${themeToggle()}
             <a class="secondary button-link" href="?view=prepare">Prepare</a>
             <a class="secondary button-link" href="/">Study</a>
           </div>

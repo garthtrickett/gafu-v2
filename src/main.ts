@@ -1,5 +1,8 @@
 import { mountStudyApp } from "./study/browser.ts";
+import { installThemeSync } from "./theme.ts";
 import "./style.css";
+
+installThemeSync();
 
 const app = document.querySelector<HTMLElement>("#app");
 if (app === null) {

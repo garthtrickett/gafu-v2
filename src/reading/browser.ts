@@ -2,6 +2,7 @@ import { html, render, type TemplateResult } from "lit-html";
 import { createJishoLookup } from "../dictionary/lookup-panel.ts";
 import { mutationHeaders } from "../local-api.ts";
 import { sentencePieces } from "../study/furigana.ts";
+import { themeToggle } from "../theme.ts";
 import type { Reading, ReadingSentence, TaleWord } from "./contracts.ts";
 
 type TaleListing = Readonly<{
@@ -314,6 +315,7 @@ export const mountReadingApp = (root: HTMLElement): void => {
         <p class="hint">Highlight a word, then press Alt (Option on Mac) for Jisho.</p>
       </div>
       <nav class="button-row">
+        ${themeToggle()}
         <a class="button-link secondary" href="/">Study</a>
         ${
           model.reading === null
