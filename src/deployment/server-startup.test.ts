@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -201,6 +202,39 @@ describe("public deployment composition", () => {
       expect(await knowledge.json()).toMatchObject({
         baseline: { availability: "available", enabledCount: 1, entries: [{}] },
       });
+
+      // A successful void domain operation must still acknowledge over HTTP.
+      // Otherwise recovery commits but the learner sees 500 and may retry it.
+      const database = new Database(databasePath);
+      try {
+        database
+          .query(
+            "INSERT INTO review_batch(batch_id,knowledge_json,created_at) VALUES ('saved-request','{}',?)",
+          )
+          .run(new Date().toISOString());
+        database
+          .query(
+            "INSERT INTO review_batch_job(batch_id,job_id,dispatched_at,phase) VALUES ('saved-request','saved-provider-id',?,'uncertain')",
+          )
+          .run(new Date().toISOString());
+      } finally {
+        database.close();
+      }
+      const recovered = await fetch(`${origin}/api/study/preparation/recover`, {
+        method: "POST",
+        headers: {
+          cookie: cookie ?? "",
+          "Content-Type": "application/json",
+          "X-Gafu-Request": "gafu-v2",
+        },
+        body: JSON.stringify({
+          batchId: "saved-request",
+          confirmDuplicateCost: true,
+          confirmProviderChange: true,
+        }),
+      });
+      expect(recovered.status).toBe(200);
+      expect(await recovered.json()).toEqual({ ok: true });
     } finally {
       child.kill("SIGTERM");
       await child.exited;
