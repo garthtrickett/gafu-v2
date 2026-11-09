@@ -5,6 +5,7 @@ import type {
   PlanSnapshot,
   PlanSummary,
 } from "../preparation-plan-contracts.ts";
+import { themeToggle } from "../theme.ts";
 import type {
   AnalysisPreflight,
   EvidencePage,
@@ -1011,7 +1012,7 @@ export const mountPreparationApp = (root: HTMLElement): void => {
       html`<main class="study-shell prepare-shell">
         <header class="hero">
           <div><p class="eyebrow">Gafu V2 · Preparation</p><h1>Find the Japanese between you and the show.</h1><p class="lede">Import locally, inspect the scope, then deliberately analyze subtitle text.</p></div>
-          <a class="secondary button-link" href="/">Study</a>
+          <div class="button-row">${themeToggle()}<a class="secondary button-link" href="/">Study</a></div>
         </header>
         <p class="notice notice--${model.messageKind}" role="status">${model.message}</p>
         <section class="prepare-grid">

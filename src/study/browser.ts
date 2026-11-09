@@ -7,6 +7,7 @@ import type {
   ReviewBatchProgress,
 } from "../learning-material/generated-contracts.ts";
 import { mutationHeaders } from "../local-api.ts";
+import { themeToggle } from "../theme.ts";
 import type {
   AnswerOutcome,
   CardContent,
@@ -1601,6 +1602,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
             </p>
           </div>
           <div class="button-row">
+            ${themeToggle()}
             <a class="secondary button-link" href="?view=read">Read a tale</a>
             <a class="secondary button-link" href="?view=watch">Watch</a>
             <a class="secondary button-link" href="?view=prepare">Prepare a show</a>

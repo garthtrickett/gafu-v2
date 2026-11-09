@@ -247,3 +247,92 @@ test("native fullscreen and short viewports keep study and its exit reachable", 
     page.getByRole("button", { name: "Maximise study", exact: true }),
   ).toBeFocused();
 });
+
+test("light theme is readable in maximised study and persists across views and reloads", async ({
+  page,
+}, testInfo) => {
+  await openSession(page);
+  const toggle = page.getByRole("button", { name: "Light theme", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Maximise study", exact: true }).click();
+  await page.getByRole("button", { name: "Explanation", exact: true }).click();
+  await expect(page.getByTestId("material-answer")).toBeVisible();
+  const contrasts = await page.locator(".presentation").evaluate((presentation) => {
+    const luminance = (color: string): number => {
+      const rgb = (color.match(/[\d.]+/gu) ?? []).slice(0, 3).map((value) => {
+        const channel = Number(value) / 255;
+        return channel <= 0.04045
+          ? channel / 12.92
+          : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return (rgb[0] ?? 0) * 0.2126 + (rgb[1] ?? 0) * 0.7152 + (rgb[2] ?? 0) * 0.0722;
+    };
+    return [".context", ".japanese", ".target", "rt", ".answer-target strong"].map(
+      (selector) => {
+        const element = presentation.querySelector(selector);
+        if (!element) throw new Error(`Missing ${selector}`);
+        let ancestor: Element | null = element;
+        while (
+          ancestor &&
+          getComputedStyle(ancestor).backgroundColor === "rgba(0, 0, 0, 0)"
+        ) {
+          ancestor = ancestor.parentElement;
+        }
+        if (!ancestor) throw new Error("No opaque study background");
+        const a = luminance(getComputedStyle(element).color);
+        const b = luminance(getComputedStyle(ancestor).backgroundColor);
+        return { selector, ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+      },
+    );
+  });
+  for (const { selector, ratio } of contrasts) {
+    expect(
+      ratio,
+      `${selector} must stay readable on its light background`,
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+  await page.screenshot({ path: testInfo.outputPath("light-study.png") });
+  await page.getByRole("button", { name: "Exit maximised study", exact: true }).click();
+  for (const view of ["read", "watch", "prepare"]) {
+    await page.goto(`/?view=${view}`);
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+  }
+  await toggle.click();
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+});
+
+test("theme still switches when browser storage is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem;
+    const set = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) {
+      if (key === "gafu-theme")
+        throw new DOMException("Storage blocked", "SecurityError");
+      return get.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "gafu-theme")
+        throw new DOMException("Storage blocked", "SecurityError");
+      set.call(this, key, value);
+    };
+  });
+  await page.goto("/");
+  const toggle = page.getByRole("button", { name: "Light theme", exact: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
