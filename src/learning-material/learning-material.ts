@@ -939,7 +939,7 @@ export const openLearningMaterial = (
         database.transaction(() => {
           database
             .query(
-              "UPDATE review_batch_attempt SET disposition='explicitly-retried' WHERE batch_id=? AND disposition!='settled'",
+              "UPDATE review_batch_attempt SET disposition='explicitly-retried' WHERE batch_id=? AND disposition NOT IN ('settled','cancelled')",
             )
             .run(batchId);
           if (row.job_id && !recovery.abandonKnownRequest)
@@ -1025,6 +1025,14 @@ export const openLearningMaterial = (
         return ok(new Set(rows.map((row) => row.card_id)));
       } catch (cause) {
         return err({ kind: "readFailed", detail: detail(cause) });
+      }
+    },
+    resetPreparationFailure: (cardId) => {
+      try {
+        database.query("DELETE FROM review_batch_cooldown WHERE card_id=?").run(cardId);
+        return ok(undefined);
+      } catch (cause) {
+        return err({ kind: "writeFailed", detail: detail(cause) });
       }
     },
     pendingReviewBatch: () => {

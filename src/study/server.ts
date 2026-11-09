@@ -933,9 +933,16 @@ const handleApi = async (
     const body = await readJson(request);
     if (body instanceof Response) return body;
     const content = decodeContent(card.type, body);
-    return content === null
-      ? invalidRequest("Card content does not match its immutable type.")
-      : jsonResult(study.updateCard(asCardId(cardId), content));
+    if (content === null)
+      return invalidRequest("Card content does not match its immutable type.");
+    const updated = study.updateCard(asCardId(cardId), content);
+    if (!updated.ok) return failureResponse(updated.error);
+    // Resaving also retries cleanup if the Card edit committed before a
+    // previous failure-pause reset failed. Study progress remains unchanged.
+    const reset = material.resetPreparationFailure(asCardId(cardId));
+    if (!reset.ok) return materialResponse(reset);
+    preparation.wake();
+    return Response.json(updated.value);
   }
   const stateMatch = url.pathname.match(/^\/api\/study\/cards\/([^/]+)\/state$/u);
   if (request.method === "POST" && stateMatch !== null) {

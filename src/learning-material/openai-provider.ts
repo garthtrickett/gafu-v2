@@ -736,7 +736,33 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
         }
         const decoded = decodeTerminalJson(polled.value.value);
         if ("failure" in decoded) return err(decoded.failure);
+        if ("pending" in decoded) {
+          const phase = isRecord(polled.value.value)
+            ? polled.value.value["status"]
+            : undefined;
+          return ok({
+            status: "pending",
+            ...(phase === "queued" || phase === "in_progress" ? { phase } : {}),
+          });
+        }
+        return ok({ status: "complete", items: decodeBatchItems(decoded.value) });
+      },
+      cancel: async (jobId, outerSignal) => {
+        const cancelled = await call(
+          `https://api.openai.com/v1/responses/${encodeURIComponent(jobId)}/cancel`,
+          { method: "POST", headers: { "Content-Type": "application/json" } },
+          outerSignal,
+        );
+        if (!cancelled.ok) return cancelled;
+        if ("notFound" in cancelled.value) return err({ kind: "dispatchUncertain" });
+        const body = cancelled.value.value;
+        if (!isRecord(body) || body["id"] !== jobId)
+          return err({ kind: "dispatchUncertain" });
+        if (body["status"] === "cancelled") return ok({ status: "cancelled" });
+        const decoded = decodeTerminalJson(body);
+        if ("failure" in decoded) return err(decoded.failure);
         if ("pending" in decoded) return ok({ status: "pending" });
+        // Completion can race cancellation; retain the finished work instead.
         return ok({ status: "complete", items: decodeBatchItems(decoded.value) });
       },
     },

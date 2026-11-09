@@ -100,7 +100,7 @@ export type MaterialBatchItem = Readonly<{
 }>;
 
 export type MaterialBatchPoll =
-  | { readonly status: "pending" }
+  | { readonly status: "pending"; readonly phase?: "queued" | "in_progress" }
   | { readonly status: "complete"; readonly items: readonly MaterialBatchItem[] };
 
 /**
@@ -119,6 +119,16 @@ export type MaterialBatch = Readonly<{
     jobId: string,
     signal?: AbortSignal,
   ) => Promise<Result<MaterialBatchPoll, MaterialProviderFailure>>;
+  /** A replacement is safe only after the provider confirms cancellation. */
+  cancel?: (
+    jobId: string,
+    signal?: AbortSignal,
+  ) => Promise<
+    Result<
+      MaterialBatchPoll | { readonly status: "cancelled" },
+      MaterialProviderFailure
+    >
+  >;
 }>;
 
 export type MaterialProvider = Readonly<{
@@ -288,6 +298,8 @@ export type LearningMaterial = Readonly<{
   >;
   /** Cards whose failed generation should not be bought again by a hidden tab. */
   backgroundRetryBlockedCards: () => Result<ReadonlySet<CardId>, MaterialFailure>;
+  /** Clear a stale failure pause after Study commits corrected Card content. */
+  resetPreparationFailure: (cardId: CardId) => Result<void, MaterialFailure>;
   beginReviewBatch: (
     cards: readonly PrepareMaterial[],
     options?: Readonly<{

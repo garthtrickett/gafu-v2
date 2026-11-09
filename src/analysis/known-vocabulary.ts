@@ -60,6 +60,15 @@ export const wordForms = (token: AnalyzedToken): readonly WordForm[] => {
     { lemma: bare, partOfSpeech: token.broadPartOfSpeech, inflectsWithSuru: false },
   ];
   const tags = token.partOfSpeech;
+  // IPADIC marks temporal nouns such as 次回 and 昼 as 名詞/副詞可能.
+  // Their adverbial use does not turn a learned noun into a different word.
+  if (
+    token.broadPartOfSpeech === "adverb" &&
+    tags.includes("名詞") &&
+    tags.includes("副詞可能")
+  ) {
+    forms.push({ lemma: bare, partOfSpeech: "noun", inflectsWithSuru: false });
+  }
   if (token.broadPartOfSpeech === "adjective" && tags.includes("形容動詞語幹")) {
     forms.push({ lemma: bare, partOfSpeech: "noun", inflectsWithSuru: false });
   }
