@@ -510,6 +510,92 @@ test("an unused permit loses authority when the Card changes before a direct ans
   }
 });
 
+test("an ungraded review reopens after a knowledge correction revalidates its sentence", async () => {
+  const app = setup({ count: 1 });
+  try {
+    await app.drain(5);
+    let input = app.input();
+    const taught = await app.material.prepare(input);
+    if (!taught.ok) throw Error("No teaching");
+    app.material.acknowledgeTeaching(input.card.id, taught.value.id);
+    app.study.recordTeaching(input.card.id);
+    await app.drain(5);
+    input = app.input();
+    const review = await app.material.prepare(input);
+    if (!review.ok || !review.value.permit) throw Error("No review");
+    app.clock.set("2026-11-08T11:00:00.000Z");
+    expect(app.study.setBaselineWordEnabled("inu", false).ok).toBe(true);
+    const current = app.input(input.card.id);
+    expect(await app.material.checkReserves(current)).toMatchObject({ ok: true });
+    expect(app.runner.status()).toMatchObject({ ok: true, value: { ready: 1 } });
+    expect(
+      app.study.answer({
+        cardId: input.card.id,
+        grade: "good",
+        permit: review.value.permit,
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "presentationInvalid" } });
+    const restored = await app.material.prepare(current);
+    if (!restored.ok || !restored.value.permit) throw Error("No recovered review");
+    expect(restored.value.id).toBe(review.value.id);
+    expect(restored.value.permit.token).not.toBe(review.value.permit.token);
+    expect(restored.value.permit.expiresAt).toBe(review.value.permit.expiresAt);
+    const repeated = await app.material.prepare(current);
+    if (!repeated.ok) throw Error("No repeated review");
+    expect(repeated.value.permit).toEqual(restored.value.permit);
+    expect(
+      app.study.answer({
+        cardId: input.card.id,
+        grade: "good",
+        permit: restored.value.permit,
+      }).ok,
+    ).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a review invalidated by a knowledge correction is not reopened", async () => {
+  let reject = false;
+  const app = setup({
+    count: 1,
+    validate: async ({ value }) =>
+      reject
+        ? err({ kind: "validationRejected", reasons: ["unknownVocabulary"] })
+        : ok(value as GeneratedMaterial),
+  });
+  try {
+    await app.drain(5);
+    let input = app.input();
+    const taught = await app.material.prepare(input);
+    if (!taught.ok) throw Error("No teaching");
+    app.material.acknowledgeTeaching(input.card.id, taught.value.id);
+    app.study.recordTeaching(input.card.id);
+    await app.drain(5);
+    input = app.input();
+    const review = await app.material.prepare(input);
+    if (!review.ok || !review.value.permit) throw Error("No review");
+    app.clock.set("2026-11-08T11:00:00.000Z");
+    expect(app.study.setBaselineWordEnabled("inu", false).ok).toBe(true);
+    reject = true;
+    const current = app.input(input.card.id);
+    expect(await app.material.checkReserves(current)).toEqual({
+      ok: true,
+      value: false,
+    });
+    expect(await app.material.prepare(current)).toMatchObject({
+      ok: false,
+      error: { kind: "teachingNotPrepared" },
+    });
+    expect(app.runner.status()).toMatchObject({ ok: true, value: { ready: 0 } });
+    const raw = new Database(app.path, { readonly: true });
+    expect(raw.query("SELECT * FROM review_event").all()).toHaveLength(0);
+    raw.close();
+  } finally {
+    await app.close();
+  }
+});
+
 test("legacy issued review recovery precedes taking another reserve and keeps its original expiry", async () => {
   const app = setup({ count: 1 });
   try {
