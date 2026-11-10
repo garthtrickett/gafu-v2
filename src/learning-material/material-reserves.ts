@@ -188,16 +188,17 @@ export function createMaterialReserves(o: Options) {
           if (!row && mode === "teach")
             row = available.find((r) => r.shown_at !== null);
           if (!row && mode === "review") {
-            // A legacy permit has no authority to grade, but its ungraded material can be recovered locally.
-            const legacy = permits(input.card.id).find(
+            // An older-context permit cannot grade, but its ungraded sentence
+            // can be reopened after check() validates it against current knowledge.
+            const previous = permits(input.card.id).find(
               (p) =>
-                p.context_json === null &&
+                !contextMatches(p.context_json, input) &&
                 available.some((r) => r.id === p.presentation_id) &&
                 (!input.card.lastReviewedAt || p.issued_at > input.card.lastReviewedAt),
             );
-            if (legacy) {
-              row = available.find((r) => r.id === legacy.presentation_id);
-              if (row) permit = issue(row, input, new Date(legacy.issued_at));
+            if (previous) {
+              row = available.find((r) => r.id === previous.presentation_id);
+              if (row) permit = issue(row, input, new Date(previous.issued_at));
             }
           }
           if (!row) row = available.find((r) => r.shown_at === null);
