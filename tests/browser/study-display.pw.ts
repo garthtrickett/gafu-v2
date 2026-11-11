@@ -4,19 +4,25 @@ import { asCardId } from "../../src/study/contracts.ts";
 
 // Exercise display changes with a saved session at the browser/server seam.
 // These fixtures never write fake permits or Cards to the shared Study server.
-const openSession = async (page: Page): Promise<void> => {
+const openSession = async (
+  page: Page,
+  mode: "teach" | "review" = "review",
+): Promise<void> => {
   const items: PreparedMaterial[] = [1, 2].map((number) => ({
     id: `display-review-${number}`,
     cardId: asCardId(`display-card-${number}`),
-    mode: "review",
+    mode,
     source: "generated",
     audioUrl: null,
-    permit: {
-      token: `display-permit-${number}`,
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    },
+    permit:
+      mode === "teach"
+        ? null
+        : {
+            token: `display-permit-${number}`,
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
     material: {
-      mode: "review",
+      mode,
       targetKind: "vocabulary",
       context: `Scene ${number}: Two friends are looking for their cat near the river. One friend asks whether it has already gone home.`,
       prompt: "What does the sentence mean?",
@@ -37,7 +43,10 @@ const openSession = async (page: Page): Promise<void> => {
         { written: "かな。", reading: "かな。" },
       ],
       target: { lemma: "猫", reading: "ねこ", partOfSpeech: "noun", meaning: "cat" },
-      answer: "I wonder if the cat has already gone home.",
+      answer:
+        mode === "teach"
+          ? `Teaching answer ${number}`
+          : "I wonder if the cat has already gone home.",
       explanation: "The speaker wonders where the cat has gone.",
       usageNote: "A familiar, conversational question.",
     },
@@ -77,8 +86,57 @@ const openSession = async (page: Page): Promise<void> => {
     database.close();
   }, items);
   await page.reload();
-  await expect(page.locator(".presentation .context")).toContainText("Scene 1:");
+  if (mode === "teach") await expect(page.getByText("Teaching answer 1")).toBeVisible();
+  else await expect(page.locator(".presentation .context")).toContainText("Scene 1:");
 };
+
+test("N advances a teaching Card once and ignores editing or repeated keys", async ({
+  page,
+}) => {
+  const acknowledged: string[] = [];
+  await page.route("**/api/study/session/teach", async (route) => {
+    acknowledged.push(route.request().postDataJSON().cardId as string);
+    await route.fulfill({ json: {} });
+  });
+  await openSession(page, "teach");
+  const button = page.getByRole("button", { name: "Seen it — next Card", exact: true });
+  await expect(button).toHaveAttribute("aria-keyshortcuts", "n");
+  const search = page.getByLabel("Search", { exact: true });
+  await search.fill("");
+  await search.press("n");
+  await expect(search).toHaveValue("n");
+  await expect(page.getByText("Teaching answer 1")).toBeVisible();
+  await page.evaluate(() => {
+    const editable = document.createElement("div");
+    editable.contentEditable = "true";
+    document.body.append(editable);
+    editable.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true }));
+    editable.remove();
+    for (const options of [{ repeat: true }, { isComposing: true }, { ctrlKey: true }])
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "n", bubbles: true, ...options }),
+      );
+  });
+  await expect(page.getByText("Teaching answer 1")).toBeVisible();
+  await page.locator(".presentation .japanese").click();
+  await page.keyboard.press("n");
+  await expect(page.getByText("Teaching answer 2")).toBeVisible();
+  await expect.poll(() => acknowledged.length).toBe(1);
+  expect(acknowledged).toEqual(["display-card-1"]);
+  await button.click();
+  await expect.poll(() => acknowledged.length).toBe(2);
+  expect(acknowledged).toEqual(["display-card-1", "display-card-2"]);
+  await expect(page.getByTestId("syncing")).toHaveCount(0);
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("N does not skip or grade a review", async ({ page }) => {
+  await openSession(page);
+  await page.locator(".presentation .context").click();
+  await page.keyboard.press("n");
+  await expect(page.locator(".presentation .context")).toContainText("Scene 1:");
+  await expect(page.getByRole("button", { name: "Explanation" })).toBeVisible();
+});
 
 const expectViewportLayout = async (page: Page): Promise<void> => {
   const layout = await page.locator(".study-shell").evaluate((element) => {
