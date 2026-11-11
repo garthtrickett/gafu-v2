@@ -813,6 +813,22 @@ export const mountStudyApp = (root: HTMLElement): void => {
     // Typing fields keep their letters; a focused button does not need them.
     if (target?.matches("input, select, textarea")) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    // A held key must not acknowledge several first exposures in a row.
+    if (
+      event.key === "n" &&
+      !event.defaultPrevented &&
+      !event.repeat &&
+      !event.isComposing &&
+      !target?.closest(
+        "[contenteditable]:not([contenteditable='false']), [role='textbox']",
+      ) &&
+      model.presentation?.mode === "teach" &&
+      !model.busy
+    ) {
+      event.preventDefault();
+      finishTeaching();
+      return;
+    }
     if (event.key === "r") {
       event.preventDefault();
       replayAudio();
@@ -1510,7 +1526,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
                                 <p class="answer-copy">${presentation.material.explanation}</p>
                                 <p class="answer-copy">${presentation.material.usageNote}</p>
                               </div>
-                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy}>Seen it — next Card</button>`
+                              <button type="button" @click=${finishTeaching} ?disabled=${model.busy} aria-keyshortcuts="n" title="Seen it — next Card (N)">Seen it — next Card <kbd aria-hidden="true">N</kbd></button>`
                             : model.revealed
                               ? html`<div class="answer" data-testid="material-answer">
                                   ${targetGloss(presentation.material)}
