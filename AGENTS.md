@@ -35,3 +35,8 @@ For English context followed by Japanese conversations, read
 learned-language constraint, scene writing, exact-script audits, resumable speech,
 audio checks, and verified phone delivery. These playlists introduce no planned
 new vocabulary or grammar.
+
+For adaptations of real podcast conversations to the learner's known bank, read
+[`docs/known-bank-podcast-dialogues.md`](docs/known-bank-podcast-dialogues.md).
+Preserve source sentence patterns where supported, audit every substitution,
+and use the current Notes phone-media delivery procedure.
