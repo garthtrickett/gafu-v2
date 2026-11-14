@@ -6,6 +6,10 @@ original scenes; deterministic tools check the language, synthesize speech,
 assemble the track, and verify delivery. Speech synthesis does not write or
 translate the dialogue.
 
+For a companion adapted from a real podcast transcript, use
+[the known-bank podcast workflow](known-bank-podcast-dialogues.md). It preserves
+source sentence patterns where possible and records the changes explicitly.
+
 The learner's goal is to understand conversational Japanese through relaxed
 listening. Make the situation easy to picture, then let the Japanese carry the
 conversation. The audio should work without reading, pausing, answering a quiz,
@@ -171,21 +175,23 @@ before reusing an old launcher; preserve frozen historical evidence.
 
 ## 6. Deliver what the learner requested
 
-For the established phone setup, publish completed MP3/transcript files into
-`~/phone-media/japanese`, inside the existing **Phone media** Syncthing share.
-The `japanese` directory is a subfolder; creating it does not require a new
-Syncthing share or device pairing. Inspect the current share before changing it.
+Use the current Notes phone-media delivery procedure, detailed in
+[the podcast workflow's delivery section](known-bank-podcast-dialogues.md#7-deliver-to-the-phone)
+and the referenced Infra instructions. Publish completed MP3/transcript files
+with `phone-media-delivery publish ... --path 'japanese/...'` to reach the
+phone's existing `phone-media/japanese` folder. The old Syncthing share is
+retired and must remain paused; a copy in `~/phone-media/japanese` alone is not
+publication to the current Notes queue.
 
-Copy through temporary files and rename atomically, then trigger a scan of the
-subfolder. Publish the finished listening artifacts, not credentials, knowledge
-snapshots, checker scripts, or intermediate PCM. Preserve existing files.
-
-Verify the destination phone's completion and availability of the actual new
-files. The server's own folder completion can describe unrelated phone-origin
-files and is not proof of delivery. Say "ready to sync" if the phone has not
-received them; say "synced" only after verifying it has. For downloads instead,
-provide a link from the supported artifact host and verify it works before
-reporting delivery.
+Publish finished listening artifacts, not credentials, knowledge snapshots,
+checker scripts, or intermediate PCM. Record delivery IDs, sizes and checksums.
+Verify phone storage using the real matching receipt, and server cleanup using
+the normal acknowledgement. A push signal or server-side fetch is not phone
+delivery or playback evidence. Say "queued" while confirmation is pending; the
+learner can use Notes → Audio → Fetch media → Fetch now. Preserve pending files
+and existing phone state. For browser downloads, verify the actual audio bytes;
+tiny expired-link error documents and local filesystem links are not working
+download artifacts.
 
 Report the measured running time, scene count, knowledge snapshot date, and
 delivery location/status. Keep the user-facing handoff short.
