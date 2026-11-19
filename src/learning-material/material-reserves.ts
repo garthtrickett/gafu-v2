@@ -263,17 +263,17 @@ export function createMaterialReserves(o: Options) {
       const result = { teach: new Set<CardId>(), review: new Set<CardId>() };
       if (inputs) {
         // One query for the entire due scope; this path never validates or performs paid work.
+        // Build the current permit set once. A correlated EXISTS scanned the
+        // entire permit history again for every presentation on each status poll.
         const all = db
-          .query(`SELECT p.card_id,p.mode,p.context_json,p.shown_at,
-          EXISTS(SELECT 1 FROM presentation_permit q WHERE q.presentation_id=p.id AND q.issued_at>?) AS issued
-          FROM validated_presentation p WHERE coalesce(p.context_json,'')!='rejected'
-            AND (p.shown_at IS NULL OR p.mode='teach' OR issued=1)`)
+          .query(`SELECT card_id,mode,context_json
+          FROM validated_presentation WHERE coalesce(context_json,'')!='rejected'
+            AND (shown_at IS NULL OR mode='teach' OR id IN
+              (SELECT presentation_id FROM presentation_permit WHERE issued_at>?))`)
           .all(cutoff()) as {
           card_id: CardId;
           mode: MaterialMode;
           context_json: string | null;
-          shown_at: string | null;
-          issued: number;
         }[];
         const byId = new Map(inputs.map((input) => [input.card.id, input]));
         for (const row of all) {

@@ -173,6 +173,50 @@ test("closed-browser server preparation drains 95 targets as 20/20/20/20/15 and 
   }
 }, 15_000);
 
+test("readiness includes only the issued review whose own permit is current", async () => {
+  const app = setup({ count: 3 });
+  try {
+    await app.drain(5);
+    const due = app.study.duePreparationSnapshot();
+    if (!due.ok || due.value.due.length !== 3) throw Error("Missing fixture Cards");
+    const ids = due.value.due.map((item) => item.card.id);
+    for (const id of ids.slice(0, 2)) {
+      const taught = await app.material.prepare(app.input(id));
+      if (!taught.ok) throw Error(taught.error.kind);
+      app.material.acknowledgeTeaching(id, taught.value.id);
+      app.study.recordTeaching(id);
+    }
+    await app.drain(5);
+    for (const id of ids.slice(0, 2)) {
+      const issued = await app.material.prepare(app.input(id));
+      if (!issued.ok || !issued.value.permit) throw Error("Missing review permit");
+    }
+    const [expiredId, liveId, teachingId] = ids;
+    if (!expiredId || !liveId || !teachingId) throw Error("Missing fixture Card");
+    const raw = new Database(app.path);
+    try {
+      // Other unshown sentences would independently make this Card ready.
+      raw
+        .query(
+          "DELETE FROM validated_presentation WHERE card_id=? AND mode='review' AND shown_at IS NULL",
+        )
+        .run(expiredId);
+      raw
+        .query("UPDATE presentation_permit SET issued_at=? WHERE card_id=?")
+        .run("2026-11-07T10:00:00.000Z", expiredId);
+    } finally {
+      raw.close();
+    }
+    const flags = app.material.reserveFlags(ids.map((id) => app.input(id)));
+    expect(flags.ok && [...flags.value.review]).toEqual([liveId]);
+    expect(flags.ok && flags.value.teach.has(teachingId)).toBe(true);
+    // A current permit for another Card cannot make the expired review ready.
+    expect(app.runner.status()).toMatchObject({ ok: true, value: { ready: 2 } });
+  } finally {
+    await app.close();
+  }
+});
+
 test("server ticks never admit staged Cards, even across day rollover", async () => {
   const app = setup({ count: 3, admit: false });
   try {

@@ -371,11 +371,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
   // tiles: one small call instead of the whole Card listing.
   const refreshStatus = async (): Promise<void> => {
     if (model.snapshot === null) return refresh();
-    const counts =
-      await requestJson<Pick<BrowserSnapshot, "status" | "session">>(
-        "/api/study/status",
-      );
-    await preparationStatus.refresh();
+    const [counts] = await Promise.all([
+      requestJson<Pick<BrowserSnapshot, "status" | "session">>("/api/study/status"),
+      preparationStatus.refresh(),
+    ]);
     const before = model.snapshot.status;
     // A moved staged or active count means admission changed Card states,
     // which the bank listing also shows; only then is the full fetch owed.
@@ -395,7 +394,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   const run = async (
     operation: () => Promise<string>,
     pending?: { label: string; detail?: string },
-    scope: "bank" | "status" = "bank",
+    scope: "bank" | "status" | "session" = "bank",
   ): Promise<void> => {
     model.busy = true;
     let ticker: ReturnType<typeof setInterval> | null = null;
@@ -410,7 +409,9 @@ export const mountStudyApp = (root: HTMLElement): void => {
     draw();
     try {
       const message = await operation();
-      await (scope === "status" ? refreshStatus() : refresh());
+      // Opening banked Cards must not wait for unrelated dashboard reads.
+      if (scope === "session") void refreshStatus().then(draw, () => {});
+      else await (scope === "status" ? refreshStatus() : refresh());
       model.message = message;
       model.messageKind = "success";
     } catch (cause) {
@@ -967,7 +968,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
         );
       },
       { label: "Opening the prepared Cards…" },
-      "status",
+      "session",
     ).finally(() => {
       for (const id of offered) openingIds.delete(id);
       if (!batch.handedIds.includes(offered[0] ?? "")) failedToOpen();
@@ -1111,18 +1112,20 @@ export const mountStudyApp = (root: HTMLElement): void => {
     } | null = null;
     void run(
       async () => {
-        const stored = await requestJson<{ readyCardIds: readonly string[] }>(
-          "/api/study/preparation-status",
-        );
-        const batch = await requestJson<{ batchId: string; total: number }>(
-          "/api/study/review-batch",
-          { method: "POST", body: "{}" },
-        );
+        const [stored, batch] = await Promise.all([
+          requestJson<{ readyCardIds: readonly string[] }>(
+            "/api/study/preparation-status",
+          ),
+          requestJson<{ batchId: string; total: number }>("/api/study/review-batch", {
+            method: "POST",
+            body: "{}",
+          }),
+        ]);
         intent = { batch, ready: stored.readyCardIds };
         return `Preparing ${batch.total} Cards.`;
       },
       { label: "Starting a batch…" },
-      "status",
+      "session",
     ).then(() => {
       // Opening has its own progress state, after the intent request has settled.
       if (intent) {
