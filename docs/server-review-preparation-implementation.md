@@ -47,6 +47,11 @@ appears independently. A study batch opens at most twenty Cards.
 An active retry counts as preparing even if an earlier attempt's cooldown is
 still present. A validated reserve takes precedence over either state.
 
+Readiness checks build the current permit set once per query, rather than
+rescanning permit history for every saved presentation. Interactive batch
+intent and readiness reads overlap; opening banked Cards refreshes dashboard
+counts in the background so unrelated status requests cannot delay study.
+
 Vocabulary identity accepts IPADIC's `名詞/副詞可能` words as their noun
 identity as well as their adverbial use; arbitrary adverbs do not become nouns.
 `Particle + の` also detects noun modifiers such as `からの`, `への`, and
