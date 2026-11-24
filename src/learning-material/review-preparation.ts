@@ -105,12 +105,13 @@ export function createReviewPreparation(o: Options) {
     if (!blocked.ok) return blocked;
     const uncertain = material.preparationState();
     if (!uncertain.ok) return uncertain;
+    const uncertainCards = new Set(uncertain.value.uncertainCardIds);
     const skip = new Set([
       ...excluded,
-      ...uncertain.value.uncertainCardIds,
+      ...uncertainCards,
       ...(origin === "manual" ? [] : blocked.value),
     ]);
-    if (focusCardId && uncertain.value.uncertainCardIds.includes(focusCardId))
+    if (focusCardId && uncertainCards.has(focusCardId))
       return err({ kind: "dispatchUncertain" });
     const focus = focusCardId
       ? scope.value.due.review
@@ -131,7 +132,14 @@ export function createReviewPreparation(o: Options) {
         skip,
       ),
     ];
-    if (!selected.length) return err({ kind: "noValidCandidate" });
+    if (!selected.length) {
+      if (
+        origin === "manual" &&
+        scope.value.inputs.some((input) => uncertainCards.has(input.card.id))
+      )
+        return err({ kind: "dispatchUncertain" });
+      return err({ kind: "noValidCandidate" });
+    }
     const inputs = selected
       .map((x) => scope.value.byCard.get(x.card.id))
       .filter((x): x is PrepareMaterial => x !== undefined && current(x));

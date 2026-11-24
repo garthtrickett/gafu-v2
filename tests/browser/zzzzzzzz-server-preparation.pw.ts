@@ -1,6 +1,38 @@
 import { expect, test } from "@playwright/test";
 
 const headers = { "X-Gafu-Request": "gafu-v2" };
+
+test("Prepare batch explains that due Cards are held by a saved request", async ({
+  page,
+}) => {
+  await page.route("**/api/study/preparation-status", (route) =>
+    route.fulfill({
+      json: {
+        mode: "server",
+        enabled: true,
+        ready: 0,
+        preparing: 0,
+        waiting: 0,
+        blocked: 1,
+        readyCardIds: [],
+        blockedReason: null,
+        uncertainBatches: ["saved-request"],
+        lastError: null,
+        restorePaused: false,
+      },
+    }),
+  );
+  await page.route("**/api/study/review-batch", (route) =>
+    route.fulfill({ status: 409, json: { error: { kind: "dispatchUncertain" } } }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Prepare batch" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Your Cards are still due. Use Recover request in Study",
+  );
+  await expect(page.getByRole("button", { name: "Recover request" })).toBeVisible();
+});
+
 test("server preparation completes with every page closed and a fresh browser opens stored material", async ({
   page,
   request,
