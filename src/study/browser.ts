@@ -1728,11 +1728,14 @@ export const mountStudyApp = (root: HTMLElement): void => {
                             ? model.batch.completed === 0 && model.batch.failed > 0
                               ? `No Cards were prepared. ${model.batch.failed} failed and stay due. Prepare batch can retry them.`
                               : `Batch ready: ${model.batch.completed} to review${model.batch.failed > 0 ? `, ${model.batch.failed} failed and stay due` : ""}. Working through.`
-                            : model.batch.requestInFlight
-                              ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… ${model.batch.pending} remaining Cards are in one LLM request (round ${model.batch.round} of 3). Ready Cards can be studied while it runs.`
-                              : model.batch.round > 1
-                                ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Preparing one retry request for the ${model.batch.pending} Cards whose sentences were refused (round ${model.batch.round} of 3).`
-                                : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready… Checking stored sentences before requesting the remaining Cards together from the LLM.`
+                            : preparationStatus.get()?.blockedReason ===
+                                "billingExhausted"
+                              ? `${model.batch.pending} Cards are waiting for preparation to resume.`
+                              : model.batch.requestInFlight
+                                ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… ${model.batch.pending} remaining Cards are in one LLM request (round ${model.batch.round} of 3). Ready Cards can be studied while it runs.`
+                                : model.batch.round > 1
+                                  ? `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready${model.batch.failed > 0 ? `, ${model.batch.failed} failed` : ""}… Preparing one retry request for the ${model.batch.pending} Cards whose sentences were refused (round ${model.batch.round} of 3).`
+                                  : `Batching reviews: ${model.batch.completed} of ${model.batch.total} ready… Checking stored sentences before requesting the remaining Cards together from the LLM.`
                         }
                       </p>`
                     : ""

@@ -293,6 +293,11 @@ export function createReviewPreparation(o: Options) {
     for (const item of [...scope.value.due.review, ...scope.value.due.untaught]) {
       const mode = untaught.has(item.card.id) ? "teach" : "review";
       if (flags.value[mode].has(item.card.id)) readyCardIds.push(item.card.id);
+      else if (
+        activeIds.has(item.card.id) &&
+        state.value.blockedReason === "billingExhausted"
+      )
+        waiting++;
       else if (activeIds.has(item.card.id)) preparing++;
       else if (blockedIds.has(item.card.id)) failed++;
       else waiting++;

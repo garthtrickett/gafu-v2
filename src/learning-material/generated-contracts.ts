@@ -50,6 +50,7 @@ export type GeneratedMaterial = VocabularyMaterial | GrammarMaterial;
 export type MaterialProviderFailure =
   | { readonly kind: "dispatchUncertain" }
   | { readonly kind: "providerNotConfigured" }
+  | { readonly kind: "billingExhausted" }
   | { readonly kind: "authentication"; readonly detail: string }
   | { readonly kind: "permission"; readonly detail: string }
   | {

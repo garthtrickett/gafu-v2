@@ -490,6 +490,52 @@ test("authentication pauses all further automatic dispatch until explicit recove
   }
 });
 
+test("exhausted API credits pause a dispatched batch and resume without Card cooldowns", async () => {
+  const base = providerFixture(),
+    batch = base.provider.batch;
+  if (!batch) throw Error("No batch");
+  let funded = false;
+  const app = setup({
+    count: 2,
+    provider: {
+      ...base.provider,
+      batch: {
+        ...batch,
+        poll: async (...args) =>
+          funded ? batch.poll(...args) : err({ kind: "billingExhausted" }),
+      },
+    },
+  });
+  try {
+    await app.drain(8);
+    expect(base.calls.sizes).toEqual([2]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: {
+        ready: 0,
+        preparing: 0,
+        waiting: 2,
+        blocked: 0,
+        blockedReason: "billingExhausted",
+        uncertainBatches: [],
+      },
+    });
+    expect(app.material.backgroundRetryBlockedCards()).toEqual(ok(new Set()));
+    funded = true;
+    await app.drain(4);
+    expect(base.calls.sizes).toEqual([2]);
+    app.material.resumePreparation();
+    await app.drain(5);
+    expect(base.calls.sizes).toEqual([2, 2]);
+    expect(app.runner.status()).toMatchObject({
+      ok: true,
+      value: { ready: 2, blocked: 0, blockedReason: null },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("a suspension during asynchronous validation cannot publish old-context material", async () => {
   let entered!: () => void, release!: () => void;
   const waiting = new Promise<void>((r) => (entered = r)),

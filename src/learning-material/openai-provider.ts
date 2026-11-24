@@ -196,6 +196,15 @@ type DecodedJson =
   | { readonly value: unknown; readonly responseId: string }
   | { readonly failure: MaterialProviderFailure };
 
+const hasBillingError = (body: Record<string, unknown>): boolean => {
+  const error = body["error"];
+  return (
+    isRecord(error) &&
+    (error["code"] === "credit_balance_exhausted" ||
+      error["code"] === "insufficient_quota")
+  );
+};
+
 /** Terminal-status handling shared by single and batch responses. */
 const decodeTerminalJson = (body: unknown): DecodedJson => {
   if (!isRecord(body) || typeof body["id"] !== "string") {
@@ -216,6 +225,7 @@ const decodeTerminalJson = (body: unknown): DecodedJson => {
     };
   }
   if (status === "failed" || body["error"] != null) {
+    if (hasBillingError(body)) return { failure: { kind: "billingExhausted" } };
     return { failure: { kind: "refusal", detail: "OpenAI response failed" } };
   }
   if (hasRefusal(body)) {
@@ -317,6 +327,7 @@ const decodeTerminal = (body: unknown, options: Options): DecodedMaterial => {
     };
   }
   if (status === "failed" || body["error"] != null) {
+    if (hasBillingError(body)) return { failure: { kind: "billingExhausted" } };
     return { failure: { kind: "refusal", detail: "OpenAI response failed" } };
   }
   if (hasRefusal(body)) {
@@ -559,6 +570,23 @@ export const createOpenAiMaterialProvider = (options: Options): MaterialProvider
       if (!response.ok) {
         const failure = httpFailure(response.status);
         if (failure.kind === "rateLimit") {
+          if (init.method === "POST" && url === "https://api.openai.com/v1/responses") {
+            const errorBody = await readBoundedBody(
+              response,
+              maximumProviderResponseBytes,
+            );
+            if (errorBody.ok) {
+              try {
+                const body: unknown = JSON.parse(
+                  new TextDecoder().decode(errorBody.value),
+                );
+                if (isRecord(body) && hasBillingError(body))
+                  return err({ kind: "billingExhausted" });
+              } catch {
+                // A non-JSON 429 still follows the normal retry policy.
+              }
+            }
+          }
           const header = response.headers.get("Retry-After");
           const delay =
             header === null

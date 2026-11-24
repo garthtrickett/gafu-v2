@@ -211,6 +211,8 @@ const materialFailureStatus = (failure: MaterialFailure): number => {
       return 403;
     case "rateLimit":
       return 429;
+    case "billingExhausted":
+      return 402;
     case "unsupportedGrammarTarget":
     case "unsupportedVocabularyPartOfSpeech":
     case "validationRejected":

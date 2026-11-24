@@ -458,6 +458,39 @@ describe("whole-batch generation", () => {
     if (polled?.ok === false) expect(polled.error.kind).toBe("refusal");
   });
 
+  test("recognizes a background response that failed for lack of credits", async () => {
+    const material = provider(async (_url, init) =>
+      init?.method === "POST"
+        ? Response.json(batchResponse("queued", []))
+        : Response.json({
+            id: "batch-1",
+            status: "failed",
+            error: { code: "credit_balance_exhausted", message: "private" },
+            output: [],
+          }),
+    );
+    expect(await material.batch?.dispatch(targets, request.knowledge)).toMatchObject({
+      ok: true,
+    });
+    expect(await material.batch?.poll("batch-1")).toEqual({
+      ok: false,
+      error: { kind: "billingExhausted" },
+    });
+  });
+
+  test("distinguishes quota exhaustion from a temporary HTTP 429 at dispatch", async () => {
+    const material = provider(async () =>
+      Response.json(
+        { error: { code: "insufficient_quota", message: "private" } },
+        { status: 429 },
+      ),
+    );
+    expect(await material.batch?.dispatch(targets, request.knowledge)).toEqual({
+      ok: false,
+      error: { kind: "billingExhausted" },
+    });
+  });
+
   test("cancels a saved request only through the cancellation endpoint", async () => {
     const calls: { url: string; method: string | undefined }[] = [];
     const material = provider(async (url, init) => {
