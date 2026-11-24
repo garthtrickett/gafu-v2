@@ -76,6 +76,17 @@ export function createBatchExecution(o: Options) {
   const initial = control();
   if (initial.provider_identity && initial.provider_identity !== o.providerBinding)
     pause("", null);
+  // The provider confirmed this attempt failed. Keep the due Cards claimed
+  // for resumption, without starting Card cooldowns or losing the response ID
+  // from the attempt history.
+  const pauseForBilling = (batchId: string) =>
+    db.transaction(() => {
+      db.query(
+        "UPDATE review_batch_attempt SET disposition='billingExhausted' WHERE batch_id=? AND disposition IN ('dispatching','running')",
+      ).run(batchId);
+      db.query("DELETE FROM review_batch_job WHERE batch_id=?").run(batchId);
+      pause("billingExhausted", null);
+    })();
   const terminal = (
     batchId: string,
     kind: MaterialFailure["kind"],
@@ -203,7 +214,9 @@ export function createBatchExecution(o: Options) {
           return ok(undefined);
         }
         if (!sent.ok) {
-          if (
+          if (sent.error.kind === "billingExhausted") {
+            pauseForBilling(batchId);
+          } else if (
             ["providerNotConfigured", "authentication", "permission"].includes(
               sent.error.kind,
             )
@@ -240,6 +253,10 @@ export function createBatchExecution(o: Options) {
       if (job.response_json === null) {
         const polled = await batch.poll(job.job_id, policy.signal);
         if (!polled.ok) {
+          if (polled.error.kind === "billingExhausted") {
+            pauseForBilling(batchId);
+            return ok(undefined);
+          }
           if (
             job.phase === "recovering" ||
             polled.error.kind === "dispatchUncertain" ||
@@ -281,6 +298,10 @@ export function createBatchExecution(o: Options) {
             policy.allowDispatch !== false
           ) {
             const cancelled = await batch.cancel(job.job_id, policy.signal);
+            if (!cancelled.ok && cancelled.error.kind === "billingExhausted") {
+              pauseForBilling(batchId);
+              return ok(undefined);
+            }
             if (!cancelled.ok || cancelled.value.status === "pending") {
               terminal(batchId, "dispatchUncertain", at, true);
               return ok(undefined);

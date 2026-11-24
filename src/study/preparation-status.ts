@@ -66,7 +66,18 @@ export function createPreparationStatus(o: Options) {
         : html`<div class="preparation-status" data-testid="preparation-status" aria-live="polite">
   <p>${current.ready} ready · ${current.preparing} preparing · ${current.waiting} waiting${current.blocked ? ` · ${current.blocked} blocked` : ""}</p>
   ${current.restorePaused ? html`<p>Automatic preparation is paused after restoring data. Saved requests must be reconciled before new spending.</p><button class="secondary" @click=${() => void resume().catch(() => {})}>Reconcile and resume preparation</button>` : ""}
-  ${current.blockedReason ? html`<p>Preparation paused: ${current.blockedReason}. ${current.blockedReason === "rateLimit" ? "Waiting for the provider retry time." : "Check the provider configuration, then resume."}</p>${current.blockedReason === "rateLimit" ? "" : html`<button class="secondary" @click=${() => void resume().catch(() => {})}>Resume preparation</button>`}` : ""}
+  ${
+    current.blockedReason
+      ? html`
+        ${
+          current.blockedReason === "billingExhausted"
+            ? html`<p>OpenAI API credits ran out. <a href="https://platform.openai.com/settings/organization/billing/" target="_blank" rel="noopener noreferrer">Add credits</a>, then resume preparation. Your cards stay due.</p>`
+            : html`<p>Preparation paused: ${current.blockedReason}. ${current.blockedReason === "rateLimit" ? "Waiting for the provider retry time." : "Check the provider configuration, then resume."}</p>`
+        }
+        ${current.blockedReason === "rateLimit" ? "" : html`<button class="secondary" @click=${() => void resume().catch(() => {})}>Resume preparation</button>`}
+      `
+      : ""
+  }
   ${current.uncertainBatches.map((id) => html`<p>A request needs recovery; it will not be bought again automatically. <button class="secondary" @click=${() => void recover(id).catch(() => {})}>Recover request</button> <button class="secondary" @click=${() => void recover(id, true).catch(() => {})}>Abandon saved request and buy again</button></p>`)}
   ${current.lastError ? html`<p>Last preparation check: ${current.lastError}. Due Cards stay due.</p>` : ""}
  </div>`,
