@@ -278,6 +278,10 @@ test("ambiguous dispatch remains blocked through idle ticks until explicitly ret
       ok: true,
       value: { uncertainCardIds: { length: 2 }, uncertainBatches: { length: 1 } },
     });
+    expect(await app.runner.request("manual")).toEqual({
+      ok: false,
+      error: { kind: "dispatchUncertain" },
+    });
     await app.drain(5);
     expect(base.calls.sizes).toHaveLength(1);
     if (!state.ok || !state.value.uncertainBatches[0])

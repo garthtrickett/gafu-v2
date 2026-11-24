@@ -134,18 +134,24 @@ type BrowserModel = {
   offline: boolean;
 };
 
+const requestFailureMessages = new Map([
+  ["presentationInvalid", "review expired or unavailable; prepare a new batch"],
+  ["presentationExpired", "review expired or unavailable; prepare a new batch"],
+  ["cardNotDue", "Card is no longer available for this session"],
+  ["cardNotAnswerable", "Card is no longer available for this session"],
+  ["nothingDue", "No Cards are due right now."],
+  [
+    "dispatchUncertain",
+    "Your Cards are still due. Use Recover request in Study to check the saved request.",
+  ],
+]);
+
 class RequestFailure extends Error {
   constructor(
     readonly status: number,
     readonly kind: string,
   ) {
-    super(
-      kind === "presentationInvalid" || kind === "presentationExpired"
-        ? "review expired or unavailable; prepare a new batch"
-        : kind === "cardNotDue" || kind === "cardNotAnswerable"
-          ? "Card is no longer available for this session"
-          : kind,
-    );
+    super(requestFailureMessages.get(kind) ?? kind);
   }
 }
 
