@@ -48,6 +48,8 @@ export type CardSummary = Readonly<{
   id: CardId;
   type: CardType;
   content: CardContent;
+  /** The gloss the learner chose to emphasise in Study. */
+  preferredMeaning?: string;
   state: CardState;
   supportReadyAt: string | null;
   stagedAt: string;
@@ -388,6 +390,10 @@ export type Study = Readonly<{
     cardId: CardId,
     content: CardContent,
   ) => Result<CardSummary, StudyFailure>;
+  setPreferredMeaning: (
+    cardId: CardId,
+    meaning: string | null,
+  ) => Result<{ preferredMeaning: string | null }, StudyFailure>;
   setCardState: (command: CardStateCommand) => Result<CardSummary, StudyFailure>;
   /**
    * Lifts staged Cards to the front of the admission queue, in the given

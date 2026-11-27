@@ -710,6 +710,42 @@ label {
   font-size: 1.25rem;
 }
 
+.meaning-choice {
+  display: inline-block;
+  max-width: 100%;
+  margin-inline-end: 0.3em;
+}
+
+.meaning-option {
+  display: inline;
+  min-height: 1.5rem;
+  min-width: 1.5rem;
+  max-width: 100%;
+  padding: 0.15em 0;
+  border: 0;
+  border-radius: 0.2rem;
+  color: inherit;
+  background: transparent;
+  font-weight: inherit;
+  overflow-wrap: anywhere;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.meaning-option[aria-pressed="true"] {
+  font-weight: 750;
+}
+
+.meaning-option[aria-disabled="true"] {
+  cursor: wait;
+}
+
+.meaning-save-error {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
 .answer-formation {
   color: var(--dim);
   font-size: 0.9rem;

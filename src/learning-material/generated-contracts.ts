@@ -182,6 +182,8 @@ export type MaterialFailure =
 export type PreparedMaterial = Readonly<{
   id: string;
   cardId: CardSummary["id"];
+  /** Display preference attached by Study when serving the presentation. */
+  preferredMeaning?: string | null;
   mode: MaterialMode;
   material: GeneratedMaterial;
   permit: PresentationPermit | null;
