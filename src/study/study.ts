@@ -447,7 +447,10 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             "INSERT OR IGNORE INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
           )
           .run(canonical.value.claimAuthority, canonical.value.claimKey, cardId);
-        const options = meaningOptions(canonical.value.content.meaning);
+        const { options } = meaningOptions(
+          canonical.value.content.meaning,
+          current.value.type,
+        );
         const preferred = current.value.preferredMeaning;
         database
           .query(
@@ -478,12 +481,12 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
   const setPreferredMeaning: Study["setPreferredMeaning"] = (cardId, meaning) => {
     const set = database.transaction((): ReturnType<Study["setPreferredMeaning"]> => {
       const row = database
-        .query("SELECT content_json FROM card WHERE id = ?")
-        .get(cardId) as { content_json: string } | null;
+        .query("SELECT type, content_json FROM card WHERE id = ?")
+        .get(cardId) as Pick<CardRow, "type" | "content_json"> | null;
       if (row === null) return err({ kind: "cardNotFound", cardId });
       if (meaning !== null) {
         const content = JSON.parse(row.content_json) as CardContent;
-        const options = meaningOptions(content.meaning);
+        const { options } = meaningOptions(content.meaning, row.type);
         if (options.length < 2 || !options.includes(meaning)) {
           return err({
             kind: "invalidPreference",
