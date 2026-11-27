@@ -423,10 +423,14 @@ const serveFirst = async (
 const servePrepared = (study: Study, prepared: PreparedMaterial): Response => {
   const current = study.duePreparationSnapshot();
   if (!current.ok) return failureResponse(current.error);
-  if (!current.value.due.some((item) => item.card.id === prepared.cardId)) {
+  const card = current.value.due.find((item) => item.card.id === prepared.cardId)?.card;
+  if (card === undefined) {
     return Response.json({ error: { kind: "cardNotDue" } }, { status: 409 });
   }
-  return Response.json(prepared);
+  return Response.json({
+    ...prepared,
+    preferredMeaning: card.preferredMeaning ?? null,
+  });
 };
 
 /**
@@ -565,7 +569,10 @@ const handleApi = async (
       );
       if (restored.ok && restored.value.id === item.id) {
         eligibleIds.push(item.id);
-        restoredItems.push(restored.value);
+        restoredItems.push({
+          ...restored.value,
+          preferredMeaning: card.preferredMeaning ?? null,
+        });
       }
     }
     return Response.json({ eligibleIds, items: restoredItems });
@@ -607,7 +614,11 @@ const handleApi = async (
       const result = await material.prepare(
         cachedMaterialInput(study, card, knowledge.value),
       );
-      if (result.ok) items.push(result.value);
+      if (result.ok)
+        items.push({
+          ...result.value,
+          preferredMeaning: card.preferredMeaning ?? null,
+        });
       else if (
         !["teachingNotPrepared", "presentationNotFound", "noValidCandidate"].includes(
           result.error.kind,
@@ -945,6 +956,23 @@ const handleApi = async (
     if (!reset.ok) return materialResponse(reset);
     preparation.wake();
     return Response.json(updated.value);
+  }
+  const preferredMatch = url.pathname.match(
+    /^\/api\/study\/cards\/([^/]+)\/preferred-meaning$/u,
+  );
+  if (request.method === "PUT" && preferredMatch !== null) {
+    const cardId = decodePathSegment(preferredMatch[1] ?? "");
+    if (!cardId.ok || cardId.value === "") return invalidRequest("Card ID is invalid.");
+    const body = await readJson(request);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      (typeof body["meaning"] !== "string" && body["meaning"] !== null)
+    )
+      return invalidRequest("Choose a meaning or clear the selection.");
+    return jsonResult(
+      study.setPreferredMeaning(asCardId(cardId.value), body["meaning"]),
+    );
   }
   const stateMatch = url.pathname.match(/^\/api\/study\/cards\/([^/]+)\/state$/u);
   if (request.method === "POST" && stateMatch !== null) {

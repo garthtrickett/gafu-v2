@@ -4,7 +4,7 @@ import type { StudyFailure } from "./contracts.ts";
 
 type Migration = Readonly<{ version: number; sql: string }>;
 
-export const STUDY_SCHEMA_VERSION = 15;
+export const STUDY_SCHEMA_VERSION = 16;
 
 const migrations: readonly Migration[] = [
   {
@@ -478,6 +478,10 @@ const migrations: readonly Migration[] = [
         UPDATE study_preferences SET knowledge_revision=knowledge_revision+1;
       END;
     `,
+  },
+  {
+    version: 16,
+    sql: "ALTER TABLE card ADD COLUMN preferred_meaning TEXT;",
   },
 ];
 

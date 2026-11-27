@@ -39,6 +39,7 @@ import {
   canonicalizeUpdatedContent,
   normalizeVocabularyReading,
 } from "./identity.ts";
+import { meaningOptions } from "./meaning-options.ts";
 import { migrateStudyDatabase, STUDY_SCHEMA_VERSION } from "./migrations.ts";
 import { createPlanOperations } from "./plans.ts";
 import {
@@ -56,6 +57,7 @@ type CardRow = {
   id: string;
   type: "grammar" | "vocabulary";
   content_json: string;
+  preferred_meaning: string | null;
   material_revision: number;
   state: CardState;
   support_ready_at: string | null;
@@ -97,7 +99,7 @@ const safeNow = (clock: () => Date): Result<Date, StudyFailure> => {
 const readCardRow = (database: Database, cardId: string): CardRow | null =>
   database
     .query(
-      `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+      `SELECT c.id, c.type, c.content_json, c.preferred_meaning, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
               c.staged_at, a.admitted_at, s.due_at, s.phase,
               count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
        FROM card c
@@ -114,6 +116,9 @@ const toSummary = (row: CardRow): CardSummary => ({
   id: asCardId(row.id),
   type: row.type,
   content: JSON.parse(row.content_json) as CardContent,
+  ...(row.preferred_meaning === null
+    ? {}
+    : { preferredMeaning: row.preferred_meaning }),
   materialRevision: row.material_revision,
   state: row.state,
   supportReadyAt: row.support_ready_at,
@@ -347,7 +352,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     try {
       const rows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+          `SELECT c.id, c.type, c.content_json, c.preferred_meaning, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
@@ -442,11 +447,18 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
             "INSERT OR IGNORE INTO identity_claim(authority, claim_key, card_id) VALUES (?, ?, ?)",
           )
           .run(canonical.value.claimAuthority, canonical.value.claimKey, cardId);
+        const options = meaningOptions(canonical.value.content.meaning);
+        const preferred = current.value.preferredMeaning;
         database
-          .query("UPDATE card SET content_json = ?, searchable_text = ? WHERE id = ?")
+          .query(
+            "UPDATE card SET content_json = ?, searchable_text = ?, preferred_meaning = ? WHERE id = ?",
+          )
           .run(
             JSON.stringify(canonical.value.content),
             canonical.value.searchableText,
+            preferred !== undefined && options.length > 1 && options.includes(preferred)
+              ? preferred
+              : null,
             cardId,
           );
       });
@@ -459,6 +471,35 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
           existingCardId: cause.existingCardId,
         });
       }
+      return err({ kind: "writeFailed", detail: detail(cause) });
+    }
+  };
+
+  const setPreferredMeaning: Study["setPreferredMeaning"] = (cardId, meaning) => {
+    const set = database.transaction((): ReturnType<Study["setPreferredMeaning"]> => {
+      const row = database
+        .query("SELECT content_json FROM card WHERE id = ?")
+        .get(cardId) as { content_json: string } | null;
+      if (row === null) return err({ kind: "cardNotFound", cardId });
+      if (meaning !== null) {
+        const content = JSON.parse(row.content_json) as CardContent;
+        const options = meaningOptions(content.meaning);
+        if (options.length < 2 || !options.includes(meaning)) {
+          return err({
+            kind: "invalidPreference",
+            field: "preferredMeaning",
+            detail: "Choose one of the Card’s current meanings.",
+          });
+        }
+      }
+      database
+        .query("UPDATE card SET preferred_meaning = ? WHERE id = ?")
+        .run(meaning, cardId);
+      return ok({ preferredMeaning: meaning });
+    });
+    try {
+      return set.immediate();
+    } catch (cause) {
       return err({ kind: "writeFailed", detail: detail(cause) });
     }
   };
@@ -1089,7 +1130,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
       }
       const dueRows = database
         .query(
-          `SELECT c.id, c.type, c.content_json, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
+          `SELECT c.id, c.type, c.content_json, c.preferred_meaning, c.material_revision, p.state, p.support_ready_at, p.consecutive_failures, p.consecutive_correct,
                   c.staged_at, a.admitted_at, s.due_at, s.phase,
                   count(r.id) AS review_count, max(r.reviewed_at) AS last_reviewed_at
            FROM card c
@@ -1749,6 +1790,7 @@ const createStudy = (database: Database, dependencies: StudyDependencies): Study
     countCards,
     countSupportReadySince,
     updateCard,
+    setPreferredMeaning,
     setCardState,
     prioritizeStaging,
     studyQueue: () => studyQueue(),

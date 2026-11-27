@@ -42,7 +42,8 @@ test("a Card with no sentence is prepared, handed over, and rendered", async ({
       },
     },
   });
-  expect([200, 201, 409]).toContain(made.status());
+  expect(made.status()).toBe(201);
+  const { card } = (await made.json()) as { card: { id: string } };
 
   await page.goto("/");
   await page.getByLabel("New Cards per Day").fill("100");
@@ -68,4 +69,25 @@ test("a Card with no sentence is prepared, handed over, and rendered", async ({
   const gloss = page.getByTestId("answer-target");
   await expect(gloss).toBeVisible();
   await expect(page.getByRole("status")).not.toContainText("nothingDue");
+
+  const preference = await page.request.put(
+    `/api/study/cards/${card.id}/preferred-meaning`,
+    { headers: MUTATION, data: { meaning: "cheering" } },
+  );
+  expect(preference.ok()).toBe(true);
+  const batch = await page.request.post("/api/study/session/review-all", {
+    headers: MUTATION,
+    data: { cardIds: [card.id] },
+  });
+  expect(batch.ok()).toBe(true);
+  const { items } = await batch.json();
+  expect(items).toMatchObject([{ cardId: card.id, preferredMeaning: "cheering" }]);
+  const resumed = await page.request.post("/api/study/session/resume", {
+    headers: MUTATION,
+    data: { items: [{ id: items[0].id, cardId: card.id, mode: "teach" }] },
+  });
+  expect(resumed.ok()).toBe(true);
+  expect(await resumed.json()).toMatchObject({
+    items: [{ cardId: card.id, preferredMeaning: "cheering" }],
+  });
 });

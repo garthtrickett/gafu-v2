@@ -21,6 +21,7 @@ import type {
 import { createStudyDisplay } from "./display.ts";
 import { sentencePieces } from "./furigana.ts";
 import { openIndexedDbStore } from "./local-store.ts";
+import { meaningOptions } from "./meaning-options.ts";
 import { createOutbox, type OutboxJob, type OutboxState } from "./outbox.ts";
 import {
   createPreparationStatus,
@@ -264,15 +265,18 @@ const editForm = (
  * a different question: what the whole line says. Both are wanted, and only
  * this one can be relied on to be there.
  */
-const targetGloss = (material: PreparedMaterial["material"]): TemplateResult =>
+const targetGloss = (
+  material: PreparedMaterial["material"],
+  gloss: TemplateResult,
+): TemplateResult =>
   material.targetKind === "vocabulary"
     ? html`<p class="answer-target" data-testid="answer-target">
         <strong lang="ja">${material.target.lemma}（${material.target.reading}）</strong>
-        <span>${material.target.meaning}</span>
+        ${gloss}
       </p>`
     : html`<p class="answer-target" data-testid="answer-target">
         <strong lang="ja">${material.target.canonicalForm}</strong>
-        <span>${material.target.meaning}</span>
+        ${gloss}
         <span class="answer-formation" lang="ja">${material.target.formationHint}</span>
       </p>`;
 
@@ -324,6 +328,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
   });
   const SESSION_KEY = "session";
   const SNAPSHOT_KEY = "snapshot";
+  const meaningSaves = new Map<string, "saving" | "failed">();
   /** Foreground preparation waits for requests a hidden tab already paid for. */
   const backgroundRounds = new Set<Promise<boolean>>();
   /** A poll can repeat while prepared Cards are still opening over the network. */
@@ -1500,6 +1505,68 @@ export const mountStudyApp = (root: HTMLElement): void => {
       </svg>
     </button>`;
 
+  const savePreferredMeaning = async (
+    cardId: PreparedMaterial["cardId"],
+    meaning: string | null,
+  ): Promise<void> => {
+    if (meaningSaves.get(cardId) === "saving") return;
+    meaningSaves.set(cardId, "saving");
+    draw();
+    try {
+      const { preferredMeaning } = await requestJson<{
+        preferredMeaning: string | null;
+      }>(`/api/study/cards/${encodeURIComponent(cardId)}/preferred-meaning`, {
+        method: "PUT",
+        body: JSON.stringify({ meaning }),
+      });
+      if (model.presentation?.cardId === cardId) {
+        model.presentation = { ...model.presentation, preferredMeaning };
+      }
+      if (model.session?.items.some((item) => item.cardId === cardId)) {
+        model.session = {
+          ...model.session,
+          items: model.session.items.map((item) =>
+            item.cardId === cardId ? { ...item, preferredMeaning } : item,
+          ),
+        };
+        void store.set(SESSION_KEY, model.session);
+      }
+      meaningSaves.delete(cardId);
+    } catch {
+      meaningSaves.set(cardId, "failed");
+    }
+    draw();
+  };
+
+  const meaningView = (presentation: PreparedMaterial): TemplateResult => {
+    const meaning = presentation.material.target.meaning;
+    const options = meaningOptions(meaning);
+    if (options.length < 2) return html`<span>${meaning}</span>`;
+    const state = meaningSaves.get(presentation.cardId);
+    return html`<span role="group" aria-label="Preferred meaning" aria-busy=${state === "saving"}>
+      ${options.map((option, index) => {
+        const selected = option === presentation.preferredMeaning;
+        return html`<span class="meaning-choice"><button
+          type="button"
+          class="meaning-option"
+          aria-pressed=${selected}
+          aria-disabled=${state === "saving"}
+          title=${selected ? "Clear preferred meaning" : "Set as preferred meaning"}
+          @click=${() => void savePreferredMeaning(presentation.cardId, selected ? null : option)}
+        >${option}</button>${index < options.length - 1 ? "; " : ""}</span>`;
+      })}
+      ${state === "failed" ? html`<span class="meaning-save-error" role="alert">Couldn’t save your preferred meaning. Try again.</span>` : ""}
+    </span>`;
+  };
+
+  const answerView = (presentation: PreparedMaterial): TemplateResult =>
+    html`<div class="answer" data-testid="material-answer">
+      ${targetGloss(presentation.material, meaningView(presentation))}
+      <strong>${presentation.material.answer}</strong>
+      <p class="answer-copy">${presentation.material.explanation}</p>
+      <p class="answer-copy">${presentation.material.usageNote}</p>
+    </div>`;
+
   const presentationView = (presentation: PreparedMaterial): TemplateResult =>
     html`<article class="presentation presentation--${presentation.mode}">
                         <header class="presentation-heading">
@@ -1529,20 +1596,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
                         </div>
                         ${
                           presentation.mode === "teach"
-                            ? html`<div class="answer" data-testid="material-answer">
-                                ${targetGloss(presentation.material)}
-                                <strong>${presentation.material.answer}</strong>
-                                <p class="answer-copy">${presentation.material.explanation}</p>
-                                <p class="answer-copy">${presentation.material.usageNote}</p>
-                              </div>
+                            ? html`${answerView(presentation)}
                               <button type="button" @click=${finishTeaching} ?disabled=${model.busy} aria-keyshortcuts="n" title="Seen it — next Card (N)">Seen it — next Card <kbd aria-hidden="true">N</kbd></button>`
                             : model.revealed
-                              ? html`<div class="answer" data-testid="material-answer">
-                                  ${targetGloss(presentation.material)}
-                                  <strong>${presentation.material.answer}</strong>
-                                  <p class="answer-copy">${presentation.material.explanation}</p>
-                                  <p class="answer-copy">${presentation.material.usageNote}</p>
-                                </div>
+                              ? html`${answerView(presentation)}
                                 <div class="grades" aria-label="Self grade">
                                   <p>Were you right?</p>
                                   <button type="button" class="secondary" ?disabled=${model.busy} @click=${() => answer(true)} aria-keyshortcuts="c" title="Correct (C)">Correct <kbd aria-hidden="true">C</kbd></button>

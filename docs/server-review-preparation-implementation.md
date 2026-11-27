@@ -62,8 +62,12 @@ wakes preparation; other Cards' failure pauses remain intact.
 
 ## Deployment and recovery
 
-Study schema is **15**, Learning Material schema is **12**. Backup inspection
-requires the new durable tables. Upgrade preserves pending work from older
+Study schema is **16**, Learning Material schema is **12**. Study 16 adds an
+optional preferred gloss to each Card. Existing Cards start with no selection.
+The previous release requires a Study 15 database. For a release rollback, use
+the pre-upgrade backup and account for any progress made since that backup.
+
+Backup inspection requires the durable tables. Upgrade preserves pending work from older
 parentless batches and retains provider IDs; unidentified legacy work stays
 blocked instead of being bought again.
 

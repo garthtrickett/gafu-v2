@@ -7,6 +7,7 @@ import { asCardId } from "../../src/study/contracts.ts";
 const openSession = async (
   page: Page,
   mode: "teach" | "review" = "review",
+  meaning = "cat",
 ): Promise<void> => {
   const items: PreparedMaterial[] = [1, 2].map((number) => ({
     id: `display-review-${number}`,
@@ -42,7 +43,7 @@ const openSession = async (
         { written: "帰った", reading: "かえった" },
         { written: "かな。", reading: "かな。" },
       ],
-      target: { lemma: "猫", reading: "ねこ", partOfSpeech: "noun", meaning: "cat" },
+      target: { lemma: "猫", reading: "ねこ", partOfSpeech: "noun", meaning },
       answer:
         mode === "teach"
           ? `Teaching answer ${number}`
@@ -89,6 +90,55 @@ const openSession = async (
   if (mode === "teach") await expect(page.getByText("Teaching answer 1")).toBeVisible();
   else await expect(page.locator(".presentation .context")).toContainText("Scene 1:");
 };
+
+test("the explanation saves, restores and clears one bold meaning", async ({
+  page,
+}) => {
+  let shouldFail = true;
+  let saved: string | null = null;
+  await page.route(
+    "**/api/study/cards/display-card-1/preferred-meaning",
+    async (route) => {
+      expect(route.request().method()).toBe("PUT");
+      if (shouldFail) {
+        shouldFail = false;
+        await route.fulfill({ status: 500, json: { error: { kind: "writeFailed" } } });
+        return;
+      }
+      saved = route.request().postDataJSON().meaning as string | null;
+      await route.fulfill({ json: { preferredMeaning: saved } });
+    },
+  );
+  await openSession(page, "review", "cat; feline; kitty");
+  const meaning = page.getByRole("group", { name: "Preferred meaning" });
+  const reveal = page.getByRole("button", { name: "Explanation", exact: true });
+  await expect(meaning).toHaveCount(0);
+  await reveal.click();
+  const cat = meaning.getByRole("button", { name: "cat", exact: true });
+  const feline = meaning.getByRole("button", { name: "feline", exact: true });
+  await feline.click();
+  await expect(meaning.getByRole("alert")).toBeVisible();
+  await expect(feline).toHaveAttribute("aria-pressed", "false");
+  await feline.press("Space");
+  await expect(feline).toHaveAttribute("aria-pressed", "true");
+  await expect(feline).toHaveCSS("font-weight", "750");
+  await expect(cat).toHaveAttribute("aria-pressed", "false");
+  expect(saved).toBe("feline");
+
+  await page.reload();
+  await reveal.click();
+  await expect(feline).toHaveAttribute("aria-pressed", "true");
+  await cat.click();
+  await expect(cat).toHaveAttribute("aria-pressed", "true");
+  await expect(feline).toHaveAttribute("aria-pressed", "false");
+  expect(saved).toBe("cat");
+  await cat.click();
+  await expect(cat).toHaveAttribute("aria-pressed", "false");
+  expect(saved).toBeNull();
+
+  await page.getByRole("button", { name: "Correct", exact: true }).click();
+  await expect(page.locator(".presentation .context")).toContainText("Scene 2:");
+});
 
 test("N advances a teaching Card once and ignores editing or repeated keys", async ({
   page,

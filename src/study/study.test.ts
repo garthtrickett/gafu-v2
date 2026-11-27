@@ -40,10 +40,11 @@ const removePreparationMigration = (database: Database): void => {
     "material_baseline_delete",
   ])
     database.exec(`DROP TRIGGER IF EXISTS ${name}`);
-  database.exec(`ALTER TABLE card DROP COLUMN material_revision;
+  database.exec(`ALTER TABLE card DROP COLUMN preferred_meaning;
+    ALTER TABLE card DROP COLUMN material_revision;
     ALTER TABLE study_preferences DROP COLUMN automatic_preparation;
     ALTER TABLE study_preferences DROP COLUMN knowledge_revision;
-    DELETE FROM schema_migration WHERE version=15`);
+    DELETE FROM schema_migration WHERE version >= 15`);
 };
 
 const grammar: CreateCard = {
@@ -450,6 +451,69 @@ describe("Study Cards and knowledge", () => {
       value: { outcome: "existing", card: { id: card.id } },
     });
     study.close();
+  });
+
+  test("migrates and saves a preferred gloss independently of review authority", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gafu-v2-meaning-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "study.sqlite");
+    const input = {
+      ...vocabulary,
+      content: {
+        ...vocabulary.content,
+        meaning: "to open; to become open, as a door; to part",
+      },
+    };
+    const initial = openTestStudy({ databasePath }).study;
+    const card = create(initial, input).card;
+    initial.studyQueue();
+    const before = initial.materialContext(card.id);
+    if (!before.ok) throw new Error(before.error.kind);
+    initial.close();
+
+    const database = new Database(databasePath, { strict: true });
+    database.exec(
+      "ALTER TABLE card DROP COLUMN preferred_meaning; DELETE FROM schema_migration WHERE version = 16;",
+    );
+    database.close();
+
+    const { study } = openTestStudy({ databasePath });
+    expect(study.materialContext(card.id)).toEqual(before);
+    expect(study.setPreferredMeaning(card.id, "as a door")).toMatchObject({
+      ok: false,
+      error: { kind: "invalidPreference", field: "preferredMeaning" },
+    });
+    const preferredMeaning = "to become open, as a door";
+    expect(study.setPreferredMeaning(card.id, preferredMeaning)).toEqual({
+      ok: true,
+      value: { preferredMeaning },
+    });
+    expect(study.materialContext(card.id)).toEqual({
+      ok: true,
+      value: { ...before.value, card: { ...before.value.card, preferredMeaning } },
+    });
+    study.close();
+
+    const reopened = openTestStudy({ databasePath }).study;
+    expect(reopened.listCards()).toMatchObject({
+      ok: true,
+      value: [{ preferredMeaning }],
+    });
+    expect(
+      reopened.updateCard(card.id, {
+        ...input.content,
+        meaning: `${preferredMeaning}; to open`,
+      }),
+    ).toMatchObject({ ok: true, value: { preferredMeaning } });
+    expect(reopened.updateCard(card.id, vocabulary.content)).toMatchObject({
+      ok: true,
+    });
+    expect(reopened.updateCard(card.id, input.content)).toMatchObject({ ok: true });
+    expect(reopened.listCards()).toEqual({
+      ok: true,
+      value: [expect.not.objectContaining({ preferredMeaning })],
+    });
+    reopened.close();
   });
 
   test("rejects a correction whose identity already belongs to another Card", () => {
