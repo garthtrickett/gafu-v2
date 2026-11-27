@@ -109,11 +109,12 @@ test("the explanation saves, restores and clears one bold meaning", async ({
       await route.fulfill({ json: { preferredMeaning: saved } });
     },
   );
-  await openSession(page, "review", "cat; feline; kitty");
+  await openSession(page, "review", "cat, feline, kitty");
   const meaning = page.getByRole("group", { name: "Preferred meaning" });
   const reveal = page.getByRole("button", { name: "Explanation", exact: true });
   await expect(meaning).toHaveCount(0);
   await reveal.click();
+  await expect(meaning).toContainText("cat, feline, kitty");
   const cat = meaning.getByRole("button", { name: "cat", exact: true });
   const feline = meaning.getByRole("button", { name: "feline", exact: true });
   await feline.click();

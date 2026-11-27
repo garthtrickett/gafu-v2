@@ -37,7 +37,7 @@ test("a Card with no sentence is prepared, handed over, and rendered", async ({
         lemma: "応援",
         reading: "おうえん",
         partOfSpeech: "noun",
-        meaning: "support; cheering",
+        meaning: "support, cheering",
         usageNotes: "",
       },
     },

@@ -1540,7 +1540,10 @@ export const mountStudyApp = (root: HTMLElement): void => {
 
   const meaningView = (presentation: PreparedMaterial): TemplateResult => {
     const meaning = presentation.material.target.meaning;
-    const options = meaningOptions(meaning);
+    const { options, separator } = meaningOptions(
+      meaning,
+      presentation.material.targetKind,
+    );
     if (options.length < 2) return html`<span>${meaning}</span>`;
     const state = meaningSaves.get(presentation.cardId);
     return html`<span role="group" aria-label="Preferred meaning" aria-busy=${state === "saving"}>
@@ -1553,7 +1556,7 @@ export const mountStudyApp = (root: HTMLElement): void => {
           aria-disabled=${state === "saving"}
           title=${selected ? "Clear preferred meaning" : "Set as preferred meaning"}
           @click=${() => void savePreferredMeaning(presentation.cardId, selected ? null : option)}
-        >${option}</button>${index < options.length - 1 ? "; " : ""}</span>`;
+        >${option}</button>${index < options.length - 1 ? `${separator} ` : ""}</span>`;
       })}
       ${state === "failed" ? html`<span class="meaning-save-error" role="alert">Couldn’t save your preferred meaning. Try again.</span>` : ""}
     </span>`;
