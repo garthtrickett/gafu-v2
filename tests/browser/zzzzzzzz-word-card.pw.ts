@@ -49,6 +49,8 @@ test("a Card with no sentence is prepared, handed over, and rendered", async ({
   await page.getByLabel("New Cards per Day").fill("100");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByRole("status")).toContainText("Study settings saved");
+  await page.getByRole("button", { name: "Admit new Cards" }).click();
+  await expect(page.getByRole("status")).toContainText("New Cards admitted");
 
   // Something is due and none of it needs generating: a word Card is served
   // from the Card, so the tiles must not call it unprepared.
